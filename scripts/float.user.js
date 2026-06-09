@@ -2,7 +2,7 @@
 // @name         BiliKit · 浮窗抽屉
 // @name:en      BiliKit · Float
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.18.3
+// @version      0.18.4
 // @description    点击 B 站视频，在页内抽屉中播放，而非跳转新标签页或当前页面。
 // @description:en Click a Bilibili video to play it in an in-page drawer instead of opening a new tab or navigating away.
 // @author       shiinayane
@@ -34,6 +34,9 @@
     // 形态：'fullscreen' 全屏右滑入(推荐，左滑返回最自然) | 'modal' 居中大窗 | 'drawer-bottom' | 'drawer-right' | 'drawer-left'
     mode: 'fullscreen',
     zIndex: 2147483600, // 尽量盖过 B 站自身的弹层
+
+    // 遮罩样式：'blur' 高斯模糊遮罩(推荐) | 'plain' 普通半透明遮罩(不模糊) | 'none' 无遮罩(背景页面完全可见，仍可点遮罩关闭)
+    backdrop: 'blur',
 
     // 「新标签打开」行为：抽屉是「速看」，点此即「升级为完整观看」。
     newTabResumeTime: true, // 带上当前播放进度(?t=)，新标签无缝续播
@@ -96,6 +99,15 @@
   ].filter(Boolean)
   const CLEAN_CSS = HIDE_SELECTORS.length ? `${HIDE_SELECTORS.join(',\n')} { display: none !important; }` : ''
 
+  // 遮罩外观：按 CONFIG.backdrop 生成 .bfloat-backdrop 的背景与模糊。
+  // blur=高斯模糊(modal/抽屉露出的页面、全屏拖拽露出的左侧更聚焦) | plain=普通半透明 | none=透明(无遮罩)
+  const BACKDROP_VARIANTS = {
+    blur: 'background: rgba(0, 0, 0, 0.6); backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);',
+    plain: 'background: rgba(0, 0, 0, 0.6);',
+    none: 'background: transparent;',
+  }
+  const BACKDROP_CSS = BACKDROP_VARIANTS[CONFIG.backdrop] || BACKDROP_VARIANTS.blur
+
   /* ------------------------------------------------------------------ *
    * 样式
    * ------------------------------------------------------------------ */
@@ -103,10 +115,7 @@
     .bfloat-backdrop {
       position: fixed;
       inset: 0;
-      background: rgba(0, 0, 0, 0.6);
-      /* 背景模糊：modal/抽屉形态露出的页面、以及全屏跟手拖拽时露出的左侧，都更聚焦高级 */
-      backdrop-filter: blur(3px);
-      -webkit-backdrop-filter: blur(3px);
+      ${BACKDROP_CSS}
       opacity: 0;
       /* 关键：未打开时不拦截点击，否则透明遮罩会让整页点不动 */
       pointer-events: none;
