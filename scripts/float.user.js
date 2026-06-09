@@ -2,7 +2,7 @@
 // @name         BiliKit · 浮窗抽屉
 // @name:en      BiliKit · Float
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.18.4
+// @version      0.18.5
 // @description    点击 B 站视频，在页内抽屉中播放，而非跳转新标签页或当前页面。
 // @description:en Click a Bilibili video to play it in an in-page drawer instead of opening a new tab or navigating away.
 // @author       shiinayane
@@ -90,7 +90,10 @@
   // 跟手式滑动关闭：仅对「向右滑出」的形态启用(面板向右拖动跟手关闭)；其余形态用累计阈值回退。
   const FOLLOW_DRAG = CONFIG.mode === 'fullscreen' || CONFIG.mode === 'drawer-right'
   const DRAG_END_MS = 110 // 松手判定：超过此时长无 wheel 视为松手
-  const DRAG_CLOSE_RATIO = 0.2 // 拖过面板宽度的此比例即关闭，否则回弹
+  const DRAG_CLOSE_RATIO = 0.2 // 慢拖：拖过面板宽度的此比例即关闭，否则回弹
+  // 快速甩动即关（仿 Safari 两指返回的速度判定）：单帧 wheel 横向位移峰值达到此值，
+  // 即便没拖够 DRAG_CLOSE_RATIO 也关闭。慢而稳的拖动单帧位移小，不会触发，仅靠距离判定。
+  const DRAG_FLICK_DELTA = 40
 
   // 注入 iframe 的隐藏 CSS：广告位 +（可选）B 站顶栏。静态内容，启动时拼一次。
   const HIDE_SELECTORS = [
@@ -302,6 +305,7 @@
   let swipeResetTimer = null // 滑动累计清零定时器
   let dragX = 0 // 跟手拖拽的横向位移（px）
   let dragging = false // 是否处于跟手拖拽中
+  let dragPeakDX = 0 // 本次拖拽中单帧「返回方向」横向位移的峰值（用于快速甩动判定）
   let dragEndTimer = null // 拖拽「松手」判定定时器
   let themeObserver = null // 监听宿主页 bili_dark 变化，开启期间镜像到抽屉
   let drawerThemeDark = false // 抽屉打开时记录的宿主深色态；仅在真正变化时才镜像到抽屉
@@ -585,6 +589,12 @@
   // 实际收起 UI（由 popstate 调用：后退键 / 触控板左滑 / requestClose 间接触发）
   function closeUI() {
     if (!els) return
+    // 立即暂停抽屉内播放：声音马上停，画面仍随面板照常滑出（iframe 在过渡结束后才销毁）。
+    try {
+      getDrawerVideoEl()?.pause()
+    } catch (_) {
+      // 跨域或已移除则忽略
+    }
     isOpen = false
     document.documentElement.classList.remove('bfloat-open')
     document.removeEventListener('keydown', onKeyDown, true)
@@ -653,13 +663,16 @@
 
     // 跟手拖拽：面板实时跟随手指横移；松手(无 wheel ~110ms)后判定关闭 or 回弹。
     // dragX 随「返回方向」增大、反向减小，且不小于 0（拖不过打开位）。
-    dragX = Math.max(0, dragX + e.deltaX * CONFIG.swipeBackDeltaXSign)
+    const stepBack = e.deltaX * CONFIG.swipeBackDeltaXSign // 本帧朝「返回方向」的位移
+    dragX = Math.max(0, dragX + stepBack)
     if (!dragging) {
       dragging = true
+      dragPeakDX = 0 // 新一次拖拽，重置甩动峰值
       // 拖拽期间取消过渡，面板与背景都严格跟手（背景若保留 0.25s 过渡会滞后半拍）
       els.panel.style.transition = 'none'
       els.backdrop.style.transition = 'none'
     }
+    if (stepBack > dragPeakDX) dragPeakDX = stepBack // 记录最快的一帧（甩动速度的代理）
     const w = els.panel.offsetWidth || window.innerWidth
     const x = Math.min(dragX, w)
     els.panel.style.transform = `translateX(${x}px)`
@@ -669,13 +682,14 @@
     dragEndTimer = window.setTimeout(endDrag, DRAG_END_MS)
   }
 
-  // 拖拽「松手」：拖过约 20% 宽度则顺势滑出关闭，否则回弹
+  // 拖拽「松手」：拖过约 20% 宽度、或快速甩动(仿 Safari 返回的速度判定)则顺势滑出关闭，否则回弹
   function endDrag() {
     dragEndTimer = null
     if (!dragging || !els) return
     dragging = false
     const w = els.panel.offsetWidth || window.innerWidth
-    const shouldClose = dragX > w * DRAG_CLOSE_RATIO
+    // 距离够 || 甩得够快（且不是甩完又拖回到接近起点 → 用 4% 宽度兜底，避免误关）
+    const shouldClose = dragX > w * DRAG_CLOSE_RATIO || (dragPeakDX >= DRAG_FLICK_DELTA && dragX > w * 0.04)
     // 恢复过渡，用于滑出/回弹动画
     els.panel.style.transition = ''
     els.backdrop.style.transition = ''
