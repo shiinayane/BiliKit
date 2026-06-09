@@ -3,7 +3,8 @@
 // @name:zh-CN   BiliKit · 防睡眠
 // @namespace    https://github.com/shiinayane/BiliKit
 // @version      0.1.2
-// @description  防止使用Safari在B站播放视频时休眠或睡眠
+// @description       Keep Safari from sleeping while playing a Bilibili video.
+// @description:zh-CN 防止使用 Safari 在 B 站播放视频时休眠或睡眠。
 // @match        https://www.bilibili.com/video/*
 // @run-at       document-idle
 // @grant        none

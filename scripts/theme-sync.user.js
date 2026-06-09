@@ -3,7 +3,8 @@
 // @name:zh-CN   BiliKit · 主题同步
 // @namespace    https://github.com/shiinayane/BiliKit
 // @version      0.4.2
-// @description  让B站跟随系统深浅色，全站无刷新实时切换并同步所有Tab
+// @description       Make Bilibili follow the system light/dark theme, switching live across the whole site with no reload and syncing every tab.
+// @description:zh-CN 让 B 站跟随系统深浅色，全站无刷新实时切换并同步所有 Tab。
 // @author       shiinayane
 // @match        *://*.bilibili.com/*
 // @run-at       document-start
