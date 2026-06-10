@@ -2,7 +2,7 @@
 // @name         BiliKit · 浮窗抽屉
 // @name:en      BiliKit · Float
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.18.10
+// @version      0.18.11
 // @description    点击 B 站视频，在页内抽屉中播放，而非跳转新标签页或当前页面。
 // @description:en Click a Bilibili video to play it in an in-page drawer instead of opening a new tab or navigating away.
 // @author       shiinayane
@@ -12,8 +12,8 @@
 // @grant        none
 // @run-at       document-idle
 // @license      MIT
-// @downloadURL https://update.greasyfork.org/scripts/581920/BiliKit%20%C2%B7%20Float.user.js
-// @updateURL https://update.greasyfork.org/scripts/581920/BiliKit%20%C2%B7%20Float.meta.js
+// @downloadURL https://update.greasyfork.org/scripts/581920/BiliKit%20%C2%B7%20%E6%B5%AE%E7%AA%97%E6%8A%BD%E5%B1%89.user.js
+// @updateURL https://update.greasyfork.org/scripts/581920/BiliKit%20%C2%B7%20%E6%B5%AE%E7%AA%97%E6%8A%BD%E5%B1%89.meta.js
 // ==/UserScript==
 
 (function () {
