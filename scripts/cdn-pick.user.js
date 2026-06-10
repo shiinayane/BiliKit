@@ -2,7 +2,7 @@
 // @name         BiliKit · CDN 优选
 // @name:en      BiliKit · CDN Pick
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.3.0
+// @version      0.4.0
 // @description    把 B 站视频分片重定向到指定 CDN 镜像，绕开被分到的慢节点（海外 Akamai 等）。Safari 友好：页面世界注入、不依赖 GM/unsafeWindow，故能拦到播放器真正的请求（CCB 等脚本在 Safari Userscripts 下因 grant 被注入隔离世界而失效）。
 // @description:en Redirect Bilibili video segments to a chosen CDN mirror, bypassing the slow node you were assigned (e.g. overseas Akamai). Safari-friendly: page-world injection without GM/unsafeWindow.
 // @author       shiinayane
@@ -45,6 +45,8 @@
   //   —— 卡顿主要发生在冷门/新视频(回源)，故按「冷门吞吐」选大陆华为系；
   //      延迟会骗人勿信；想复测用 test/cdntest.sh
   const TARGET_HOST = 'upos-sz-mirrorhwb.bilivideo.com'
+  // 备用镜像：主镜像打嗝时播放器回退到这里，仍是大陆镜像，绝不回 akam/cosov。
+  const BACKUP_HOSTS = ['upos-sz-mirrorhw.bilivideo.com', 'upos-sz-upcdnbda2.bilivideo.com']
 
   const DEBUG = true // 调试期开着看改写日志；定稿后改 false
   const log = (...a) => { if (DEBUG) console.log('[CDN优选]', ...a) }
@@ -53,24 +55,26 @@
 
   // upos 系（签名与主机无关，可安全换镜像）；akamaized 不在此列，绝不往上套
   const isUpos = (u) => typeof u === 'string' && /(?:\.bilivideo\.com|\.acgvideo\.(?:com|cn))\//.test(u + '/')
-  const swapHost = (u) => u.replace(/^(?:https?:)?\/\/[^/]+\//, `https://${TARGET_HOST}/`)
+  const swapHost = (u, host) => u.replace(/^(?:https?:)?\/\/[^/]+\//, `https://${host}/`)
 
   let rewriteCount = 0
 
-  // 把一条 dash 流（或 durl 段）的 baseUrl 顶成「目标镜像 + upos 签名」
+  // 把一条 dash 流（或 durl 段）整体钉到大陆镜像：主 = TARGET_HOST，
+  // 备份列表整列重建为 [TARGET, ...BACKUP]，把 akam/cosov 彻底清出——
+  // 否则主镜像一回源打嗝，播放器就轮到备份里的 akam/cosov，url 反复横跳。
   function fixEntry(e) {
     if (!e || typeof e !== 'object') return false
     const cands = []
     for (const k of ['baseUrl', 'base_url', 'url']) if (typeof e[k] === 'string') cands.push(e[k])
     for (const k of ['backupUrl', 'backup_url']) if (Array.isArray(e[k])) cands.push(...e[k].filter((x) => typeof x === 'string'))
     const upos = cands.find(isUpos)
-    if (!upos) return false // 只有 akam、没有 upos 备选 → 不动（换主机会 403）
-    const target = swapHost(upos)
-    for (const k of ['baseUrl', 'base_url', 'url']) if (typeof e[k] === 'string') e[k] = target
-    // 备选里的 upos 地址也一并换到目标镜像，保留 akam 作为最后兜底
-    for (const k of ['backupUrl', 'backup_url']) {
-      if (Array.isArray(e[k])) e[k] = e[k].map((u) => (isUpos(u) ? swapHost(u) : u))
-    }
+    if (!upos) return false // 没有任何 upos 地址（只有 akam）→ 不动（换主机会 403）
+    const primary = swapHost(upos, TARGET_HOST)
+    const backups = BACKUP_HOSTS.map((h) => swapHost(upos, h))
+    for (const k of ['baseUrl', 'base_url', 'url']) if (typeof e[k] === 'string') e[k] = primary
+    // 只要原来有备份列表就整列替换为「目标 + 大陆备用」，不再保留任何 akam/cosov
+    if (Array.isArray(e.backupUrl)) e.backupUrl = [primary, ...backups]
+    if (Array.isArray(e.backup_url)) e.backup_url = [primary, ...backups]
     rewriteCount++
     return true
   }
