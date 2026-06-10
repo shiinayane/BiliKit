@@ -2,7 +2,7 @@
 // @name         BiliKit · 回程
 // @name:en      BiliKit · Way Back
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.8.1
+// @version      0.8.2
 // @description    视频标签页的来时路：站内跨视频跳转零刷新压扁（历史钉在 1，链接新开的标签左滑即原生关闭），左下角悬浮回退栈点击即跳回并续播。与 BiliKit·浮窗抽屉自动协同。
 // @description:en Flatten in-site cross-video SPA history with zero reloads (history pinned at 1, so Safari's native swipe closes link-opened tabs), and keep a floating back-stack you can click to jump back, resuming playback. Auto-coordinates with BiliKit Float.
 // @author       shiinayane
@@ -225,6 +225,9 @@
         position: fixed; left: 16px; bottom: 24px; z-index: 2147483500;
         font: 13px/1.5 -apple-system, "PingFang SC", sans-serif;
       }
+      /* 自带盒模型，不赌宿主页有没有全局 border-box——
+         否则行的 width:100%+padding 会把每行撑得比列表宽，最右侧内容被裁掉 */
+      .bwb-root, .bwb-root * { box-sizing: border-box; }
       .bwb-chip {
         display: flex; align-items: center; gap: 6px;
         height: 34px; padding: 0 14px; border-radius: 17px; cursor: pointer;
@@ -243,7 +246,8 @@
         /* 透明边框充当与胶囊的视觉间隙：鼠标穿过时仍在列表元素内，hover 不断链 */
         border-bottom: 10px solid transparent; background-clip: padding-box;
         display: flex; flex-direction: column; /* 顺序排，最新一条在底部贴近胶囊 */
-        min-width: 220px; max-width: 320px; max-height: 50vh; overflow-y: auto;
+        min-width: 220px; max-width: 320px; max-height: 50vh;
+        overflow: hidden auto; /* 只竖向滚动，横向永不裁内容 */
         background-color: rgba(18,18,22,.94); border-radius: 14px; padding: 6px;
         box-shadow: 0 8px 32px rgba(0,0,0,.42);
         backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
@@ -261,8 +265,9 @@
         user-select: none;
       }
       .bwb-item {
+        /* 不设 width:100%——竖向 flex 容器默认把子项拉伸到等宽，没有溢出风险 */
         display: flex; align-items: center; gap: 8px;
-        width: 100%; padding: 8px 10px; border: none; border-radius: 9px;
+        padding: 8px 10px; border: none; border-radius: 9px;
         cursor: pointer; background: none; color: #ddd; font: inherit;
         text-align: left;
       }
