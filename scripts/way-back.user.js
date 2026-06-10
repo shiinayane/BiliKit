@@ -2,7 +2,7 @@
 // @name         BiliKit · 回程
 // @name:en      BiliKit · Way Back
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.8.3
+// @version      0.8.4
 // @description    视频标签页的来时路：站内跨视频跳转零刷新压扁（历史钉在 1，链接新开的标签左滑即原生关闭），左下角悬浮回退栈点击即跳回并续播。与 BiliKit·浮窗抽屉自动协同。
 // @description:en Flatten in-site cross-video SPA history with zero reloads (history pinned at 1, so Safari's native swipe closes link-opened tabs), and keep a floating back-stack you can click to jump back, resuming playback. Auto-coordinates with BiliKit Float.
 // @author       shiinayane
@@ -89,10 +89,37 @@
   }
 
   function cleanTitle(raw) {
-    // 剥掉串尾连续的站点后缀段（视频页 _哔哩哔哩_bilibili、番剧页 _番剧_bilibili_哔哩哔哩 等
-    // 顺序不一），锚定串尾逐段剥，正文里含「哔哩哔哩」的标题不受伤
-    return raw.replace(/(_(哔哩哔哩|bilibili|番剧|动画|电影|电视剧|纪录片|综艺|国创|在线观看|全集))+$/i, '').trim()
+    // 剥掉串尾连续的站点后缀段。B 站后缀有两种格式：初始 HTML 是
+    // 「_哔哩哔哩_bilibili」，SPA 跳转后 JS 设置的是「_哔哩哔哩bilibili」
+    // （bilibili 前没有下划线）——所以第二段起分隔符可选；首段必须带分隔符，
+    // 正文恰好以这些词结尾的标题不受伤
+    return raw.replace(/[_-](哔哩哔哩|bilibili|番剧|动画|电影|电视剧|纪录片|综艺|国创|在线观看|全集)([_-]?(哔哩哔哩|bilibili|番剧|动画|电影|电视剧|纪录片|综艺|国创|在线观看|全集))*$/i, '').trim()
   }
+
+  // 标题随 SPA 跳转异步更新：快速连跳时 document.title 可能还是上一个视频的，
+  // 直接取会把旧标题记到新条目上（列表里出现两行同名）。
+  // 盯住 <title> 节点（仅此一个节点，开销可忽略），维护「视频 id → 已确认标题」，
+  // 记录与展示都按 id 取，杜绝张冠李戴。
+  const titleById = new Map()
+  function noteTitle() {
+    const id = videoIdOf(location.href)
+    const t = cleanTitle(document.title)
+    if (id && t) titleById.set(id, t)
+  }
+  function titleFor(href) {
+    return titleById.get(videoIdOf(href)) || cleanTitle(document.title) || videoIdOf(href)
+  }
+  let titleObserved = false
+  function watchTitle() {
+    if (titleObserved) return
+    const el = document.querySelector('title') // document-start 时 <head> 可能还没解析到它
+    if (!el) return
+    titleObserved = true
+    noteTitle()
+    new MutationObserver(noteTitle).observe(el, { childList: true, characterData: true, subtree: true })
+  }
+  watchTitle()
+  document.addEventListener('DOMContentLoaded', watchTitle)
 
   // 把「即将离开的视频」记入栈顶。prevHref/prevTitle/t 都在离开前捕获。
   // rerender=false 给 pagehide 用：页面正在销毁，重建列表 DOM 是纯浪费。
@@ -103,7 +130,7 @@
     if (stack.length && videoIdOf(stack[stack.length - 1].url) === id) return // 连续同视频去重
     stack.push({
       url: prevHref,
-      title: cleanTitle(prevTitle) || id,
+      title: titleById.get(id) || cleanTitle(prevTitle) || id, // 优先取按 id 确认过的标题
       t: CONFIG.resumeTime && t > 0 ? Math.floor(t) : 0,
     })
     writeStack(stack)
@@ -384,7 +411,7 @@
   // 那一刻拿到的可能还是旧标题；播放态也以悬停瞬间为准
   function updateNowRow() {
     if (!nowRow) return
-    const title = cleanTitle(document.title) || videoIdOf(location.href)
+    const title = titleFor(location.href)
     nowTitleEl.textContent = title
     nowRow.title = title
     const v = document.querySelector('video')
