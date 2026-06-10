@@ -2,7 +2,7 @@
 // @name         BiliKit · 清晰度自适应
 // @name:en      BiliKit · Adaptive Quality
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.3.0
+// @version      0.4.0
 // @description    替代 B 站那个一上来就顶 4K 然后卡死的「自动」：从稳妥档起步，网速充裕才逐档上爬，卡顿立刻降档，永不卡死在扛不住的清晰度。
 // @description:en Replace Bilibili's "Auto" (which jumps to 4K and stalls): start at a safe level, climb up only when bandwidth is ample, drop instantly on stalls — never stuck buffering at a tier your network can't sustain.
 // @author       shiinayane
@@ -43,8 +43,9 @@
    * ------------------------------------------------------------------ */
   const CONFIG = {
     floorQn: 64, // 不低于此档（64=720P）：再卡也不会糊成马赛克
-    ceilQn: 120, // 不高于此档（120=4K）；想彻底禁 4K 改成 116(1080P60)
-    startQn: 80, // 接管时的起步档（80=1080P）：之后顺网速往上爬
+    ceilQn: 120, // 不高于此档（120=4K）；网速撑不住 4K 建议改成 116(1080P60)
+    startQn: 80, // 接管「自动」时的起步档（80=1080P）：之后顺网速往上爬
+    allowVipTiers: true, // 放开大会员专享档（1080P60/4K 等）。非会员若被弹购买框改 false
     showToast: true, // 切档时左下角轻提示
   }
 
@@ -87,8 +88,8 @@
   let smoothSince = 0 // 连续平稳的起点
   let waitingSince = 0 // 本次卡顿（waiting）的起点；0=没在卡
   let stalls = [] // 最近卡顿时间戳
-  let vipSeen = false // 是否见过「会员档正在生效」——据此判断当前账号是大会员
   const lockedUntil = {} // qn → 时间戳：刚扛不住的档，回爬冷却到期前不碰
+  const failCount = {} // qn → 累计扛不住次数：反复失败的档，冷却递增拉长
   const unavailable = new Set() // 确认切不过去的档（账号锁 / 选择器不对）
 
   const now = () => Date.now()
@@ -105,9 +106,14 @@
     return v && v.tagName === 'VIDEO' ? v : null
   }
 
+  // 只认 waiting（播放因取不到下一帧而暂停）且缓冲确实见底的卡顿。
+  // 不听 stalled：MSE 缓冲喂饱后播放器停止取流，这个「网络空闲」也会触发
+  // stalled，与播放卡顿无关，会把卡顿数刷爆。再加缓冲门槛双保险：缓冲还厚
+  // 时的 waiting（少见，多为解码抖动/seek）也不算带宽卡顿。
   const onWaiting = () => {
-    if (video && video.seeking) return
+    if (!video || video.seeking) return
     if (now() - lastSwitchAt < SWITCH_GRACE_MS) return // 换流自身的重缓冲不算
+    if (bufferedAhead() > BUFFER_LOW * 2) return // 缓冲还厚 → 不是带宽卡顿
     waitingSince = waitingSince || now()
     stalls.push(now())
   }
@@ -117,13 +123,11 @@
     if (video === v) return
     if (video) {
       video.removeEventListener('waiting', onWaiting)
-      video.removeEventListener('stalled', onWaiting)
       video.removeEventListener('playing', onResume)
       video.removeEventListener('canplay', onResume)
     }
     video = v
     v.addEventListener('waiting', onWaiting)
-    v.addEventListener('stalled', onWaiting)
     v.addEventListener('playing', onResume)
     v.addEventListener('canplay', onResume)
     // 新流：重置瞬态卡顿状态、给一段宽限；targetQn 跨 P 保留（同一网络环境）
@@ -183,11 +187,10 @@
   // 当前账号实际可选、落在 [floor,ceil]、未被标记不可用的档，升序。
   // 非大会员时排除会员档，避免看门狗点到 4K 弹出购买弹窗。
   function rangeQns() {
-    if (qnItems().some((x) => x.active && x.vip)) vipSeen = true // 会员档在播 → 是大会员
     const seen = new Set()
     return qnItems()
       .filter((x) => x.qn >= CONFIG.floorQn && x.qn <= CONFIG.ceilQn
-        && !unavailable.has(x.qn) && (vipSeen || !x.vip))
+        && !unavailable.has(x.qn) && (CONFIG.allowVipTiers || !x.vip))
       .map((x) => x.qn)
       .filter((q) => (seen.has(q) ? false : seen.add(q)))
       .sort((a, b) => a - b)
@@ -283,7 +286,10 @@
     if (stalls.length >= STALL_TRIGGER || longStalling) {
       const lower = nextDown(targetQn, range)
       if (lower) {
-        lockedUntil[targetQn] = t + BACKOFF_MS // 这档刚扛不住，冷却期内不回爬
+        // 反复扛不住的档冷却递增（90s、180s…最多 5 倍），省得网速撑不住时
+        // 每个冷却周期都去同一档撞一次墙
+        failCount[targetQn] = (failCount[targetQn] || 0) + 1
+        lockedUntil[targetQn] = t + BACKOFF_MS * Math.min(failCount[targetQn], 5)
         stalls = []
         switchTo(lower, '卡顿降档')
       }
