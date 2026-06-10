@@ -2,7 +2,7 @@
 // @name         BiliKit · 清晰度自适应
 // @name:en      BiliKit · Adaptive Quality
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.1.0
+// @version      0.2.0
 // @description    替代 B 站那个一上来就顶 4K 然后卡死的「自动」：从稳妥档起步，网速充裕才逐档上爬，卡顿立刻降档，永不卡死在扛不住的清晰度。
 // @description:en Replace Bilibili's "Auto" (which jumps to 4K and stalls): start at a safe level, climb up only when bandwidth is ample, drop instantly on stalls — never stuck buffering at a tier your network can't sustain.
 // @author       shiinayane
@@ -85,6 +85,7 @@
   let smoothSince = 0 // 连续平稳的起点
   let waitingSince = 0 // 本次卡顿（waiting）的起点；0=没在卡
   let stalls = [] // 最近卡顿时间戳
+  let vipSeen = false // 是否见过「会员档正在生效」——据此判断当前账号是大会员
   const lockedUntil = {} // qn → 时间戳：刚扛不住的档，回爬冷却到期前不碰
   const unavailable = new Set() // 确认切不过去的档（账号锁 / 选择器不对）
 
@@ -144,32 +145,49 @@
   }
 
   /* ------------------------------------------------------------------ *
-   * 清晰度读写：按 data-value(qn) 定位菜单项，不赌 class 名
+   * 清晰度读写：锚定清晰度菜单项，按 data-value(qn) 取档
+   * （同页还有倍速/弹幕等也带 data-value，故必须限定到清晰度菜单内）
    * ------------------------------------------------------------------ */
+  const isActive = (el) => [...el.classList].some((c) => c.includes('active'))
+
   function qnItems() {
-    return [...playerScope().querySelectorAll('[data-value]')]
-      .map((el) => ({ el, qn: parseInt(el.getAttribute('data-value'), 10) }))
-      .filter((x) => x.qn in QN_LABEL) // 只留像清晰度的 data-value，挡掉无关元素
+    return [...playerScope().querySelectorAll('.bpx-player-ctrl-quality-menu-item[data-value]')]
+      .map((el) => ({
+        el,
+        qn: parseInt(el.getAttribute('data-value'), 10),
+        vip: !!el.querySelector('.bpx-player-ctrl-quality-badge-bigvip'), // 大会员专享档
+        active: isActive(el),
+      }))
+      .filter((x) => x.qn in QN_LABEL) // 排除「自动」(0) 与异常值
   }
 
-  // 当前生效的档：优先读 B 站自己的播放器配置（最稳），回退到菜单激活项
+  // 「自动」当前是否生效（data-value="0" 那项激活）——它就是我们要替代的模式
+  function isAutoActive() {
+    const auto = playerScope().querySelector('.bpx-player-ctrl-quality-menu-item[data-value="0"]')
+    return !!auto && isActive(auto)
+  }
+
+  // 当前生效的档：优先读 B 站播放器配置 media.quality（最稳），回退到菜单激活项
   function currentQn() {
     try {
       const p = JSON.parse(localStorage.getItem('bpx_player_profile') || '{}')
       const q = p?.media?.quality ?? p?.quality
       if (Number.isFinite(q) && q in QN_LABEL) return q
     } catch (_) {}
-    const active = qnItems().find(
-      (x) => x.el.classList.contains('bpx-state-active') || x.el.getAttribute('data-selected') != null,
-    )
-    return active ? active.qn : 0
+    const act = qnItems().find((x) => x.active)
+    return act ? act.qn : 0
   }
 
-  // 当前账号实际可选、且落在 [floor,ceil] 且未被标记不可用的档，升序
+  // 当前账号实际可选、落在 [floor,ceil]、未被标记不可用的档，升序。
+  // 非大会员时排除会员档，避免看门狗点到 4K 弹出购买弹窗。
   function rangeQns() {
-    const set = qnItems().map((x) => x.qn)
-    return [...new Set(set)]
-      .filter((q) => q >= CONFIG.floorQn && q <= CONFIG.ceilQn && !unavailable.has(q))
+    if (qnItems().some((x) => x.active && x.vip)) vipSeen = true // 会员档在播 → 是大会员
+    const seen = new Set()
+    return qnItems()
+      .filter((x) => x.qn >= CONFIG.floorQn && x.qn <= CONFIG.ceilQn
+        && !unavailable.has(x.qn) && (vipSeen || !x.vip))
+      .map((x) => x.qn)
+      .filter((q) => (seen.has(q) ? false : seen.add(q)))
       .sort((a, b) => a - b)
   }
 
@@ -185,8 +203,8 @@
     const item = qnItems().find((x) => x.qn === qn)
     if (!item) { log('找不到档位项', qn); return }
     if (currentQn() === qn) { targetQn = qn; return }
-    // 菜单项有时需先「激活」其控件容器才响应点击，先尝试唤起再点
-    const ctrl = item.el.closest('[class*="quality"]')
+    // 菜单项需先唤起其控件容器（悬停展开）才稳妥响应点击，先发 mouseenter 再点
+    const ctrl = item.el.closest('.bpx-player-ctrl-quality')
     if (ctrl) ctrl.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }))
     item.el.click()
     targetQn = qn
@@ -211,11 +229,17 @@
     const t = now()
     const cur = currentQn()
 
-    // —— 接管「自动」：首次或目标丢失时，设到起步档 ——
+    // —— 首次接管 ——
+    // 已是合理的手动档（非自动、落在范围内）→ 原样接管，不打扰用户当前选择；
+    // 否则（自动 / 超范围）→ 设到稳妥起步档，之后顺网速爬。
     if (!targetQn) {
-      const start = clampToRange(CONFIG.startQn, range)
-      if (cur === 0 || cur > CONFIG.ceilQn || cur !== start) switchTo(start, '接管自动')
-      else targetQn = start
+      if (!isAutoActive() && range.includes(cur)) {
+        targetQn = cur
+        log('接管当前档', QN_LABEL[cur])
+      } else {
+        const start = clampToRange(CONFIG.startQn, range)
+        switchTo(start, isAutoActive() ? '接管自动' : '校正起步档')
+      }
       smoothSince = t
       return
     }
