@@ -2,7 +2,7 @@
 // @name         BiliKit · 回程
 // @name:en      BiliKit · Way Back
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.8.0
+// @version      0.8.1
 // @description    视频标签页的来时路：站内跨视频跳转零刷新压扁（历史钉在 1，链接新开的标签左滑即原生关闭），左下角悬浮回退栈点击即跳回并续播。与 BiliKit·浮窗抽屉自动协同。
 // @description:en Flatten in-site cross-video SPA history with zero reloads (history pinned at 1, so Safari's native swipe closes link-opened tabs), and keep a floating back-stack you can click to jump back, resuming playback. Auto-coordinates with BiliKit Float.
 // @author       shiinayane
@@ -115,6 +115,26 @@
     return v && Number.isFinite(v.currentTime) ? v.currentTime : 0
   }
 
+  // B 站 SPA 跳视频是「先重置播放器、再 pushState」——轮到我们记录时
+  // currentTime 已经归零。用捕获阶段的 timeupdate（不冒泡但走捕获，播放中
+  // 约 4 次/秒）持续记住最后已知进度，记录时当场取不到就用它兜底。
+  let lastPlayedT = 0
+  document.addEventListener(
+    'timeupdate',
+    (e) => {
+      const v = e.target
+      if (v && v.tagName === 'VIDEO' && Number.isFinite(v.currentTime) && v.currentTime > 0) {
+        lastPlayedT = v.currentTime
+      }
+    },
+    true,
+  )
+
+  function departureTime() {
+    const t = currentVideoTime()
+    return t > 0 ? t : lastPlayedT
+  }
+
   // SPA 跳转压扁：包一层 pushState，「视频页 → 另一个视频页」改写为 replaceState
   // （state 原样透传）。两个例外：
   // - float 抽屉打开期间不改写——栈顶是抽屉的关闭锚点，replace 会把它炸掉
@@ -133,7 +153,8 @@
         const curId = videoIdOf(target.href)
         if (prevId && curId && prevId !== curId) {
           if (!(prevId.startsWith('ss') && curId.startsWith('ep'))) {
-            recordEntry(location.href, document.title, currentVideoTime())
+            recordEntry(location.href, document.title, departureTime())
+            lastPlayedT = 0 // 上一个视频的进度已被消费，不能泄漏给下一条记录
           }
           if (!document.documentElement.classList.contains('bfloat-open')) {
             return history.replaceState.apply(this, args)
@@ -155,7 +176,7 @@
   let leavingViaJump = false
   window.addEventListener('pagehide', () => {
     if (leavingViaJump) return
-    recordEntry(location.href, document.title, currentVideoTime(), false)
+    recordEntry(location.href, document.title, departureTime(), false)
   })
 
   // 跳回第 i 层（i=-1 表示栈顶）：丢弃其上的层（与真实历史的「前进分支销毁」
@@ -194,7 +215,6 @@
   let countEl = null
   let nowRow = null // 「正在播放」行（序号 0）
   let nowTitleEl = null
-  let nowTimeEl = null
 
   function ensureChip() {
     if (chipRoot || !document.body) return
@@ -342,7 +362,7 @@
   }
 
   // 悬停/重建时校准「正在播放」行：SPA 跳转后 document.title 异步更新，建列表
-  // 那一刻拿到的可能还是旧标题；播放态与进度也以悬停瞬间为准
+  // 那一刻拿到的可能还是旧标题；播放态也以悬停瞬间为准
   function updateNowRow() {
     if (!nowRow) return
     const title = cleanTitle(document.title) || videoIdOf(location.href)
@@ -350,8 +370,6 @@
     nowRow.title = title
     const v = document.querySelector('video')
     nowRow.classList.toggle('bwb-playing', !!v && !v.paused)
-    const t = Math.floor(currentVideoTime())
-    nowTimeEl.textContent = t > 0 ? fmtTime(t) : ''
   }
 
   function renderChip(knownStack) {
@@ -389,7 +407,8 @@
       item.addEventListener('click', () => jumpTo(i))
       listEl.appendChild(item)
     })
-    // 序号 0 =「你在这里」：把当前播放钉在最底部（紧贴胶囊），序号语义自洽
+    // 序号 0 =「你在这里」：把当前播放钉在最底部（紧贴胶囊），序号语义自洽。
+    // 播放指示占续播时间的槽位（最右），与上方各行的时间列对齐。
     nowRow = document.createElement('div')
     nowRow.className = 'bwb-item bwb-now'
     const num = document.createElement('span')
@@ -400,9 +419,7 @@
     const bars = document.createElement('span')
     bars.className = 'bwb-now-bars'
     bars.append(document.createElement('i'), document.createElement('i'), document.createElement('i'))
-    nowTimeEl = document.createElement('span')
-    nowTimeEl.className = 'bwb-item-time'
-    nowRow.append(num, nowTitleEl, bars, nowTimeEl)
+    nowRow.append(num, nowTitleEl, bars)
     listEl.appendChild(nowRow)
     updateNowRow()
     listEl.scrollTop = listEl.scrollHeight // 溢出时停在最新一条（底部）
