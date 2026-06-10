@@ -2,7 +2,7 @@
 // @name         BiliKit · 浮窗抽屉
 // @name:en      BiliKit · Float
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.18.5
+// @version      0.18.6
 // @description    点击 B 站视频，在页内抽屉中播放，而非跳转新标签页或当前页面。
 // @description:en Click a Bilibili video to play it in an in-page drawer instead of opening a new tab or navigating away.
 // @author       shiinayane
@@ -35,8 +35,8 @@
     mode: 'fullscreen',
     zIndex: 2147483600, // 尽量盖过 B 站自身的弹层
 
-    // 遮罩样式：'blur' 高斯模糊遮罩(推荐) | 'plain' 普通半透明遮罩(不模糊) | 'none' 无遮罩(背景页面完全可见，仍可点遮罩关闭)
-    backdrop: 'blur',
+    // 遮罩样式：'plain' 普通半透明遮罩(默认，省 GPU) | 'blur' 高斯模糊遮罩 | 'none' 无遮罩(背景页面完全可见，仍可点遮罩关闭)
+    backdrop: 'plain',
 
     // 「新标签打开」行为：抽屉是「速看」，点此即「升级为完整观看」。
     newTabResumeTime: true, // 带上当前播放进度(?t=)，新标签无缝续播
@@ -109,7 +109,7 @@
     plain: 'background: rgba(0, 0, 0, 0.6);',
     none: 'background: transparent;',
   }
-  const BACKDROP_CSS = BACKDROP_VARIANTS[CONFIG.backdrop] || BACKDROP_VARIANTS.blur
+  const BACKDROP_CSS = BACKDROP_VARIANTS[CONFIG.backdrop] || BACKDROP_VARIANTS.plain
 
   /* ------------------------------------------------------------------ *
    * 样式
@@ -305,6 +305,7 @@
   let swipeResetTimer = null // 滑动累计清零定时器
   let dragX = 0 // 跟手拖拽的横向位移（px）
   let dragging = false // 是否处于跟手拖拽中
+  let dragPanelW = 0 // 拖拽开始时缓存的面板宽度（wheel 可达 ~120Hz，避免每帧读 offsetWidth）
   let dragPeakDX = 0 // 本次拖拽中单帧「返回方向」横向位移的峰值（用于快速甩动判定）
   let dragEndTimer = null // 拖拽「松手」判定定时器
   let themeObserver = null // 监听宿主页 bili_dark 变化，开启期间镜像到抽屉
@@ -668,12 +669,13 @@
     if (!dragging) {
       dragging = true
       dragPeakDX = 0 // 新一次拖拽，重置甩动峰值
+      dragPanelW = els.panel.offsetWidth || window.innerWidth // 拖拽期间宽度不变，缓存一次
       // 拖拽期间取消过渡，面板与背景都严格跟手（背景若保留 0.25s 过渡会滞后半拍）
       els.panel.style.transition = 'none'
       els.backdrop.style.transition = 'none'
     }
     if (stepBack > dragPeakDX) dragPeakDX = stepBack // 记录最快的一帧（甩动速度的代理）
-    const w = els.panel.offsetWidth || window.innerWidth
+    const w = dragPanelW
     const x = Math.min(dragX, w)
     els.panel.style.transform = `translateX(${x}px)`
     els.backdrop.style.opacity = String(Math.max(0, 1 - x / w))
@@ -687,7 +689,7 @@
     dragEndTimer = null
     if (!dragging || !els) return
     dragging = false
-    const w = els.panel.offsetWidth || window.innerWidth
+    const w = dragPanelW || els.panel.offsetWidth || window.innerWidth
     // 距离够 || 甩得够快（且不是甩完又拖回到接近起点 → 用 4% 宽度兜底，避免误关）
     const shouldClose = dragX > w * DRAG_CLOSE_RATIO || (dragPeakDX >= DRAG_FLICK_DELTA && dragX > w * 0.04)
     // 恢复过渡，用于滑出/回弹动画
@@ -797,7 +799,8 @@
       const link = document.createElement('link')
       link.rel = 'preconnect'
       link.href = href
-      link.crossOrigin = 'anonymous'
+      // 不设 crossOrigin：封面图(<img>)/脚本/样式都是 no-cors 请求，
+      // 连接复用要求 preconnect 模式与真实请求一致，加 anonymous 反而全部失配弃用。
       document.head.appendChild(link)
       return link
     })
@@ -807,6 +810,9 @@
     document.addEventListener(
       'mouseover',
       (e) => {
+        // mouseover 是划过每个元素边界都触发的高频事件：先查节流窗口（一次时间戳比较），
+        // 窗口内直接返回，不做 closest/正则
+        if (Date.now() - lastPreconnectAt < PRECONNECT_WINDOW) return
         const t = e.target instanceof Element ? e.target : null
         const a = t?.closest('a[href]')
         if (a && isVideoLink(a.href)) preconnectHosts()

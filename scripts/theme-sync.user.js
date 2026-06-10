@@ -2,7 +2,7 @@
 // @name         BiliKit · 主题同步
 // @name:en      BiliKit · Theme Sync
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.4.3
+// @version      0.4.4
 // @description    让 B 站跟随系统深浅色，全站无刷新实时切换并同步所有 Tab。
 // @description:en Make Bilibili follow the system light/dark theme, switching live across the whole site with no reload and syncing every tab.
 // @author       shiinayane
@@ -40,7 +40,11 @@
   const mql = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
   const systemDark = () => !!(mql && mql.matches);
 
+  // document.cookie 写入是同步操作，apply() 在每次切回标签页时都会跑，值没变就跳过
+  let lastCookieValue = null;
   function setCookie(name, value) {
+    if (value === lastCookieValue) return;
+    lastCookieValue = value;
     document.cookie = `${name}=${value}; path=/; domain=${COOKIE_DOMAIN}; max-age=31536000; SameSite=Lax`;
   }
 
