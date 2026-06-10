@@ -2,7 +2,7 @@
 // @name         BiliKit · 回程
 // @name:en      BiliKit · Way Back
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.8.5
+// @version      0.9.0
 // @description    视频标签页的来时路：站内跨视频跳转零刷新压扁（历史钉在 1，链接新开的标签左滑即原生关闭），左下角悬浮回退栈点击即跳回并续播。与 BiliKit·浮窗抽屉自动协同。
 // @description:en Flatten in-site cross-video SPA history with zero reloads (history pinned at 1, so Safari's native swipe closes link-opened tabs), and keep a floating back-stack you can click to jump back, resuming playback. Auto-coordinates with BiliKit Float.
 // @author       shiinayane
@@ -109,17 +109,33 @@
   function titleFor(href) {
     return titleById.get(videoIdOf(href)) || cleanTitle(document.title) || videoIdOf(href)
   }
-  let titleObserved = false
-  function watchTitle() {
-    if (titleObserved) return
-    const el = document.querySelector('title') // document-start 时 <head> 可能还没解析到它
-    if (!el) return
-    titleObserved = true
+  // 同时盯 <head> 的 childList：如果 <title> 节点被整个替换（而非改文本），
+  // 只盯旧节点的观察器会无声死掉，标题映射从此停更——看到替换就重挂。
+  let titleEl = null
+  let headObserved = false
+  const titleMo = new MutationObserver(() => {
+    if (titleEl && !titleEl.isConnected) {
+      titleEl = null
+      headObserved = false
+      titleMo.disconnect()
+      watchTitle()
+    }
     noteTitle()
-    new MutationObserver(noteTitle).observe(el, { childList: true, characterData: true, subtree: true })
+  })
+  function watchTitle() {
+    if (document.head && !headObserved) {
+      headObserved = true
+      titleMo.observe(document.head, { childList: true })
+    }
+    const el = document.querySelector('title') // document-start 时 <head> 可能还没解析到它
+    if (el && el !== titleEl) {
+      titleEl = el
+      titleMo.observe(el, { childList: true, characterData: true, subtree: true })
+      noteTitle()
+    }
   }
   watchTitle()
-  document.addEventListener('DOMContentLoaded', watchTitle)
+  document.addEventListener('DOMContentLoaded', () => watchTitle())
 
   // 把「即将离开的视频」记入栈顶。prevHref/prevTitle/t 都在离开前捕获。
   // rerender=false 给 pagehide 用：页面正在销毁，重建列表 DOM 是纯浪费。
@@ -133,12 +149,22 @@
       title: titleById.get(id) || cleanTitle(prevTitle) || id, // 优先取按 id 确认过的标题
       t: CONFIG.resumeTime && t > 0 ? Math.floor(t) : 0,
     })
-    writeStack(stack)
-    if (rerender) renderChip(stack)
+    // 先裁剪再写/渲染：渲染未裁剪的数组会让下标和存储错位一格，
+    // 超过 STACK_MAX 后每次点击都跳错视频
+    const trimmed = stack.length > STACK_MAX ? stack.slice(-STACK_MAX) : stack
+    writeStack(trimmed)
+    if (rerender) renderChip(trimmed)
   }
 
+  // 页面上可能同时有多个 <video>（直播小窗、悬停预览卡片）——进度与播放态
+  // 只认主播放器，否则会被毫不相干的视频污染（直播小窗播 5 分钟 →
+  // 给只看了 30 秒的视频记下 t=300 的「续播点」）。
+  let playerVideo = null // 最近一次在主播放器容器内发出 timeupdate 的元素
+  function getVideo() {
+    return playerVideo && playerVideo.isConnected ? playerVideo : document.querySelector('video')
+  }
   function currentVideoTime() {
-    const v = document.querySelector('video')
+    const v = getVideo()
     return v && Number.isFinite(v.currentTime) ? v.currentTime : 0
   }
 
@@ -150,9 +176,12 @@
     'timeupdate',
     (e) => {
       const v = e.target
-      if (v && v.tagName === 'VIDEO' && Number.isFinite(v.currentTime) && v.currentTime > 0) {
-        lastPlayedT = v.currentTime
-      }
+      if (!(v && v.tagName === 'VIDEO' && Number.isFinite(v.currentTime))) return
+      const inPlayer = !!v.closest('#bilibili-player, .bpx-player-container')
+      if (inPlayer) playerVideo = v
+      // 只让主播放器写影子进度。从未识别到主播放器（B 站改容器选择器）时
+      // 退化为旧行为（任意 video）——退化的代价是「可能被污染」而非「彻底失效」
+      if ((inPlayer || !playerVideo) && v.currentTime > 0) lastPlayedT = v.currentTime
     },
     true,
   )
@@ -172,6 +201,15 @@
   // - 番剧 ss→ep 是同一内容的 URL 规范化改写：照样压扁，但不记入回退栈。
   const origPush = history.pushState
   history.pushState = function (...args) {
+    // 结构：决策与快照在 try 里，导航动作在外面。Safari 对 history 写入有
+    // 限速（约 100 次/30 秒，超出抛 SecurityError）——若把动作也包进兜底
+    // catch，改写失败会再触发一次 origPush，把本应抛给调用方的异常变成
+    // 二次导航/静默吞掉。动作的异常必须与无脚本时一致地传出去。
+    let flatten = false
+    let record = false
+    let prevHref = ''
+    let prevTitle = ''
+    let t = 0
     try {
       const url = args[2]
       if (url != null) {
@@ -179,17 +217,34 @@
         const prevId = videoIdOf(location.href)
         const curId = videoIdOf(target.href)
         if (prevId && curId && prevId !== curId) {
-          if (!(prevId.startsWith('ss') && curId.startsWith('ep'))) {
-            recordEntry(location.href, document.title, departureTime())
-            lastPlayedT = 0 // 上一个视频的进度已被消费，不能泄漏给下一条记录
-          }
-          if (!document.documentElement.classList.contains('bfloat-open')) {
-            return history.replaceState.apply(this, args)
-          }
+          record = !(prevId.startsWith('ss') && curId.startsWith('ep'))
+          prevHref = location.href // 离开前快照：导航提交后 location 就变了
+          prevTitle = document.title
+          t = departureTime()
+          flatten = !document.documentElement.classList.contains('bfloat-open')
         }
       }
     } catch (_) {
-      // URL 解析失败等异常 → 走原始 push，绝不拦路
+      // URL 解析失败等异常 → 当作与视频无关的 push 原样放行
+    }
+    if (flatten) {
+      try {
+        const ret = history.replaceState.apply(this, args)
+        // 导航已提交才记录（用预捕获的快照）：记录在前的话，渲染「正在播放」
+        // 行时 location 还是旧 URL，列表会出现两行同一个视频
+        if (record) {
+          recordEntry(prevHref, prevTitle, t)
+          lastPlayedT = 0 // 上一个视频的进度已被消费，不能泄漏给下一条记录
+        }
+        return ret
+      } catch (_) {
+        // 改写被限速拒绝：不记栈、不清进度，退回原生 push
+        //（它若同样被限速而抛出，行为与无脚本时一致）
+      }
+    } else if (record) {
+      // float 抽屉开着：不改写但照记，导航由下面的原生 push 完成
+      recordEntry(prevHref, prevTitle, t)
+      lastPlayedT = 0
     }
     return origPush.apply(this, args)
   }
@@ -224,14 +279,32 @@
     location.replace(href)
   }
 
-  // 加载时去重：栈顶若与当前视频相同（刷新、原生返回、分 P 的 pagehide 记录）→ 弹掉
-  function dedupeOnArrival() {
+  // 行点击按 url 现场解析下标：渲染到点击之间栈可能已经变了（悬停期间
+  // 自动连播入栈），固化在闭包里的下标会跳错层
+  function jumpToUrl(url) {
+    const stack = readStack()
+    for (let i = stack.length - 1; i >= 0; i--) {
+      if (stack[i].url === url) return jumpTo(i)
+    }
+  }
+
+  // 加载时去重：栈顶若与当前视频相同（刷新、原生返回、分 P 的 pagehide 记录）→ 弹掉。
+  // backRestore（bfcache 恢复 = 用户原生回退到本页）时更进一步：最近一条「本视频」
+  // 记录是离开时的自条目，它之上全是前进侧的幽灵（被回退掉的页面的 pagehide
+  // 记录）——一并丢弃，否则「返回」会指向前方。
+  function dedupeOnArrival(backRestore = false) {
     const curId = videoIdOf(location.href)
     if (!curId) return
-    const stack = readStack()
+    let stack = readStack()
+    const before = stack.length
+    if (backRestore) {
+      let i = stack.length - 1
+      while (i >= 0 && videoIdOf(stack[i].url) !== curId) i--
+      if (i >= 0) stack = stack.slice(0, i + 1)
+    }
     let n = stack.length
     while (n && videoIdOf(stack[n - 1].url) === curId) n--
-    if (n !== stack.length) writeStack(stack.slice(0, n))
+    if (n !== before) writeStack(stack.slice(0, n))
   }
 
   /* ------------------------------------------------------------------ *
@@ -295,7 +368,7 @@
       }
       .bwb-head {
         padding: 4px 10px 6px; font-size: 11px; color: rgba(255,255,255,.45);
-        user-select: none;
+        -webkit-user-select: none; user-select: none; /* 无前缀版 Safari 18.4 才支持 */
       }
       .bwb-item {
         /* 不设 width:100%——竖向 flex 容器默认把子项拉伸到等宽，没有溢出风险 */
@@ -308,7 +381,8 @@
       .bwb-item-num {
         flex: 0 0 auto; min-width: 18px; text-align: right;
         font-size: 11px; color: rgba(255,255,255,.35);
-        font-variant-numeric: tabular-nums; user-select: none;
+        font-variant-numeric: tabular-nums;
+        -webkit-user-select: none; user-select: none;
       }
       .bwb-item:hover .bwb-item-num { color: #fb7299; }
       .bwb-item-title {
@@ -394,6 +468,10 @@
     chip.addEventListener('click', () => jumpTo(-1)) // 回退一层 = 跳回栈顶；0 层时无事发生
     // 悬停展开的瞬间校准「正在播放」行（标题/进度/播放态都以此刻为准）
     chipRoot.addEventListener('mouseenter', updateNowRow)
+    // 悬停期间被冻结的行重建，在指针离开后补上
+    chipRoot.addEventListener('mouseleave', () => {
+      if (rebuildHeldByHover) rebuildList()
+    })
 
     chipRoot.append(card, chip)
     document.body.appendChild(chipRoot)
@@ -413,17 +491,38 @@
     const title = titleFor(location.href)
     nowTitleEl.textContent = title
     nowRow.title = title
-    const v = document.querySelector('video')
+    const v = getVideo()
     nowRow.classList.toggle('bwb-playing', !!v && !v.paused)
   }
+
+  let rebuildQueued = false
+  let rebuildHeldByHover = false
 
   function renderChip(knownStack) {
     if (!CONFIG.showStack || !document.body) return
     ensureChip()
     if (!chipRoot) return
     const stack = knownStack || readStack()
+    // 计数即时更新（廉价）；行重建合并进微任务——renderChip 可能在 B 站路由
+    // 换片的同步调用栈里被 pushState wrapper 触发，不在热路径上做 DOM 重建/布局
     chipRoot.classList.toggle('bwb-empty', !stack.length)
     countEl.textContent = String(stack.length)
+    if (!rebuildQueued) {
+      rebuildQueued = true
+      queueMicrotask(rebuildList)
+    }
+  }
+
+  function rebuildList() {
+    rebuildQueued = false
+    // 列表正被注视时冻结行重建：行在眼皮底下换位会让瞄准中的点击落到别的
+    // 视频上。计数照常跳，指针离开后补一次重建。
+    if (chipRoot.matches(':hover')) {
+      rebuildHeldByHover = true
+      return
+    }
+    rebuildHeldByHover = false
+    const stack = readStack() // 重建时取最新真相，不用排队时的旧快照
     listEl.textContent = ''
     const head = document.createElement('div')
     head.className = 'bwb-head'
@@ -450,7 +549,7 @@
         time.textContent = fmtTime(entry.t)
         item.appendChild(time)
       }
-      item.addEventListener('click', () => jumpTo(i))
+      item.addEventListener('click', () => jumpToUrl(entry.url))
       listEl.appendChild(item)
     })
     // 序号 0 =「你在这里」：把当前播放钉在最底部（紧贴胶囊），序号语义自洽。
@@ -471,20 +570,22 @@
     listEl.scrollTop = listEl.scrollHeight // 溢出时停在最新一条（底部）
   }
 
-  function onReady() {
-    dedupeOnArrival()
+  function onReady(backRestore = false) {
+    dedupeOnArrival(backRestore)
     renderChip()
   }
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', onReady)
+    // 不直接把 onReady 当监听器：事件对象会被当成 backRestore 传进去
+    document.addEventListener('DOMContentLoaded', () => onReady())
   } else {
     onReady()
   }
   // bfcache 恢复（原生返回手势回到本页）不触发 DOMContentLoaded，但 pagehide
-  // 已经把本页记进了栈——重跑去重和渲染，否则胶囊把「自己」当成来时路展示
+  // 已经把本页记进了栈——按「回退恢复」语义重跑去重，否则胶囊把「自己」和
+  // 被退掉的前方页面当成来时路展示
   window.addEventListener('pageshow', (e) => {
     if (!e.persisted) return
     leavingViaJump = false
-    onReady()
+    onReady(true)
   })
 })()
