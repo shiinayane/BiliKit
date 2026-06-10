@@ -2,7 +2,7 @@
 // @name         BiliKit · 回程
 // @name:en      BiliKit · Way Back
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.8.2
+// @version      0.8.3
 // @description    视频标签页的来时路：站内跨视频跳转零刷新压扁（历史钉在 1，链接新开的标签左滑即原生关闭），左下角悬浮回退栈点击即跳回并续播。与 BiliKit·浮窗抽屉自动协同。
 // @description:en Flatten in-site cross-video SPA history with zero reloads (history pinned at 1, so Safari's native swipe closes link-opened tabs), and keep a floating back-stack you can click to jump back, resuming playback. Auto-coordinates with BiliKit Float.
 // @author       shiinayane
@@ -242,12 +242,9 @@
       .bwb-root:hover .bwb-chip { opacity: 1; transform: translateY(-1px); }
       .bwb-chip:active { transform: scale(.96); }
       .bwb-list {
-        position: absolute; left: 0; bottom: 100%;
-        /* 透明边框充当与胶囊的视觉间隙：鼠标穿过时仍在列表元素内，hover 不断链 */
-        border-bottom: 10px solid transparent; background-clip: padding-box;
-        display: flex; flex-direction: column; /* 顺序排，最新一条在底部贴近胶囊 */
+        position: absolute; left: 0; bottom: calc(100% + 10px);
+        display: flex; flex-direction: column;
         min-width: 220px; max-width: 320px; max-height: 50vh;
-        overflow: hidden auto; /* 只竖向滚动，横向永不裁内容 */
         background-color: rgba(18,18,22,.94); border-radius: 14px; padding: 6px;
         box-shadow: 0 8px 32px rgba(0,0,0,.42);
         backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
@@ -256,6 +253,15 @@
         /* 离开后延迟 .15s 再开始收起，给指针迁移留宽限 */
         transition: opacity .16s ease .15s, transform .16s ease .15s, visibility 0s linear .31s;
       }
+      /* 列表与胶囊间 10px 间隙的悬停桥：从卡片盒外伸出、什么都不画，指针穿过
+         间隙时仍算在列表上，hover 不断链。
+         （间隙不能用透明 border 做：backdrop-filter 作用于整个边框盒，会在
+         卡片底部留一条「无背景但背后被模糊」的诡异半透明带，圆角也会被吃掉） */
+      .bwb-list::after {
+        content: ''; position: absolute; top: 100%; left: 0; right: 0; height: 10px;
+      }
+      /* 滚动收在内层：卡片自身不裁剪，::after 才能伸出盒外 */
+      .bwb-scroll { overflow: hidden auto; min-height: 0; }
       .bwb-root:hover .bwb-list {
         opacity: 1; visibility: visible; transform: none; pointer-events: auto;
         transition-delay: 0s;
@@ -283,7 +289,9 @@
         white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
       }
       .bwb-item-time {
-        flex: 0 0 auto; font-size: 11px; color: rgba(255,255,255,.4);
+        /* 与 .bwb-now-bars 共用 34px 右列：右缘齐平，标题省略边一致 */
+        flex: 0 0 auto; min-width: 34px; text-align: right;
+        font-size: 11px; color: rgba(255,255,255,.4);
         font-variant-numeric: tabular-nums;
       }
       .bwb-item:hover .bwb-item-time { color: rgba(255,255,255,.65); }
@@ -296,8 +304,11 @@
       .bwb-now { cursor: default; color: #fff; }
       .bwb-now:hover { background: none; color: #fff; }
       .bwb-now .bwb-item-num, .bwb-now:hover .bwb-item-num { color: #fb7299; }
-      /* 播放指示：三根小柱，播放中起伏，暂停时静止在低位 */
-      .bwb-now-bars { flex: 0 0 auto; display: flex; gap: 2px; align-items: flex-end; height: 11px; }
+      /* 播放指示：三根小柱，播放中起伏，暂停时静止在低位；占续播时间的列位 */
+      .bwb-now-bars {
+        flex: 0 0 auto; min-width: 34px; height: 11px;
+        display: flex; gap: 2px; align-items: flex-end; justify-content: flex-end;
+      }
       .bwb-now-bars i { width: 2px; height: 4px; border-radius: 1px; background: #fb7299; }
       .bwb-now.bwb-playing .bwb-now-bars i { animation: bwb-eq .9s ease-in-out infinite; }
       .bwb-now.bwb-playing .bwb-now-bars i:nth-child(2) { animation-delay: -.3s; }
@@ -335,8 +346,11 @@
     chipRoot.className = 'bwb-root'
     chipRoot.append(style)
 
-    listEl = document.createElement('div')
-    listEl.className = 'bwb-list'
+    const card = document.createElement('div')
+    card.className = 'bwb-list'
+    listEl = document.createElement('div') // 行都挂在内层滚动容器上
+    listEl.className = 'bwb-scroll'
+    card.appendChild(listEl)
 
     const chip = document.createElement('button')
     chip.type = 'button'
@@ -355,7 +369,7 @@
     // 悬停展开的瞬间校准「正在播放」行（标题/进度/播放态都以此刻为准）
     chipRoot.addEventListener('mouseenter', updateNowRow)
 
-    chipRoot.append(listEl, chip)
+    chipRoot.append(card, chip)
     document.body.appendChild(chipRoot)
   }
 
