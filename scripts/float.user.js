@@ -2,7 +2,7 @@
 // @name         BiliKit · 浮窗抽屉
 // @name:en      BiliKit · Float
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.18.6
+// @version      0.18.7
 // @description    点击 B 站视频，在页内抽屉中播放，而非跳转新标签页或当前页面。
 // @description:en Click a Bilibili video to play it in an in-page drawer instead of opening a new tab or navigating away.
 // @author       shiinayane
@@ -90,6 +90,9 @@
   // 跟手式滑动关闭：仅对「向右滑出」的形态启用(面板向右拖动跟手关闭)；其余形态用累计阈值回退。
   const FOLLOW_DRAG = CONFIG.mode === 'fullscreen' || CONFIG.mode === 'drawer-right'
   const DRAG_END_MS = 110 // 松手判定：超过此时长无 wheel 视为松手
+  // 启动死区(px)：累计横向位移小于此值不进入跟手（仿系统手势，微小滑动完全不动）；
+  // 松手(110ms 无事件)后累计清零，多次微小滑动不会累加越过死区。
+  const DRAG_START_PX = 32
   const DRAG_CLOSE_RATIO = 0.2 // 慢拖：拖过面板宽度的此比例即关闭，否则回弹
   // 快速甩动即关（仿 Safari 两指返回的速度判定）：单帧 wheel 横向位移峰值达到此值，
   // 即便没拖够 DRAG_CLOSE_RATIO 也关闭。慢而稳的拖动单帧位移小，不会触发，仅靠距离判定。
@@ -667,7 +670,14 @@
     const stepBack = e.deltaX * CONFIG.swipeBackDeltaXSign // 本帧朝「返回方向」的位移
     dragX = Math.max(0, dragX + stepBack)
     if (!dragging) {
+      // 死区内：面板不动、不计峰值，只安排空闲清零，微小滑动不留任何痕迹
+      if (dragX < DRAG_START_PX) {
+        if (dragEndTimer) clearTimeout(dragEndTimer)
+        dragEndTimer = window.setTimeout(endDrag, DRAG_END_MS)
+        return
+      }
       dragging = true
+      dragX = 0 // 越过死区才开始计量，死区距离不计入关闭判定
       dragPeakDX = 0 // 新一次拖拽，重置甩动峰值
       dragPanelW = els.panel.offsetWidth || window.innerWidth // 拖拽期间宽度不变，缓存一次
       // 拖拽期间取消过渡，面板与背景都严格跟手（背景若保留 0.25s 过渡会滞后半拍）
@@ -687,7 +697,11 @@
   // 拖拽「松手」：拖过约 20% 宽度、或快速甩动(仿 Safari 返回的速度判定)则顺势滑出关闭，否则回弹
   function endDrag() {
     dragEndTimer = null
-    if (!dragging || !els) return
+    if (!els) return
+    if (!dragging) {
+      dragX = 0 // 死区内松手：清掉累计，下次滑动从零起算
+      return
+    }
     dragging = false
     const w = dragPanelW || els.panel.offsetWidth || window.innerWidth
     // 距离够 || 甩得够快（且不是甩完又拖回到接近起点 → 用 4% 宽度兜底，避免误关）
