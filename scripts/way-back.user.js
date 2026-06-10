@@ -2,7 +2,7 @@
 // @name         BiliKit · 回程
 // @name:en      BiliKit · Way Back
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.2.1
+// @version      0.2.2
 // @description    视频标签页历史不再堆积：跨视频跳转压扁为 replace；左下角悬浮回退栈，点击即跳回之前的视频并续播；左滑甩动直接关闭标签页回到来处。
 // @description:en Keep video-tab history flat: cross-video jumps use replace, a floating stack lets you click back to any earlier video (resuming playback), and a flick closes the tab.
 // @author       shiinayane
@@ -206,6 +206,7 @@
         backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
         opacity: .55; transition: opacity .15s ease, transform .15s ease;
       }
+      .bwb-chip svg { display: block; flex: 0 0 auto; }
       .bwb-chip .bwb-count { color: #fb7299; font-variant-numeric: tabular-nums; }
       .bwb-root:hover .bwb-chip { opacity: 1; transform: translateY(-1px); }
       .bwb-chip:active { transform: scale(.96); }
@@ -232,12 +233,18 @@
         user-select: none;
       }
       .bwb-item {
-        display: flex; align-items: center; gap: 10px;
+        display: flex; align-items: center; gap: 8px;
         width: 100%; padding: 8px 10px; border: none; border-radius: 9px;
         cursor: pointer; background: none; color: #ddd; font: inherit;
         text-align: left;
       }
       .bwb-item:hover { background: rgba(255,255,255,.1); color: #fff; }
+      .bwb-item-num {
+        flex: 0 0 auto; min-width: 18px; text-align: right;
+        font-size: 11px; color: rgba(255,255,255,.35);
+        font-variant-numeric: tabular-nums; user-select: none;
+      }
+      .bwb-item:hover .bwb-item-num { color: #fb7299; }
       .bwb-item-title {
         flex: 1 1 auto; min-width: 0;
         white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -255,6 +262,8 @@
           border-color: rgba(0,0,0,.08);
           box-shadow: 0 2px 12px rgba(0,0,0,.12);
         }
+        /* 浅底上 B 站粉(#fb7299)对比不足，换更深的粉保证可读 */
+        .bwb-chip .bwb-count { color: #d6336c; }
         .bwb-list {
           background-color: rgba(255,255,255,.95);
           box-shadow: 0 8px 32px rgba(0,0,0,.18);
@@ -262,6 +271,8 @@
         .bwb-head { color: rgba(0,0,0,.4); }
         .bwb-item { color: #333; }
         .bwb-item:hover { background: rgba(0,0,0,.06); color: #000; }
+        .bwb-item-num { color: rgba(0,0,0,.3); }
+        .bwb-item:hover .bwb-item-num { color: #d6336c; }
         .bwb-item-time { color: rgba(0,0,0,.35); }
         .bwb-item:hover .bwb-item-time { color: rgba(0,0,0,.55); }
       }
@@ -277,12 +288,20 @@
     chip.type = 'button'
     chip.className = 'bwb-chip'
     chip.title = '点击回退一层；悬停查看来时路'
+    // 文本字符「↩」的字形基线随字体漂，与数字对不齐 → 用内联 SVG，flex 居中像素级对齐
+    chip.innerHTML = `
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
+           stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M9 14 4 9l5-5"/>
+        <path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>
+      </svg>
+      <span class="bwb-count"></span>`
     chip.addEventListener('click', () => jumpTo(readStack().length - 1)) // 回退一层 = 跳回栈顶
 
     chipRoot.append(list, chip)
     document.body.appendChild(chipRoot)
     chipRoot.__list = list
-    chipRoot.__chip = chip
+    chipRoot.__count = chip.querySelector('.bwb-count')
   }
 
   function fmtTime(t) {
@@ -296,7 +315,7 @@
     const stack = readStack()
     chipRoot.style.display = stack.length ? '' : 'none' // 栈空整个隐藏
     if (!stack.length) return
-    chipRoot.__chip.innerHTML = `↩ <span class="bwb-count">${stack.length}</span>`
+    chipRoot.__count.textContent = String(stack.length)
     const list = chipRoot.__list
     list.textContent = ''
     const head = document.createElement('div')
@@ -307,6 +326,11 @@
       const item = document.createElement('button')
       item.type = 'button'
       item.className = 'bwb-item'
+      // 序号 = 回退层数：贴近胶囊的最新一条是 1，越往上越多
+      const num = document.createElement('span')
+      num.className = 'bwb-item-num'
+      num.textContent = String(stack.length - i)
+      item.appendChild(num)
       const title = document.createElement('span')
       title.className = 'bwb-item-title'
       title.textContent = entry.title
