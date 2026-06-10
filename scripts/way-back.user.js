@@ -2,9 +2,9 @@
 // @name         BiliKit · 回程
 // @name:en      BiliKit · Way Back
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.4.0
-// @description    视频标签页的来时路：跨视频跳转压扁为 replace（左滑关闭的硬前提），左下角悬浮回退栈点击即跳回并续播，左滑甩动直接关闭标签页。与 BiliKit·浮窗抽屉自动协同。
-// @description:en Flatten cross-video history (the prerequisite for flick-close), keep a floating back-stack you can click to jump back (resuming playback), and flick left to close the tab. Auto-coordinates with BiliKit Float.
+// @version      0.5.0
+// @description    视频标签页的来时路：站内跨视频跳转零刷新压扁，左下角悬浮回退栈点击即跳回并续播，左滑甩动直接关闭标签页。与 BiliKit·浮窗抽屉自动协同。
+// @description:en Flatten in-site cross-video SPA history with zero reloads, keep a floating back-stack you can click to jump back (resuming playback), and flick left to close the tab. Auto-coordinates with BiliKit Float.
 // @author       shiinayane
 // @match        *://www.bilibili.com/video/*
 // @match        *://www.bilibili.com/bangumi/play/*
@@ -18,12 +18,13 @@
  * 都不该靠一格格按返回。
  *
  * 三件套：
- * 1. 历史压扁 —— 这是「左滑=关闭」的硬前提：历史一旦增长，Safari 原生返回
- *    手势就会优先接管左滑（页面 JS 无法抢），轮不到本脚本。跨视频跳转一律
- *    replace 化（SPA pushState 改写 + 链接点击 location.replace），深度钉在 1。
- *    与 BiliKit·Float 协同：float 在场时视频链接点击由它的抽屉接管（根本不
- *    导航），本脚本让位；float 抽屉条目在历史顶时跳过 pushState 改写。
- *    同一视频内的分 P 切换保留 push。
+ * 1. 历史压扁（仅 SPA）—— 站内跨视频跳转由 B 站自己的 pushState 完成，包一层
+ *    改写成 replaceState：零重载、历史深度不增，左滑稳定归本脚本。
+ *    不拦截链接点击——拦截会把 B 站的 SPA 跳转打断成整页重载（也曾与 Float
+ *    的点击接管叠加造成双重加载）。真·整页导航（少数链接、JS 赋值 location）
+ *    会压一条历史：此时左滑可能被原生返回手势接管，但回退栈照样记录了来时路，
+ *    点胶囊即可跳回，window.close() 也不看栈深度。
+ *    float 抽屉条目在历史顶时跳过 pushState 改写；同一视频内的分 P 切换保留 push。
  * 2. 回退栈 —— 被压扁的「来时路」记在 sessionStorage（按标签页隔离，关页即清）。
  *    左下角悬浮胶囊「↩ N」：点胶囊回退一层；悬停展开列表点任意一项跳回
  *    （location.replace + ?t= 续播）。跳回第 i 层丢弃其上的层。
@@ -146,36 +147,9 @@
     return origPush.apply(this, args)
   }
 
-  // 链接点击的整页导航：浏览器自身压栈，pushState 包不住，捕获阶段改写为 location.replace。
-  // float 在场时让位：它的抽屉接管视频链接点击，根本不导航（不堆历史、不双重加载）。
-  document.addEventListener(
-    'click',
-    (e) => {
-      if (window.__BILIKIT_FLOAT__) return // 协同：抽屉负责点击，本脚本只管 SPA 压扁与甩动
-      if (e.button !== 0 || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return // 修饰键交给浏览器
-      const a = (e.target instanceof Element ? e.target : null)?.closest('a[href]')
-      if (!a) return
-      if (a.target && a.target !== '_self') return // target=_blank 等交给浏览器
-      if (!/\/(video\/|bangumi\/play\/)/i.test(a.href)) return // 廉价预筛，再做 URL 解析
-      let url
-      try {
-        url = new URL(a.href, location.href)
-      } catch (_) {
-        return
-      }
-      if (url.origin !== location.origin) return
-      const targetId = videoIdOf(url.href)
-      if (!targetId || targetId === videoIdOf(location.href)) return // 非视频或同视频不干预
-      e.preventDefault()
-      e.stopPropagation()
-      recordEntry(location.href, document.title, currentVideoTime())
-      location.replace(url.href) // 整页加载但不压历史
-    },
-    true,
-  )
-
-  // 兜底：两层都包不住的整页离开（JS 赋值 location.href、无 <a> 的卡片等）。
-  // 这类导航仍会压一条历史（无法阻止），但至少来时路被记下；
+  // 兜底：pushState 包不住的整页离开（真·整页链接、JS 赋值 location.href 等）。
+  // 不拦截点击——拦了会把 B 站自己的 SPA 跳转打断成整页重载，得不偿失。
+  // 这类导航会压一条历史（无法阻止），但来时路被记下，回退栈照样可用；
   // 目的地未知也没关系——若下一页是同一视频（刷新/返回），加载时的去重会弹掉它。
   window.addEventListener('pagehide', () => {
     recordEntry(location.href, document.title, currentVideoTime())
