@@ -2,7 +2,7 @@
 // @name         BiliKit · 主题同步
 // @name:en      BiliKit · Theme Sync
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.4.4
+// @version      0.4.5
 // @description    让 B 站跟随系统深浅色，全站无刷新实时切换并同步所有 Tab。
 // @description:en Make Bilibili follow the system light/dark theme, switching live across the whole site with no reload and syncing every tab.
 // @author       shiinayane
@@ -64,6 +64,10 @@
     const root = document.documentElement;
     root.classList.toggle('bili_dark', dark);
     root.classList.toggle('night-mode', dark);
+    // 整页加载的首帧在主题表就绪前是白底，深色模式下表现为「闪白」
+    // （跨文档回退没命中 bfcache 时尤其明显）；document-start 直接给 <html>
+    // 垫上深色底，首帧即深色。浅色模式清掉，不与 B 站自己的背景打架。
+    root.style.backgroundColor = dark ? '#18191c' : '';
   }
 
   apply(); // document-start
