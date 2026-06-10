@@ -27,9 +27,16 @@ hosts=(
 infile="${1:-/dev/stdin}"
 [ "$infile" != "/dev/stdin" ] && [ ! -f "$infile" ] && { echo "找不到文件: $infile"; exit 1; }
 raw=$(mktemp); n=0
-while IFS= read -r URL; do
+while IFS= read -r URL || [ -n "$URL" ]; do
+  # 擦掉控制台复制常带的首尾引号/空白/回车，否则主机替换错位、全镜像 403
+  URL=$(printf '%s' "$URL" | sed -E "s/^[[:space:]\"']+//; s/[[:space:]\"'$(printf '\r')]+$//")
   [ -z "$URL" ] && continue
   case "$URL" in \#*) continue ;; esac
+  # 音频流(30216/30232/30250/30251/30280)文件太小，测的是延迟不是吞吐 → 警告
+  case "$URL" in
+    *-30216.m4s*|*-30232.m4s*|*-30250.m4s*|*-30251.m4s*|*-30280.m4s*)
+      echo "  ⚠ 这是音频流，文件小测不准吞吐，建议换视频流样本" >&2 ;;
+  esac
   n=$((n + 1))
   echo "[$n] $(echo "$URL" | sed -E 's#\?.*##')" >&2
   for h in "${hosts[@]}"; do

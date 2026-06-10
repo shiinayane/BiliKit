@@ -25,8 +25,12 @@
 
 ```js
 performance.getEntriesByType('resource').map(e=>e.name)
-  .filter(u=>/\.m4s/.test(u) && /bilivideo\.com/.test(u) && /upsig=/.test(u)).slice(-1)[0]
+  .filter(u=>/\.m4s/.test(u) && /bilivideo\.com/.test(u) && /upsig=/.test(u)
+    && !/-(30216|30232|30250|30251|30280)\.m4s/.test(u)) // 排除音频，只要视频流(大文件)
+  .slice(-1)[0]
 ```
+
+> **务必取视频流，别取音频**：音频 `.m4s` 只有几 MB，探测请求一下拉完、测的是延迟不是带宽，会把延迟低的海外节点(如 cosov)抬成假第一。上面的过滤已排除音频 ID（30232 等）。取到的应是 `...-30080/30112/30116/100027.m4s` 这类视频流。
 
 每条占一行，存进 `urls.txt`（`#` 开头的行会被忽略，可加注释标冷热）。
 
