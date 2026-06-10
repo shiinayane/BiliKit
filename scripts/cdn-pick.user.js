@@ -2,7 +2,7 @@
 // @name         BiliKit · CDN 优选
 // @name:en      BiliKit · CDN Pick
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.1.0
+// @version      0.2.0
 // @description    把 B 站视频分片重定向到指定 CDN 镜像，绕开被分到的慢节点（海外 Akamai 等）。Safari 友好：页面世界注入、不依赖 GM/unsafeWindow，故能拦到播放器真正的请求（CCB 等脚本在 Safari Userscripts 下因 grant 被注入隔离世界而失效）。
 // @description:en Redirect Bilibili video segments to a chosen CDN mirror, bypassing the slow node you were assigned (e.g. overseas Akamai). Safari-friendly: page-world injection without GM/unsafeWindow.
 // @author       shiinayane
@@ -37,12 +37,13 @@
   /* ------------------------------------------------------------------ *
    * 配置
    * ------------------------------------------------------------------ */
-  // 想换的镜像主机（裸域名）。换节点就改这一行、刷新即可。常用候选：
-  //   upos-sz-mirroralib.bilivideo.com   阿里大陆（回源快，冷门/新内容友好）
-  //   upos-sz-mirrorcosov.bilivideo.com  腾讯海外（你 HAR 实测 56Mbps 的快节点）
-  //   upos-sz-mirrorhw.bilivideo.com     华为   /  upos-sz-mirroraliov.bilivideo.com  阿里海外
-  // 置空字符串 '' = 关闭本脚本（不改写）。
-  const TARGET_HOST = 'upos-sz-mirroralib.bilivideo.com'
+  // 想换的镜像主机（裸域名）。换节点就改这一行、刷新即可。置空 '' = 关闭。
+  // 2026-06 日本实测吞吐（同一签名样本逐镜像测前 20MB，越高越好）：
+  //   大陆镜像 ~43Mbps 全面胜出（回源近、内容现成）：
+  //     upos-sz-mirrorhw   43.5 ★首选   upos-sz-mirrorali  43.4   upos-sz-upcdnbda2  41.2
+  //   海外镜像延迟低但吞吐差：cosov 17.8（延迟仅63ms）、aliov 8.7
+  //   —— 延迟会骗人，务必按吞吐选；坏窗口最好用 /tmp/cdntest.sh 重测一轮
+  const TARGET_HOST = 'upos-sz-mirrorhw.bilivideo.com'
 
   const DEBUG = true // 调试期开着看改写日志；定稿后改 false
   const log = (...a) => { if (DEBUG) console.log('[CDN优选]', ...a) }
