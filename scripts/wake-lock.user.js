@@ -2,7 +2,7 @@
 // @name         BiliKit · 防睡眠
 // @name:en      BiliKit · Wake Lock
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.2.0
+// @version      0.2.1
 // @description    防止使用 Safari 在 B 站播放视频时休眠或睡眠。
 // @description:en Keep Safari from sleeping while playing a Bilibili video.
 // @match        https://www.bilibili.com/video/*
@@ -55,6 +55,13 @@
           retryWakeLock();
         }
       });
+
+      // await 在途时用户可能已暂停/切走：拿到了也立刻放掉。
+      // release 监听里的 paused 检查会拦住无谓的重试。
+      if (!currentVideo || currentVideo.paused || document.visibilityState !== 'visible') {
+        log('stale acquire, releasing');
+        await sentinel.release();
+      }
     } catch (err) {
       log('failed:', err);
       retryWakeLock();
@@ -86,23 +93,35 @@
     } catch (_) {}
   }
 
-  // 媒体事件不冒泡但会经过捕获阶段，在 document 上统一代理即可感知任意 <video>
-  // 的开播/暂停/结束——换 P、播放器重建后的新元素一开播就会被接管，
-  // 无需 MutationObserver 盯着弹幕页的高频 DOM 变动。
-  document.addEventListener('playing', (e) => {
-    if (!(e.target instanceof HTMLVideoElement)) return;
-    if (currentVideo !== e.target) {
-      log('bind new video');
-      currentVideo = e.target;
-    }
-    requestWakeLock();
-  }, true);
-
+  // 停播信号直接挂在被接管的元素上，而非 document 捕获代理：
+  // B 站重建播放器时会把正在播的 <video> 移出 DOM，脱离后元素上触发的
+  // pause/ended 没有祖先链，document 捕获听不到——直挂监听不受影响。
+  // emptied 兜底元素被复用重置（load()/换 src）的情况。
   const onMediaStop = (e) => {
     if (e.target === currentVideo) releaseWakeLock();
   };
-  document.addEventListener('pause', onMediaStop, true);
-  document.addEventListener('ended', onMediaStop, true);
+  function bindVideo(v) {
+    if (currentVideo === v) return;
+    if (currentVideo) {
+      currentVideo.removeEventListener('pause', onMediaStop);
+      currentVideo.removeEventListener('ended', onMediaStop);
+      currentVideo.removeEventListener('emptied', onMediaStop);
+    }
+    log('bind new video');
+    currentVideo = v;
+    v.addEventListener('pause', onMediaStop);
+    v.addEventListener('ended', onMediaStop);
+    v.addEventListener('emptied', onMediaStop);
+  }
+
+  // 开播信号仍走 document 捕获代理（媒体事件不冒泡但会经过捕获阶段）：
+  // 换 P、播放器重建后的新元素一开播就会被接管，无需 MutationObserver
+  // 盯着弹幕页的高频 DOM 变动。
+  document.addEventListener('playing', (e) => {
+    if (!(e.target instanceof HTMLVideoElement)) return;
+    bindVideo(e.target);
+    requestWakeLock();
+  }, true);
 
   // 监听页面可见性：切回可见且仍在播放时重新申请
   document.addEventListener('visibilitychange', () => {
@@ -119,7 +138,7 @@
   // 启动时已在播放的视频不会再触发 playing，主动找一次
   const initial = document.querySelector('video');
   if (initial && !initial.paused) {
-    currentVideo = initial;
+    bindVideo(initial);
     requestWakeLock();
   }
 
