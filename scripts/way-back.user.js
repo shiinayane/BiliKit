@@ -2,7 +2,7 @@
 // @name         BiliKit · 回程
 // @name:en      BiliKit · Way Back
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.8.4
+// @version      0.8.5
 // @description    视频标签页的来时路：站内跨视频跳转零刷新压扁（历史钉在 1，链接新开的标签左滑即原生关闭），左下角悬浮回退栈点击即跳回并续播。与 BiliKit·浮窗抽屉自动协同。
 // @description:en Flatten in-site cross-video SPA history with zero reloads (history pinned at 1, so Safari's native swipe closes link-opened tabs), and keep a floating back-stack you can click to jump back, resuming playback. Auto-coordinates with BiliKit Float.
 // @author       shiinayane
@@ -379,8 +379,7 @@
     listEl.className = 'bwb-scroll'
     card.appendChild(listEl)
 
-    const chip = document.createElement('button')
-    chip.type = 'button'
+    const chip = document.createElement('div') // 同上，避开 WebKit 的 button-flex bug
     chip.className = 'bwb-chip'
     chip.title = '点击回退一层；悬停查看来时路'
     // 文本字符「↩」的字形基线随字体漂，与数字对不齐 → 用内联 SVG，flex 居中像素级对齐
@@ -431,8 +430,9 @@
     head.textContent = `来时路 · ${stack.length} 层`
     listEl.appendChild(head)
     stack.forEach((entry, i) => {
-      const item = document.createElement('button')
-      item.type = 'button'
+      // 不用 <button>：WebKit 的按钮不能当 flex 容器（内容被包进匿名盒，
+      // 子项 flex 全失效——时间戳跟在标题后而非右对齐、长标题把时间挤出行外）
+      const item = document.createElement('div')
       item.className = 'bwb-item'
       // 序号 = 回退层数：贴近底部的最新一条是 1，越往上越多
       const num = document.createElement('span')

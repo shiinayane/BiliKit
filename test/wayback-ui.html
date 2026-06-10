@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>测试视频标题_哔哩哔哩_bilibili</title>
+  <style>body { background: #222; margin: 0; height: 100vh; }</style>
+</head>
+<body>
+  <video muted></video>
+  <script>
+    // 预置长短混合的栈数据，复现用户报告的布局
+    sessionStorage.setItem('bilikit-wayback-stack', JSON.stringify([
+      { url: 'https://www.bilibili.com/video/BV1xx411c7ma', title: '短名', t: 29 },
+      { url: 'https://www.bilibili.com/video/BV1xx411c7mb', title: '这是一个非常非常非常长的视频标题用来测试省略号截断行为是否会把时间戳挤出去', t: 44 },
+      { url: 'https://www.bilibili.com/video/BV1xx411c7mc', title: '中等长度的标题测试一下', t: 0 },
+      { url: 'https://www.bilibili.com/video/BV1xx411c7md', title: '五阶豌豆射手', t: 15 },
+    ]))
+  </script>
+  <script src="../scripts/way-back.user.js"></script>
+  <script>
+    // 强制列表常显，便于截图
+    addEventListener('load', () => {
+      const s = document.createElement('style')
+      s.textContent = '.bwb-list { opacity: 1 !important; visibility: visible !important; transform: none !important; pointer-events: auto !important; }'
+      document.head.appendChild(s)
+    })
+  </script>
+</body>
+</html>
