@@ -2,7 +2,7 @@
 // @name         BiliKit · 清晰度自适应
 // @name:en      BiliKit · Adaptive Quality
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.2.0
+// @version      0.3.0
 // @description    替代 B 站那个一上来就顶 4K 然后卡死的「自动」：从稳妥档起步，网速充裕才逐档上爬，卡顿立刻降档，永不卡死在扛不住的清晰度。
 // @description:en Replace Bilibili's "Auto" (which jumps to 4K and stalls): start at a safe level, climb up only when bandwidth is ample, drop instantly on stalls — never stuck buffering at a tier your network can't sustain.
 // @author       shiinayane
@@ -50,7 +50,7 @@
 
   // 调参：装好后先设 true 跑一次，控制台会自报探测到的档位/当前档/播放器结构，
   // 确认换档选择器命中后再设回 false
-  const DEBUG = false
+  const DEBUG = true // 调参期开着看心跳；定稿后改 false
   const log = (...a) => { if (DEBUG) console.log('[QualityWatch]', ...a) }
 
   // 清晰度档位码（qn）→ 名称。B 站菜单项的 data-value 即此码。
@@ -68,11 +68,13 @@
   const STALL_WINDOW_MS = 25000 // 卡顿计数的滑动窗口
   const STALL_TRIGGER = 2 // 窗口内卡顿达到此次数 → 降档
   const LONG_STALL_MS = 3500 // 单次卡顿持续超过此值 → 立即降档
-  const SMOOTH_CLIMB_MS = 90000 // 平稳且缓冲充裕持续这么久 → 升一档
-  const BACKOFF_MS = 300000 // 刚因卡顿降下来的那一档，锁定这么久不回爬
+  const SMOOTH_CLIMB_MS = 60000 // 缓冲稳在安全线之上、无卡顿持续这么久 → 升一档
+  const BACKOFF_MS = 90000 // 刚因卡顿降下来的那一档，锁定这么久不回爬（防来回横跳）
   const CONFIRM_MS = 8000 // 命令切档后这么久仍没切到 → 判定该档不可用
   const BUFFER_LOW = 2 // 播放中缓冲领先低于此秒数 = 危险
-  const BUFFER_HIGH = 12 // 缓冲领先高于此秒数 = 健康，可考虑升档
+  const CLIMB_SAFE = 5 // 缓冲领先稳稳高于此秒数（且无卡顿）才累计升档计时
+  // 说明：升档不再要求「缓冲堆到很高」（B 站前向缓冲未必堆得上去），改为
+  // 「稳稳高于危险线、没卡顿、持续够久」——更贴合播放器真实缓冲深度。
 
   /* ------------------------------------------------------------------ *
    * 状态
@@ -261,13 +263,23 @@
       }
     }
 
+    const ahead = bufferedAhead()
+    if (DEBUG) {
+      const lockedNow = Object.keys(lockedUntil).filter((q) => lockedUntil[q] > t).map(Number)
+      log('tick', {
+        档: QN_LABEL[targetQn], 缓冲: ahead.toFixed(1), 卡顿数: stalls.length,
+        平稳秒: smoothSince ? ((t - smoothSince) / 1000).toFixed(0) : '-',
+        冷却中: lockedNow.map((q) => QN_LABEL[q]),
+        可选: range.map((q) => QN_LABEL[q]),
+      })
+    }
+
     // —— 切档宽限期：换流必然重缓冲，不评估卡顿 ——
     if (t - lastSwitchAt < SWITCH_GRACE_MS) { smoothSince = t; return }
 
     // —— 卡顿 → 降档 ——
     stalls = stalls.filter((ts) => t - ts < STALL_WINDOW_MS)
     const longStalling = waitingSince && t - waitingSince > LONG_STALL_MS
-    const ahead = bufferedAhead()
     if (stalls.length >= STALL_TRIGGER || longStalling) {
       const lower = nextDown(targetQn, range)
       if (lower) {
@@ -279,8 +291,8 @@
       return
     }
 
-    // —— 平稳且缓冲充裕够久 → 升一档 ——
-    if (ahead >= BUFFER_HIGH) {
+    // —— 缓冲稳在安全线之上、无卡顿、持续够久 → 升一档 ——
+    if (ahead >= CLIMB_SAFE && !waitingSince) {
       if (!smoothSince) smoothSince = t
       if (t - smoothSince >= SMOOTH_CLIMB_MS) {
         const upper = nextUp(targetQn, range)
@@ -288,7 +300,7 @@
         smoothSince = t // 不论升没升都重置计时，避免连环跳档
       }
     } else {
-      smoothSince = t // 缓冲不够充裕，升档计时重来
+      smoothSince = t // 跌破安全线或正在卡，升档计时重来
     }
   }
 
