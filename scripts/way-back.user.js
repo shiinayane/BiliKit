@@ -2,7 +2,7 @@
 // @name         BiliKit · 回程
 // @name:en      BiliKit · Way Back
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.2.0
+// @version      0.2.1
 // @description    视频标签页历史不再堆积：跨视频跳转压扁为 replace；左下角悬浮回退栈，点击即跳回之前的视频并续播；左滑甩动直接关闭标签页回到来处。
 // @description:en Keep video-tab history flat: cross-video jumps use replace, a floating stack lets you click back to any earlier video (resuming playback), and a flick closes the tab.
 // @author       shiinayane
@@ -194,32 +194,77 @@
     style.textContent = `
       .bwb-root {
         position: fixed; left: 16px; bottom: 24px; z-index: 2147483600;
-        font: 13px/1.5 -apple-system, sans-serif;
+        font: 13px/1.5 -apple-system, "PingFang SC", sans-serif;
       }
       .bwb-chip {
-        display: flex; align-items: center; gap: 4px;
-        padding: 7px 12px; border: none; border-radius: 18px; cursor: pointer;
-        background: rgba(18,18,22,.88); color: #fff;
-        box-shadow: 0 2px 12px rgba(0,0,0,.3);
-        backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
-        opacity: .55; transition: opacity .15s ease;
+        display: flex; align-items: center; gap: 6px;
+        height: 34px; padding: 0 14px; border-radius: 17px; cursor: pointer;
+        border: 1px solid rgba(255,255,255,.08);
+        background: rgba(18,18,22,.86); color: #fff;
+        font: inherit; font-weight: 500;
+        box-shadow: 0 2px 12px rgba(0,0,0,.28);
+        backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+        opacity: .55; transition: opacity .15s ease, transform .15s ease;
       }
-      .bwb-root:hover .bwb-chip { opacity: 1; }
+      .bwb-chip .bwb-count { color: #fb7299; font-variant-numeric: tabular-nums; }
+      .bwb-root:hover .bwb-chip { opacity: 1; transform: translateY(-1px); }
+      .bwb-chip:active { transform: scale(.96); }
       .bwb-list {
-        position: absolute; left: 0; bottom: calc(100% + 8px);
-        display: none; flex-direction: column-reverse; /* 栈顶（最近）贴近胶囊 */
-        min-width: 200px; max-width: 300px; max-height: 50vh; overflow-y: auto;
-        background: rgba(18,18,22,.94); border-radius: 12px; padding: 6px;
-        box-shadow: 0 6px 28px rgba(0,0,0,.4);
+        position: absolute; left: 0; bottom: 100%;
+        /* 透明边框充当与胶囊的视觉间隙：鼠标穿过时仍在列表元素内，hover 不断链 */
+        border-bottom: 10px solid transparent; background-clip: padding-box;
+        display: flex; flex-direction: column; /* 顺序排，最新一条在底部贴近胶囊 */
+        min-width: 220px; max-width: 320px; max-height: 50vh; overflow-y: auto;
+        background-color: rgba(18,18,22,.94); border-radius: 14px; padding: 6px;
+        box-shadow: 0 8px 32px rgba(0,0,0,.42);
+        backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+        opacity: 0; visibility: hidden; transform: translateY(6px);
+        pointer-events: none;
+        /* 离开后延迟 .15s 再开始收起，给指针迁移留宽限 */
+        transition: opacity .16s ease .15s, transform .16s ease .15s, visibility 0s linear .31s;
       }
-      .bwb-root:hover .bwb-list { display: flex; }
+      .bwb-root:hover .bwb-list {
+        opacity: 1; visibility: visible; transform: none; pointer-events: auto;
+        transition-delay: 0s;
+      }
+      .bwb-head {
+        padding: 4px 10px 6px; font-size: 11px; color: rgba(255,255,255,.45);
+        user-select: none;
+      }
       .bwb-item {
-        display: block; width: 100%; padding: 7px 10px; border: none;
-        border-radius: 8px; cursor: pointer; background: none; color: #ddd;
-        font: inherit; text-align: left;
+        display: flex; align-items: center; gap: 10px;
+        width: 100%; padding: 8px 10px; border: none; border-radius: 9px;
+        cursor: pointer; background: none; color: #ddd; font: inherit;
+        text-align: left;
+      }
+      .bwb-item:hover { background: rgba(255,255,255,.1); color: #fff; }
+      .bwb-item-title {
+        flex: 1 1 auto; min-width: 0;
         white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
       }
-      .bwb-item:hover { background: rgba(255,255,255,.12); color: #fff; }
+      .bwb-item-time {
+        flex: 0 0 auto; font-size: 11px; color: rgba(255,255,255,.4);
+        font-variant-numeric: tabular-nums;
+      }
+      .bwb-item:hover .bwb-item-time { color: rgba(255,255,255,.65); }
+
+      /* 浅色系统主题（theme-sync 让 B 站跟随系统，这里一并跟随） */
+      @media (prefers-color-scheme: light) {
+        .bwb-chip {
+          background: rgba(255,255,255,.9); color: #18191c;
+          border-color: rgba(0,0,0,.08);
+          box-shadow: 0 2px 12px rgba(0,0,0,.12);
+        }
+        .bwb-list {
+          background-color: rgba(255,255,255,.95);
+          box-shadow: 0 8px 32px rgba(0,0,0,.18);
+        }
+        .bwb-head { color: rgba(0,0,0,.4); }
+        .bwb-item { color: #333; }
+        .bwb-item:hover { background: rgba(0,0,0,.06); color: #000; }
+        .bwb-item-time { color: rgba(0,0,0,.35); }
+        .bwb-item:hover .bwb-item-time { color: rgba(0,0,0,.55); }
+      }
     `
     chipRoot = document.createElement('div')
     chipRoot.className = 'bwb-root'
@@ -240,6 +285,10 @@
     chipRoot.__chip = chip
   }
 
+  function fmtTime(t) {
+    return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`
+  }
+
   function renderChip() {
     if (!CONFIG.showStack) return
     ensureChip()
@@ -247,18 +296,32 @@
     const stack = readStack()
     chipRoot.style.display = stack.length ? '' : 'none' // 栈空整个隐藏
     if (!stack.length) return
-    chipRoot.__chip.textContent = `↩ ${stack.length}`
+    chipRoot.__chip.innerHTML = `↩ <span class="bwb-count">${stack.length}</span>`
     const list = chipRoot.__list
     list.textContent = ''
+    const head = document.createElement('div')
+    head.className = 'bwb-head'
+    head.textContent = `来时路 · ${stack.length} 层`
+    list.appendChild(head)
     stack.forEach((entry, i) => {
       const item = document.createElement('button')
       item.type = 'button'
       item.className = 'bwb-item'
-      item.textContent = entry.title
-      item.title = entry.t > 5 ? `${entry.title}（续播 ${Math.floor(entry.t / 60)}:${String(entry.t % 60).padStart(2, '0')}）` : entry.title
+      const title = document.createElement('span')
+      title.className = 'bwb-item-title'
+      title.textContent = entry.title
+      item.title = entry.title
+      item.appendChild(title)
+      if (entry.t > 5) {
+        const time = document.createElement('span')
+        time.className = 'bwb-item-time'
+        time.textContent = fmtTime(entry.t)
+        item.appendChild(time)
+      }
       item.addEventListener('click', () => jumpTo(i))
       list.appendChild(item)
     })
+    list.scrollTop = list.scrollHeight // 溢出时停在最新一条（底部）
   }
 
   if (document.readyState === 'loading') {
