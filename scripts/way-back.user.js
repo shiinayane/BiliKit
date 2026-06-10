@@ -2,9 +2,9 @@
 // @name         BiliKit · 回程
 // @name:en      BiliKit · Way Back
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.6.0
-// @description    视频标签页的来时路：站内跨视频跳转零刷新压扁，左下角悬浮回退栈点击即跳回并续播，左滑甩动直接关闭标签页。与 BiliKit·浮窗抽屉自动协同。
-// @description:en Flatten in-site cross-video SPA history with zero reloads, keep a floating back-stack you can click to jump back (resuming playback), and flick left to close the tab. Auto-coordinates with BiliKit Float.
+// @version      0.7.0
+// @description    视频标签页的来时路：站内跨视频跳转零刷新压扁（历史钉在 1，链接新开的标签左滑即原生关闭），左下角悬浮回退栈点击即跳回并续播。与 BiliKit·浮窗抽屉自动协同。
+// @description:en Flatten in-site cross-video SPA history with zero reloads (history pinned at 1, so Safari's native swipe closes link-opened tabs), and keep a floating back-stack you can click to jump back, resuming playback. Auto-coordinates with BiliKit Float.
 // @author       shiinayane
 // @match        *://www.bilibili.com/video/*
 // @match        *://www.bilibili.com/bangumi/play/*
@@ -17,19 +17,20 @@
  * 解决的场景：标签页里连续跳了很多视频后，「回到之前的某个视频」和「看完离开」
  * 都不该靠一格格按返回。
  *
- * 三件套：
+ * 两件套：
  * 1. 历史压扁（仅 SPA）—— 站内跨视频跳转由 B 站自己的 pushState 完成，包一层
- *    改写成 replaceState：零重载、历史深度不增，左滑稳定归本脚本。
+ *    改写成 replaceState：零重载、历史深度钉在 1。由此白赚 Safari 的原生行为：
+ *    链接自动新开的标签页（B 站视频链接都是 target=_blank）只要历史保持 1，
+ *    两指左滑 = 关闭标签页并回到来源页——「关闭」不归本脚本管，零适配、
+ *    零误触面，与 BiliKit·Float 天然共存（⌘点击等手动开的标签 Safari 本就
+ *    不给此待遇，视为各自独立，不在处理范围内）。
  *    不拦截链接点击——拦截会把 B 站的 SPA 跳转打断成整页重载（也曾与 Float
  *    的点击接管叠加造成双重加载）。真·整页导航（少数链接、JS 赋值 location）
- *    会压一条历史：此时左滑可能被原生返回手势接管，但回退栈照样记录了来时路，
- *    点胶囊即可跳回，window.close() 也不看栈深度。
+ *    会压一条历史：左滑变成先回退一格，回退栈照样记录了来时路。
  *    float 抽屉打开期间（html.bfloat-open）跳过改写但照记栈；分 P 切换保留 push。
  * 2. 回退栈 —— 被压扁的「来时路」记在 sessionStorage（按标签页隔离，关页即清）。
  *    左下角悬浮胶囊「↩ N」：点胶囊回退一层；悬停展开列表点任意一项跳回
  *    （location.replace + ?t= 续播）。跳回第 i 层丢弃其上的层。
- * 3. 甩动关闭 —— 左滑快速甩动 → window.close()，不设门控（实测 Safari 不看
- *    栈深度；若某实现拒绝，toast 提示 ⌘W 兜底）。误关可 ⌘⇧T 找回。
  */
 (() => {
   'use strict'
@@ -47,20 +48,6 @@
   const CONFIG = {
     showStack: true, // 左下角悬浮回退栈
     resumeTime: true, // 跳回时带上离开时的播放进度(?t=)续播
-    flickClose: true, // 甩动关闭标签页（误关可 ⌘⇧T 找回）
-    swipeBackDeltaXSign: -1, // 「返回」对应的 deltaX 方向：-1=向右滑(macOS 自然滚动)；反了改 1
-  }
-
-  // 甩动判定：死区累计 + 真实速度（px/ms，刷新率无关）。速度只在「手势内」
-  // 相邻事件间计算——孤立的单次滚轮拨动（间隔 > idleMs）不产生速度样本，
-  // 侧拨滚轮鼠标的一格拨动不会被算成「甩」。
-  // 数值与 float.user.js 的 DRAG_START_PX/DRAG_FLICK_VELOCITY/DRAG_END_MS 对齐
-  // （32 / 2.4 / 150），关抽屉和关标签页手感一致；调手感时两边一起改。
-  const SWIPE = {
-    deadZone: 32, // px：累计横向位移小于此值完全忽略
-    flickVelocity: 2.4, // px/ms：手势内速度峰值达到此值才算「甩」
-    minTravel: 80, // px：本次手势总位移下限
-    idleMs: 150, // ms：超过此时长无 wheel 视为松手，结算本次手势
   }
 
   const STACK_KEY = 'bilikit-wayback-stack'
@@ -270,13 +257,6 @@
         font-variant-numeric: tabular-nums;
       }
       .bwb-item:hover .bwb-item-time { color: rgba(255,255,255,.65); }
-      .bwb-toast {
-        position: fixed; left: 50%; bottom: 48px; transform: translateX(-50%);
-        z-index: 2147483500; background: rgba(18,18,22,.92); color: #fff;
-        font: 13px/1 -apple-system, "PingFang SC", sans-serif;
-        padding: 10px 16px; border-radius: 20px;
-        opacity: 0; transition: opacity .2s ease; pointer-events: none;
-      }
 
       /* 浅色系统主题（theme-sync 让 B 站跟随系统，这里一并跟随） */
       @media (prefers-color-scheme: light) {
@@ -298,7 +278,6 @@
         .bwb-item:hover .bwb-item-num { color: #d6336c; }
         .bwb-item-time { color: rgba(0,0,0,.35); }
         .bwb-item:hover .bwb-item-time { color: rgba(0,0,0,.55); }
-        .bwb-toast { background: rgba(255,255,255,.95); color: #18191c; }
       }
     `
     chipRoot = document.createElement('div')
@@ -324,7 +303,7 @@
     chip.addEventListener('click', () => jumpTo(-1)) // 回退一层 = 跳回栈顶
 
     chipRoot.append(listEl, chip)
-    chipRoot.style.display = 'none' // 默认隐藏，renderChip 在栈非空时解除（toast 借样式表时不会带出空胶囊）
+    chipRoot.style.display = 'none' // 默认隐藏，renderChip 在栈非空时解除
     document.body.appendChild(chipRoot)
   }
 
@@ -392,92 +371,4 @@
     leavingViaJump = false
     onReady()
   })
-
-  /* ------------------------------------------------------------------ *
-   * 三、甩动关闭标签页（无条件 close；被拒时 toast 兜底）
-   * ------------------------------------------------------------------ */
-  let accX = 0 // 本次手势累计「返回方向」位移
-  let peakV = 0 // 本次手势速度峰值(px/ms)
-  let lastTs = 0 // 上一个有效 wheel 时间戳（手势内测速用）
-  let idleTimer = null // 松手结算定时器
-
-  // 横向可滚动容器内的滚动不是「返回手势」：从事件目标向上找，命中即放行给页面
-  function inHorizontalScrollable(target) {
-    let el = target instanceof Element ? target : null
-    for (let depth = 0; el && el !== document.body && depth < 12; depth++, el = el.parentElement) {
-      if (el.scrollWidth > el.clientWidth + 1) {
-        const ox = getComputedStyle(el).overflowX
-        if (ox === 'auto' || ox === 'scroll') return true
-      }
-    }
-    return false
-  }
-
-  // 横滚判定按 target 缓存：一次手势 wheel 以 60-120Hz 连发且 target 不变，
-  // 不必每个事件都做 12 层祖先爬 + getComputedStyle；judge 结算时清掉
-  let scrollableTarget = null
-  let scrollableVerdict = false
-
-  function onWheel(e) {
-    if (!CONFIG.flickClose) return
-    if (Math.abs(e.deltaX) <= Math.abs(e.deltaY) * 2) return // 排除竖向滚动（纯数字比较放最前，热路径最廉价的早退）
-    const root = document.documentElement
-    // 全屏播放中不响应，防误关：Fullscreen API 之外还有 B 站「网页全屏」（纯 CSS，挂 webscreen-fix 类）
-    if (document.fullscreenElement || root.classList.contains('webscreen-fix')) return
-    // float 抽屉打开期间手势归抽屉（左滑关抽屉），不能把整个标签页甩关掉
-    if (root.classList.contains('bfloat-open')) return
-    if (e.target !== scrollableTarget) {
-      scrollableTarget = e.target
-      scrollableVerdict = inHorizontalScrollable(e.target)
-    }
-    if (scrollableVerdict) return // 横向滚动容器里是在滚内容，不是返回
-
-    const step = e.deltaX * CONFIG.swipeBackDeltaXSign
-    const gap = e.timeStamp - lastTs
-    lastTs = e.timeStamp
-    accX = Math.max(0, accX + step)
-    // 速度只在手势内（相邻事件间隔 ≤ idleMs）计算：孤立单拨没有有效 dt，不制造假速度
-    if (gap <= SWIPE.idleMs && accX > SWIPE.deadZone) {
-      const v = step / Math.max(4, gap)
-      if (v > peakV) peakV = v
-    }
-    if (idleTimer) clearTimeout(idleTimer)
-    idleTimer = window.setTimeout(judge, SWIPE.idleMs)
-  }
-
-  // 松手结算：手势内速度够 + 总位移够 = 一次有效甩动 → 直接关闭
-  function judge() {
-    idleTimer = null
-    scrollableTarget = null // 跨手势不复用横滚判定（DOM 可能已变）
-    const flick = peakV >= SWIPE.flickVelocity && accX >= SWIPE.minTravel
-    accX = 0
-    peakV = 0
-    if (!flick) return
-    window.close()
-    // close 成功则后面不会执行；被实现拒绝时给降级提示
-    window.setTimeout(() => toast('无法自动关闭，请按 ⌘W'), 80)
-  }
-
-  /* ------------------------------------------------------------------ *
-   * 轻提示（样式在胶囊样式表里；toast 早于胶囊出现时单独建样式）
-   * ------------------------------------------------------------------ */
-  let toastEl = null
-  let toastTimer = null
-  function toast(text) {
-    if (!document.body) return
-    ensureChip() // 复用同一张样式表（含 .bwb-toast 与浅色适配）
-    if (!toastEl) {
-      toastEl = document.createElement('div')
-      toastEl.className = 'bwb-toast'
-      document.body.appendChild(toastEl)
-    }
-    toastEl.textContent = text
-    toastEl.style.opacity = '1'
-    if (toastTimer) clearTimeout(toastTimer)
-    toastTimer = window.setTimeout(() => {
-      toastEl.style.opacity = '0'
-    }, 1800)
-  }
-
-  window.addEventListener('wheel', onWheel, { passive: true, capture: true })
 })()
