@@ -2,7 +2,7 @@
 // @name         BiliKit · CDN 优选
 // @name:en      BiliKit · CDN Pick
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.4.0
+// @version      0.5.0
 // @description    把 B 站视频分片重定向到指定 CDN 镜像，绕开被分到的慢节点（海外 Akamai 等）。Safari 友好：页面世界注入、不依赖 GM/unsafeWindow，故能拦到播放器真正的请求（CCB 等脚本在 Safari Userscripts 下因 grant 被注入隔离世界而失效）。
 // @description:en Redirect Bilibili video segments to a chosen CDN mirror, bypassing the slow node you were assigned (e.g. overseas Akamai). Safari-friendly: page-world injection without GM/unsafeWindow.
 // @author       shiinayane
@@ -38,17 +38,17 @@
    * 配置
    * ------------------------------------------------------------------ */
   // 想换的镜像主机（裸域名）。换节点就改这一行、刷新即可。置空 '' = 关闭。
-  // 2026-06 日本实测吞吐 Mbps（热门 / 冷门102播放，越高越好）：
-  //   upos-sz-mirrorhwb  42.3 / 30.7  ★首选（最抗冷门回源）
-  //   upos-sz-mirrorhw   43.5 / 17.4    upos-sz-upcdnbda2  41.2 / 15.8
-  //   海外镜像对冷门内容会回源失败：cosov 17.8 / 0.0(HTTP514)、aliov 8.7 / 7.7
-  //   —— 卡顿主要发生在冷门/新视频(回源)，故按「冷门吞吐」选大陆华为系；
-  //      延迟会骗人勿信；想复测用 test/cdntest.sh
+  // 2026-06 日本 10 条视频流实测（中位 Mbps / 最低 / 成功率，越高越稳）：
+  //   hwb 38.1 / 15.4 / 10·10 ★首选   upcdnbda2 33.8 / 28.1 / 10·10（地板最高）
+  //   hw 33.6 / 24.6 / 10·10   bos 31.5 / 23.4 / 10·10   alib 26.1
+  //   ali 中位27.3 但仅 8/10 成功，淘汰；海外镜像在视频上全废：cosov 6.4(最低1.7)、aliov 9.2
+  //   —— 卡顿主要发生在冷门/新视频(回源)，大陆华为/百度系完胜；延迟会骗人。
+  //      复测/换样本见 test/cdn-benchmark.md（务必用视频流，音频测不准）
   const TARGET_HOST = 'upos-sz-mirrorhwb.bilivideo.com'
-  // 备用镜像：主镜像打嗝时播放器回退到这里，仍是大陆镜像，绝不回 akam/cosov。
-  const BACKUP_HOSTS = ['upos-sz-mirrorhw.bilivideo.com', 'upos-sz-upcdnbda2.bilivideo.com']
+  // 备用镜像：主镜像打嗝时回退至此，仍是大陆镜像、绝不回 akam/cosov。按地板高低排。
+  const BACKUP_HOSTS = ['upos-sz-upcdnbda2.bilivideo.com', 'upos-sz-mirrorhw.bilivideo.com']
 
-  const DEBUG = true // 调试期开着看改写日志；定稿后改 false
+  const DEBUG = false // 调参期改 true 看改写日志
   const log = (...a) => { if (DEBUG) console.log('[CDN优选]', ...a) }
 
   if (!TARGET_HOST) { log('TARGET_HOST 为空，未启用'); return }
