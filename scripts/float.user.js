@@ -2,7 +2,7 @@
 // @name         BiliKit · 浮窗抽屉
 // @name:en      BiliKit · Float
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.18.9
+// @version      0.18.10
 // @description    点击 B 站视频，在页内抽屉中播放，而非跳转新标签页或当前页面。
 // @description:en Click a Bilibili video to play it in an in-page drawer instead of opening a new tab or navigating away.
 // @author       shiinayane
@@ -590,9 +590,20 @@
     } catch (_) {
       // ignore
     }
-    // noopener：不带 opener 的新标签不会克隆本页 sessionStorage——
-    // 否则 way-back 的回退栈会被原样复制进新标签，凭空多出一条没走过的来时路
-    window.open(url, '_blank', 'noopener')
+    // 保留 opener 关系：它是新标签「历史为 1 时左滑原生关闭、回到本页」的前提
+    // （way-back 把历史钉在 1，关闭全靠 Safari 这个原生手势）。
+    // 但 Safari 会在 open 的瞬间把本页 sessionStorage 克隆进新标签——
+    // way-back 的回退栈被复制会凭空多出没走过的来时路，所以开之前临时摘掉、开完放回。
+    const WAYBACK_KEY = 'bilikit-wayback-stack' // 与 way-back.user.js 的 STACK_KEY 同步
+    let stash = null
+    try {
+      stash = sessionStorage.getItem(WAYBACK_KEY)
+      if (stash != null) sessionStorage.removeItem(WAYBACK_KEY)
+    } catch (_) {}
+    window.open(url, '_blank')
+    try {
+      if (stash != null) sessionStorage.setItem(WAYBACK_KEY, stash)
+    } catch (_) {}
     if (CONFIG.newTabClosesDrawer) requestClose()
   }
 

@@ -50,7 +50,7 @@
     resumeTime: true, // 跳回时带上离开时的播放进度(?t=)续播
   }
 
-  const STACK_KEY = 'bilikit-wayback-stack'
+  const STACK_KEY = 'bilikit-wayback-stack' // float.user.js 推新标签时按此键名摘栈防克隆，改名两边同步
   const STACK_MAX = 20 // 栈深上限，超出丢最老的
 
   // 提取「同一个视频」的标识：BV/av 号或番剧 ep/ss 号；取不到返回空串。
