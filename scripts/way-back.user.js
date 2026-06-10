@@ -2,7 +2,7 @@
 // @name         BiliKit · 回程
 // @name:en      BiliKit · Way Back
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.5.0
+// @version      0.6.0
 // @description    视频标签页的来时路：站内跨视频跳转零刷新压扁，左下角悬浮回退栈点击即跳回并续播，左滑甩动直接关闭标签页。与 BiliKit·浮窗抽屉自动协同。
 // @description:en Flatten in-site cross-video SPA history with zero reloads, keep a floating back-stack you can click to jump back (resuming playback), and flick left to close the tab. Auto-coordinates with BiliKit Float.
 // @author       shiinayane
@@ -24,7 +24,7 @@
  *    的点击接管叠加造成双重加载）。真·整页导航（少数链接、JS 赋值 location）
  *    会压一条历史：此时左滑可能被原生返回手势接管，但回退栈照样记录了来时路，
  *    点胶囊即可跳回，window.close() 也不看栈深度。
- *    float 抽屉条目在历史顶时跳过 pushState 改写；同一视频内的分 P 切换保留 push。
+ *    float 抽屉打开期间（html.bfloat-open）跳过改写但照记栈；分 P 切换保留 push。
  * 2. 回退栈 —— 被压扁的「来时路」记在 sessionStorage（按标签页隔离，关页即清）。
  *    左下角悬浮胶囊「↩ N」：点胶囊回退一层；悬停展开列表点任意一项跳回
  *    （location.replace + ?t= 续播）。跳回第 i 层丢弃其上的层。
@@ -54,6 +54,8 @@
   // 甩动判定：死区累计 + 真实速度（px/ms，刷新率无关）。速度只在「手势内」
   // 相邻事件间计算——孤立的单次滚轮拨动（间隔 > idleMs）不产生速度样本，
   // 侧拨滚轮鼠标的一格拨动不会被算成「甩」。
+  // 数值与 float.user.js 的 DRAG_START_PX/DRAG_FLICK_VELOCITY/DRAG_END_MS 对齐
+  // （32 / 2.4 / 150），关抽屉和关标签页手感一致；调手感时两边一起改。
   const SWIPE = {
     deadZone: 32, // px：累计横向位移小于此值完全忽略
     flickVelocity: 2.4, // px/ms：手势内速度峰值达到此值才算「甩」
@@ -64,7 +66,8 @@
   const STACK_KEY = 'bilikit-wayback-stack'
   const STACK_MAX = 20 // 栈深上限，超出丢最老的
 
-  // 提取「同一个视频」的标识：BV/av 号或番剧 ep/ss 号；取不到返回空串
+  // 提取「同一个视频」的标识：BV/av 号或番剧 ep/ss 号；取不到返回空串。
+  // 路径形态与 float.user.js 的 VIDEO_LINK_RE 是同一份认知，B 站改 URL 时两边同步改。
   function videoIdOf(href) {
     try {
       const p = new URL(href, location.href).pathname
@@ -97,12 +100,14 @@
   }
 
   function cleanTitle(raw) {
-    // 只剥真实的站点后缀（锚定串尾），正文里含「-哔哩哔哩」的标题不受伤
-    return raw.replace(/_哔哩哔哩(_bilibili)?$/, '').trim()
+    // 剥掉串尾连续的站点后缀段（视频页 _哔哩哔哩_bilibili、番剧页 _番剧_bilibili_哔哩哔哩 等
+    // 顺序不一），锚定串尾逐段剥，正文里含「哔哩哔哩」的标题不受伤
+    return raw.replace(/(_(哔哩哔哩|bilibili|番剧|动画|电影|电视剧|纪录片|综艺|国创|在线观看|全集))+$/i, '').trim()
   }
 
   // 把「即将离开的视频」记入栈顶。prevHref/prevTitle/t 都在离开前捕获。
-  function recordEntry(prevHref, prevTitle, t) {
+  // rerender=false 给 pagehide 用：页面正在销毁，重建列表 DOM 是纯浪费。
+  function recordEntry(prevHref, prevTitle, t, rerender = true) {
     const id = videoIdOf(prevHref)
     if (!id) return
     const stack = readStack()
@@ -113,7 +118,7 @@
       t: CONFIG.resumeTime && t > 0 ? Math.floor(t) : 0,
     })
     writeStack(stack)
-    renderChip()
+    if (rerender) renderChip(stack)
   }
 
   function currentVideoTime() {
@@ -123,14 +128,17 @@
 
   // SPA 跳转压扁：包一层 pushState，「视频页 → 另一个视频页」改写为 replaceState
   // （state 原样透传）。两个例外：
-  // - float 抽屉条目在历史顶（history.state.bfloatDrawer）时不动——改写会把
-  //   抽屉的关闭锚点炸掉（背景页自动连播 + 抽屉打开的组合）；
+  // - float 抽屉打开期间不改写——栈顶是抽屉的关闭锚点，replace 会把它炸掉
+  //   （背景页自动连播 + 抽屉打开的组合）。判断依据是 <html> 的 bfloat-open 类
+  //   （抽屉的活状态），而非 history.state.bfloatDrawer：那个标记在「连播把条目
+  //   压在锚点上 → 关抽屉 back() 落回锚点」之后会残留在当前条目上，按它判断
+  //   会从此永久关停压扁。改写跳过时回退栈照记，来时路不丢。
   // - 番剧 ss→ep 是同一内容的 URL 规范化改写：照样压扁，但不记入回退栈。
   const origPush = history.pushState
   history.pushState = function (...args) {
     try {
       const url = args[2]
-      if (url != null && !history.state?.bfloatDrawer) {
+      if (url != null) {
         const target = new URL(url, location.href)
         const prevId = videoIdOf(location.href)
         const curId = videoIdOf(target.href)
@@ -138,7 +146,9 @@
           if (!(prevId.startsWith('ss') && curId.startsWith('ep'))) {
             recordEntry(location.href, document.title, currentVideoTime())
           }
-          return history.replaceState.apply(this, args)
+          if (!document.documentElement.classList.contains('bfloat-open')) {
+            return history.replaceState.apply(this, args)
+          }
         }
       }
     } catch (_) {
@@ -151,16 +161,23 @@
   // 不拦截点击——拦了会把 B 站自己的 SPA 跳转打断成整页重载，得不偿失。
   // 这类导航会压一条历史（无法阻止），但来时路被记下，回退栈照样可用；
   // 目的地未知也没关系——若下一页是同一视频（刷新/返回），加载时的去重会弹掉它。
+  // jumpTo 自己的 replace 除外：用户是在「回去」，把刚离开的页面记成来时路
+  // 会让栈里冒出一条「前进」幽灵。
+  let leavingViaJump = false
   window.addEventListener('pagehide', () => {
-    recordEntry(location.href, document.title, currentVideoTime())
+    if (leavingViaJump) return
+    recordEntry(location.href, document.title, currentVideoTime(), false)
   })
 
-  // 跳回第 i 层：丢弃其上的层（与真实历史的「前进分支销毁」语义一致），replace 不增历史
+  // 跳回第 i 层（i=-1 表示栈顶）：丢弃其上的层（与真实历史的「前进分支销毁」
+  // 语义一致），replace 不增历史
   function jumpTo(i) {
     const stack = readStack()
+    if (i < 0) i = stack.length - 1
     const entry = stack[i]
     if (!entry) return
     writeStack(stack.slice(0, i))
+    leavingViaJump = true
     let href = entry.url
     try {
       const u = new URL(entry.url, location.href)
@@ -192,7 +209,8 @@
     const style = document.createElement('style')
     style.textContent = `
       .bwb-root {
-        position: fixed; left: 16px; bottom: 24px; z-index: 2147483600;
+        /* 故意比 float 遮罩(2147483600)低：抽屉打开时胶囊被罩住，点不到也甩不走宿主页 */
+        position: fixed; left: 16px; bottom: 24px; z-index: 2147483500;
         font: 13px/1.5 -apple-system, "PingFang SC", sans-serif;
       }
       .bwb-chip {
@@ -254,7 +272,7 @@
       .bwb-item:hover .bwb-item-time { color: rgba(255,255,255,.65); }
       .bwb-toast {
         position: fixed; left: 50%; bottom: 48px; transform: translateX(-50%);
-        z-index: 2147483600; background: rgba(18,18,22,.92); color: #fff;
+        z-index: 2147483500; background: rgba(18,18,22,.92); color: #fff;
         font: 13px/1 -apple-system, "PingFang SC", sans-serif;
         padding: 10px 16px; border-radius: 20px;
         opacity: 0; transition: opacity .2s ease; pointer-events: none;
@@ -303,7 +321,7 @@
       </svg>
       <span class="bwb-count"></span>`
     countEl = chip.querySelector('.bwb-count')
-    chip.addEventListener('click', () => jumpTo(readStack().length - 1)) // 回退一层 = 跳回栈顶
+    chip.addEventListener('click', () => jumpTo(-1)) // 回退一层 = 跳回栈顶
 
     chipRoot.append(listEl, chip)
     chipRoot.style.display = 'none' // 默认隐藏，renderChip 在栈非空时解除（toast 借样式表时不会带出空胶囊）
@@ -311,12 +329,15 @@
   }
 
   function fmtTime(t) {
-    return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`
+    const h = Math.floor(t / 3600)
+    const m = Math.floor((t % 3600) / 60)
+    const s = String(t % 60).padStart(2, '0')
+    return h ? `${h}:${String(m).padStart(2, '0')}:${s}` : `${m}:${s}`
   }
 
-  function renderChip() {
+  function renderChip(knownStack) {
     if (!CONFIG.showStack || !document.body) return
-    const stack = readStack()
+    const stack = knownStack || readStack()
     if (!stack.length) {
       if (chipRoot) chipRoot.style.display = 'none' // 栈空整个隐藏
       return // 懒创建：没记录过就不建 DOM/样式表
@@ -364,6 +385,13 @@
   } else {
     onReady()
   }
+  // bfcache 恢复（原生返回手势回到本页）不触发 DOMContentLoaded，但 pagehide
+  // 已经把本页记进了栈——重跑去重和渲染，否则胶囊把「自己」当成来时路展示
+  window.addEventListener('pageshow', (e) => {
+    if (!e.persisted) return
+    leavingViaJump = false
+    onReady()
+  })
 
   /* ------------------------------------------------------------------ *
    * 三、甩动关闭标签页（无条件 close；被拒时 toast 兜底）
@@ -385,11 +413,24 @@
     return false
   }
 
+  // 横滚判定按 target 缓存：一次手势 wheel 以 60-120Hz 连发且 target 不变，
+  // 不必每个事件都做 12 层祖先爬 + getComputedStyle；judge 结算时清掉
+  let scrollableTarget = null
+  let scrollableVerdict = false
+
   function onWheel(e) {
     if (!CONFIG.flickClose) return
-    if (document.fullscreenElement) return // 全屏播放中不响应，防误关
-    if (Math.abs(e.deltaX) <= Math.abs(e.deltaY) * 2) return // 排除竖向滚动
-    if (inHorizontalScrollable(e.target)) return // 横向滚动容器里是在滚内容，不是返回
+    if (Math.abs(e.deltaX) <= Math.abs(e.deltaY) * 2) return // 排除竖向滚动（纯数字比较放最前，热路径最廉价的早退）
+    const root = document.documentElement
+    // 全屏播放中不响应，防误关：Fullscreen API 之外还有 B 站「网页全屏」（纯 CSS，挂 webscreen-fix 类）
+    if (document.fullscreenElement || root.classList.contains('webscreen-fix')) return
+    // float 抽屉打开期间手势归抽屉（左滑关抽屉），不能把整个标签页甩关掉
+    if (root.classList.contains('bfloat-open')) return
+    if (e.target !== scrollableTarget) {
+      scrollableTarget = e.target
+      scrollableVerdict = inHorizontalScrollable(e.target)
+    }
+    if (scrollableVerdict) return // 横向滚动容器里是在滚内容，不是返回
 
     const step = e.deltaX * CONFIG.swipeBackDeltaXSign
     const gap = e.timeStamp - lastTs
@@ -407,6 +448,7 @@
   // 松手结算：手势内速度够 + 总位移够 = 一次有效甩动 → 直接关闭
   function judge() {
     idleTimer = null
+    scrollableTarget = null // 跨手势不复用横滚判定（DOM 可能已变）
     const flick = peakV >= SWIPE.flickVelocity && accX >= SWIPE.minTravel
     accX = 0
     peakV = 0

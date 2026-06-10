@@ -2,7 +2,7 @@
 // @name         BiliKit · 浮窗抽屉
 // @name:en      BiliKit · Float
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.18.8
+// @version      0.18.9
 // @description    点击 B 站视频，在页内抽屉中播放，而非跳转新标签页或当前页面。
 // @description:en Click a Bilibili video to play it in an in-page drawer instead of opening a new tab or navigating away.
 // @author       shiinayane
@@ -590,7 +590,9 @@
     } catch (_) {
       // ignore
     }
-    window.open(url, '_blank')
+    // noopener：不带 opener 的新标签不会克隆本页 sessionStorage——
+    // 否则 way-back 的回退栈会被原样复制进新标签，凭空多出一条没走过的来时路
+    window.open(url, '_blank', 'noopener')
     if (CONFIG.newTabClosesDrawer) requestClose()
   }
 
