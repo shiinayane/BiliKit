@@ -2,7 +2,7 @@
 // @name         BiliKit · CDN 优选
 // @name:en      BiliKit · CDN Pick
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.6.0
+// @version      0.7.0
 // @description    把 B 站视频分片重定向到指定 CDN 镜像，绕开被分到的慢节点（海外 Akamai 等）。Safari 友好：页面世界注入、不依赖 GM/unsafeWindow，故能拦到播放器真正的请求（CCB 等脚本在 Safari Userscripts 下因 grant 被注入隔离世界而失效）。
 // @description:en Redirect Bilibili video segments to a chosen CDN mirror, bypassing the slow node you were assigned (e.g. overseas Akamai). Safari-friendly: page-world injection without GM/unsafeWindow.
 // @author       shiinayane
@@ -12,6 +12,8 @@
 // @run-at       document-start
 // @grant        none
 // @license      MIT
+// @downloadURL https://update.greasyfork.org/scripts/582054/BiliKit%20%C2%B7%20CDN%20%E4%BC%98%E9%80%89.user.js
+// @updateURL https://update.greasyfork.org/scripts/582054/BiliKit%20%C2%B7%20CDN%20%E4%BC%98%E9%80%89.meta.js
 // ==/UserScript==
 
 /*
