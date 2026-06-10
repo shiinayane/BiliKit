@@ -2,7 +2,7 @@
 // @name         BiliKit · 回程
 // @name:en      BiliKit · Way Back
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.7.0
+// @version      0.8.0
 // @description    视频标签页的来时路：站内跨视频跳转零刷新压扁（历史钉在 1，链接新开的标签左滑即原生关闭），左下角悬浮回退栈点击即跳回并续播。与 BiliKit·浮窗抽屉自动协同。
 // @description:en Flatten in-site cross-video SPA history with zero reloads (history pinned at 1, so Safari's native swipe closes link-opened tabs), and keep a floating back-stack you can click to jump back, resuming playback. Auto-coordinates with BiliKit Float.
 // @author       shiinayane
@@ -29,8 +29,10 @@
  *    会压一条历史：左滑变成先回退一格，回退栈照样记录了来时路。
  *    float 抽屉打开期间（html.bfloat-open）跳过改写但照记栈；分 P 切换保留 push。
  * 2. 回退栈 —— 被压扁的「来时路」记在 sessionStorage（按标签页隔离，关页即清）。
- *    左下角悬浮胶囊「↩ N」：点胶囊回退一层；悬停展开列表点任意一项跳回
- *    （location.replace + ?t= 续播）。跳回第 i 层丢弃其上的层。
+ *    左下角常驻胶囊「↩ N」（0 层灰显）：悬停展开列表，底部序号 0 是正在播放
+ *    的「你在这里」行（不可点，带播放指示），向上 1、2、3…是来时路，序号即
+ *    「往回退几层」。点任意一项跳回（location.replace + ?t= 续播，跳回第 i 层
+ *    丢弃其上的层）；点胶囊回退一层。
  */
 (() => {
   'use strict'
@@ -185,11 +187,14 @@
   }
 
   /* ------------------------------------------------------------------ *
-   * 二、悬浮回退栈 UI（懒创建：栈空的页面零 DOM、零样式表）
+   * 二、悬浮回退栈 UI（常驻胶囊：0 层灰显；列表底部序号 0 = 正在播放）
    * ------------------------------------------------------------------ */
   let chipRoot = null
   let listEl = null
   let countEl = null
+  let nowRow = null // 「正在播放」行（序号 0）
+  let nowTitleEl = null
+  let nowTimeEl = null
 
   function ensureChip() {
     if (chipRoot || !document.body) return
@@ -258,6 +263,22 @@
       }
       .bwb-item:hover .bwb-item-time { color: rgba(255,255,255,.65); }
 
+      /* 0 层：胶囊灰显，点击无事发生（列表仍可悬停，看「正在播放」行） */
+      .bwb-empty .bwb-chip { cursor: default; }
+      .bwb-empty .bwb-chip .bwb-count { color: rgba(255,255,255,.4); }
+
+      /* 序号 0 =「你在这里」：不可点、无悬停反馈，标题提亮一档与可点项区分 */
+      .bwb-now { cursor: default; color: #fff; }
+      .bwb-now:hover { background: none; color: #fff; }
+      .bwb-now .bwb-item-num, .bwb-now:hover .bwb-item-num { color: #fb7299; }
+      /* 播放指示：三根小柱，播放中起伏，暂停时静止在低位 */
+      .bwb-now-bars { flex: 0 0 auto; display: flex; gap: 2px; align-items: flex-end; height: 11px; }
+      .bwb-now-bars i { width: 2px; height: 4px; border-radius: 1px; background: #fb7299; }
+      .bwb-now.bwb-playing .bwb-now-bars i { animation: bwb-eq .9s ease-in-out infinite; }
+      .bwb-now.bwb-playing .bwb-now-bars i:nth-child(2) { animation-delay: -.3s; }
+      .bwb-now.bwb-playing .bwb-now-bars i:nth-child(3) { animation-delay: -.6s; }
+      @keyframes bwb-eq { 0%, 100% { height: 4px; } 50% { height: 11px; } }
+
       /* 浅色系统主题（theme-sync 让 B 站跟随系统，这里一并跟随） */
       @media (prefers-color-scheme: light) {
         .bwb-chip {
@@ -278,6 +299,11 @@
         .bwb-item:hover .bwb-item-num { color: #d6336c; }
         .bwb-item-time { color: rgba(0,0,0,.35); }
         .bwb-item:hover .bwb-item-time { color: rgba(0,0,0,.55); }
+        .bwb-empty .bwb-chip .bwb-count { color: rgba(0,0,0,.35); }
+        .bwb-now { color: #000; }
+        .bwb-now:hover { background: none; color: #000; }
+        .bwb-now .bwb-item-num, .bwb-now:hover .bwb-item-num { color: #d6336c; }
+        .bwb-now-bars i { background: #d6336c; }
       }
     `
     chipRoot = document.createElement('div')
@@ -300,10 +326,11 @@
       </svg>
       <span class="bwb-count"></span>`
     countEl = chip.querySelector('.bwb-count')
-    chip.addEventListener('click', () => jumpTo(-1)) // 回退一层 = 跳回栈顶
+    chip.addEventListener('click', () => jumpTo(-1)) // 回退一层 = 跳回栈顶；0 层时无事发生
+    // 悬停展开的瞬间校准「正在播放」行（标题/进度/播放态都以此刻为准）
+    chipRoot.addEventListener('mouseenter', updateNowRow)
 
     chipRoot.append(listEl, chip)
-    chipRoot.style.display = 'none' // 默认隐藏，renderChip 在栈非空时解除
     document.body.appendChild(chipRoot)
   }
 
@@ -314,15 +341,25 @@
     return h ? `${h}:${String(m).padStart(2, '0')}:${s}` : `${m}:${s}`
   }
 
+  // 悬停/重建时校准「正在播放」行：SPA 跳转后 document.title 异步更新，建列表
+  // 那一刻拿到的可能还是旧标题；播放态与进度也以悬停瞬间为准
+  function updateNowRow() {
+    if (!nowRow) return
+    const title = cleanTitle(document.title) || videoIdOf(location.href)
+    nowTitleEl.textContent = title
+    nowRow.title = title
+    const v = document.querySelector('video')
+    nowRow.classList.toggle('bwb-playing', !!v && !v.paused)
+    const t = Math.floor(currentVideoTime())
+    nowTimeEl.textContent = t > 0 ? fmtTime(t) : ''
+  }
+
   function renderChip(knownStack) {
     if (!CONFIG.showStack || !document.body) return
-    const stack = knownStack || readStack()
-    if (!stack.length) {
-      if (chipRoot) chipRoot.style.display = 'none' // 栈空整个隐藏
-      return // 懒创建：没记录过就不建 DOM/样式表
-    }
     ensureChip()
-    chipRoot.style.display = ''
+    if (!chipRoot) return
+    const stack = knownStack || readStack()
+    chipRoot.classList.toggle('bwb-empty', !stack.length)
     countEl.textContent = String(stack.length)
     listEl.textContent = ''
     const head = document.createElement('div')
@@ -333,7 +370,7 @@
       const item = document.createElement('button')
       item.type = 'button'
       item.className = 'bwb-item'
-      // 序号 = 回退层数：贴近胶囊的最新一条是 1，越往上越多
+      // 序号 = 回退层数：贴近底部的最新一条是 1，越往上越多
       const num = document.createElement('span')
       num.className = 'bwb-item-num'
       num.textContent = String(stack.length - i)
@@ -352,6 +389,22 @@
       item.addEventListener('click', () => jumpTo(i))
       listEl.appendChild(item)
     })
+    // 序号 0 =「你在这里」：把当前播放钉在最底部（紧贴胶囊），序号语义自洽
+    nowRow = document.createElement('div')
+    nowRow.className = 'bwb-item bwb-now'
+    const num = document.createElement('span')
+    num.className = 'bwb-item-num'
+    num.textContent = '0'
+    nowTitleEl = document.createElement('span')
+    nowTitleEl.className = 'bwb-item-title'
+    const bars = document.createElement('span')
+    bars.className = 'bwb-now-bars'
+    bars.append(document.createElement('i'), document.createElement('i'), document.createElement('i'))
+    nowTimeEl = document.createElement('span')
+    nowTimeEl.className = 'bwb-item-time'
+    nowRow.append(num, nowTitleEl, bars, nowTimeEl)
+    listEl.appendChild(nowRow)
+    updateNowRow()
     listEl.scrollTop = listEl.scrollHeight // 溢出时停在最新一条（底部）
   }
 
