@@ -2,12 +2,13 @@
 // @name         BiliKit · CDN 优选
 // @name:en      BiliKit · CDN Pick
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.5.0
+// @version      0.6.0
 // @description    把 B 站视频分片重定向到指定 CDN 镜像，绕开被分到的慢节点（海外 Akamai 等）。Safari 友好：页面世界注入、不依赖 GM/unsafeWindow，故能拦到播放器真正的请求（CCB 等脚本在 Safari Userscripts 下因 grant 被注入隔离世界而失效）。
 // @description:en Redirect Bilibili video segments to a chosen CDN mirror, bypassing the slow node you were assigned (e.g. overseas Akamai). Safari-friendly: page-world injection without GM/unsafeWindow.
 // @author       shiinayane
 // @match        *://www.bilibili.com/video/*
 // @match        *://www.bilibili.com/bangumi/play/*
+// @match        *://player.bilibili.com/*
 // @run-at       document-start
 // @grant        none
 // @license      MIT
@@ -30,7 +31,9 @@
 (() => {
   'use strict'
 
-  if (window.top !== window.self) return
+  // 不设顶层窗口守卫：本脚本无 UI、纯按帧改写请求，需要在子框架里也跑——
+  // float 抽屉(同源 iframe 载视频页) 与番剧 player.bilibili.com 播放器都靠它。
+  // 单例守卫按 window 计，每个框架各一份，互不冲突。
   if (window.__BILIKIT_CDN_PICK__) return
   window.__BILIKIT_CDN_PICK__ = true
 
@@ -53,8 +56,11 @@
 
   if (!TARGET_HOST) { log('TARGET_HOST 为空，未启用'); return }
 
-  // upos 系（签名与主机无关，可安全换镜像）；akamaized 不在此列，绝不往上套
-  const isUpos = (u) => typeof u === 'string' && /(?:\.bilivideo\.com|\.acgvideo\.(?:com|cn))\//.test(u + '/')
+  // upos 系（签名与主机无关，可安全换镜像）；akamaized 不在此列，绝不往上套。
+  // 锚定到「//主机/」形态：既排除「查询串里恰含 bilivideo」的误判，又与 swapHost
+  // 的替换形态严格对齐（两者都只认 //host/ 开头），不会出现一个命中一个空转。
+  const UPOS_RE = /^(?:https?:)?\/\/[^/]*\.(?:bilivideo\.com|acgvideo\.(?:com|cn))\//
+  const isUpos = (u) => typeof u === 'string' && UPOS_RE.test(u)
   const swapHost = (u, host) => u.replace(/^(?:https?:)?\/\/[^/]+\//, `https://${host}/`)
 
   let rewriteCount = 0
@@ -121,11 +127,14 @@
 
   /* ------------------------------------------------------------------ *
    * 二、换片/切档：fetch 与 XHR 的 playurl 响应
+   * 已知限制：只 hook 主线程；若 B 站某天把 playurl 移进 Web Worker 取，
+   * 本脚本会失效（需 Worker/Blob 注入，太重，暂不做）。实测当前未走 worker。
    * ------------------------------------------------------------------ */
   const origFetch = window.fetch
   if (origFetch) {
     window.fetch = async function (input, init) {
-      const url = typeof input === 'string' ? input : (input && input.url) || ''
+      // input 可能是字符串 / Request / URL 对象，统一取出 URL 字符串
+      const url = typeof input === 'string' ? input : (input && input.url) || String(input || '')
       const resp = await origFetch.apply(this, arguments)
       if (!isPlayurl(url)) return resp
       try {
@@ -133,7 +142,12 @@
         const obj = JSON.parse(text)
         if (rewritePlayurl(obj)) {
           log('fetch playurl 改写', TARGET_HOST)
-          return new Response(JSON.stringify(obj), { status: resp.status, statusText: resp.statusText, headers: resp.headers })
+          // 重建响应：剥掉 content-length / content-encoding——正文已解码且长度变了，
+          // 照抄会让这俩头撒谎，可能导致消费方按 gzip 重解或按旧长度截断。
+          const headers = new Headers(resp.headers)
+          headers.delete('content-length')
+          headers.delete('content-encoding')
+          return new Response(JSON.stringify(obj), { status: resp.status, statusText: resp.statusText, headers })
         }
       } catch (_) {}
       return resp
@@ -147,12 +161,21 @@
         this.__cdnUrl = url
         return super.open.apply(this, arguments)
       }
-      get responseText() { return this.__cdnRewrite(super.responseText) }
+      get responseText() {
+        // responseType 非文本时 super.responseText 按规范会抛——原样交还原生，别插手
+        const rt = this.responseType
+        if (rt !== '' && rt !== 'text') return super.responseText
+        return this.__cdnText(super.responseText)
+      }
       get response() {
         const r = super.response
-        return typeof r === 'string' ? this.__cdnRewrite(r) : r
+        if (this.readyState !== 4 || !isPlayurl(this.__cdnUrl)) return r
+        if (typeof r === 'string') return this.__cdnText(r)
+        // responseType='json'：r 是已解析对象，就地改写（同一缓存对象，后续读取保留）
+        if (r && typeof r === 'object') { try { if (rewritePlayurl(r)) log('xhr(json) playurl 改写', TARGET_HOST) } catch (_) {} }
+        return r
       }
-      __cdnRewrite(raw) {
+      __cdnText(raw) {
         if (this.readyState !== 4 || typeof raw !== 'string' || !isPlayurl(this.__cdnUrl)) return raw
         try {
           const obj = JSON.parse(raw)
