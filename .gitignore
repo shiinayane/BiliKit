@@ -10,3 +10,6 @@ node_modules/
 BewlyCat/
 Bilibili-Gate/
 urls.txt
+
+# 草稿 / 临时（第三方脚本、DOM dump 等，非 BiliKit 一部分）
+temp/
