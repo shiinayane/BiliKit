@@ -105,6 +105,18 @@
     }
   }
 
+  // 块间距：行内是 flex、column-gap 为 normal(无)，各块间距全靠原生块自身的左外边距撑。
+  // 量一次「点赞」块的左外边距当原生间距、缓存复用(所有评论同一套样式、值一致，免每条重复读)。
+  let nativeGap = ''
+  function blockGap(sr) {
+    if (!nativeGap) {
+      const sib = sr.querySelector('#like') || sr.querySelector('#reply') || sr.querySelector('#dislike')
+      const m = sib ? getComputedStyle(sib).marginLeft : ''
+      if (m && m !== '0px') nativeGap = m
+    }
+    return nativeGap || '16px' // 首条尚未量到时的兜底
+  }
+
   // 给一个 action-buttons 注入属地标签。判重用「shadow 内是否已有 .bilikit-loc」，
   // 不用 JS 标记——这样 lit 若在重渲染时清掉了我们的 span，下次扫描会自然补回。
   function inject(ab) {
@@ -117,8 +129,9 @@
     const span = document.createElement('span')
     span.className = 'bilikit-loc'
     span.textContent = PIN + format(loc)
-    // shadow 内不受页面 CSS 影响，直接内联样式；color 借组件自己的 --text3 变量贴合主题
-    span.style.cssText = 'margin-left:8px;color:var(--text3,#9499a0);font-size:inherit;white-space:nowrap;'
+    // 左外边距对齐原生块间距：时间块没有右边距，若只给个小 margin，「时间→属地」会比其余块都窄；
+    // color 借组件自己的 --text3 变量贴合主题
+    span.style.cssText = `margin-left:${blockGap(sr)};color:var(--text3,#9499a0);font-size:inherit;white-space:nowrap;`
     pubdate.after(span)
     return true
   }
