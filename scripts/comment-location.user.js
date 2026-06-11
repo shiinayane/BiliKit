@@ -2,7 +2,7 @@
 // @name         BiliKit · 评论属地
 // @name:en      BiliKit · Comment Location
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.1.0
+// @version      0.1.1
 // @description    在评论/回复的发布时间旁显示 IP 属地。轻量、Safari 友好，替代会把视频页拖卡的第三方「开盒」类脚本（实现见脚本头注释）。
 // @description:en Show each comment's IP location next to its timestamp. Lightweight and Safari-friendly — a performant replacement for heavy third-party scripts.
 // @author       shiinayane
