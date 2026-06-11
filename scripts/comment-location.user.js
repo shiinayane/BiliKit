@@ -11,6 +11,8 @@
 // @run-at       document-idle
 // @grant        none
 // @license      MIT
+// @downloadURL https://update.greasyfork.org/scripts/582118/BiliKit%20%C2%B7%20%E8%AF%84%E8%AE%BA%E5%B1%9E%E5%9C%B0.user.js
+// @updateURL https://update.greasyfork.org/scripts/582118/BiliKit%20%C2%B7%20%E8%AF%84%E8%AE%BA%E5%B1%9E%E5%9C%B0.meta.js
 // ==/UserScript==
 
 /*
