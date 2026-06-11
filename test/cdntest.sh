@@ -19,6 +19,7 @@
 #   - 坏窗口（正卡时）测最有意义：看谁还扛得住。
 set -u
 URL="${1:-}"
+URL=$(printf '%s' "$URL" | sed -E "s/^[[:space:]\"']+//; s/[[:space:]\"']+$//") # 擦掉首尾引号/空白
 [ -z "$URL" ] && { echo "用法: bash test/cdntest.sh '<bilivideo的.m4s完整URL>'"; exit 1; }
 
 hosts=(
