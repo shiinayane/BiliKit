@@ -14,6 +14,7 @@
 | [**回程** · Way Back](scripts/way-back.user.js) | 站内跨视频历史压扁，左下角回退栈点击跳回续播，左滑原生关标签页 | `/video/*` `/bangumi/play/*` | document-start · 仅顶层 |
 | [**清晰度自适应** · Adaptive Quality](scripts/quality-watch.user.js) | 替代会卡死的「自动」：稳妥起步、网速好升档、卡顿降档 | `/video/*` `/bangumi/play/*` | document-idle · 进子框架 |
 | [**CDN 优选** · CDN Pick](scripts/cdn-pick.user.js) | 把取流重定向到快镜像，绕开慢节点/回源失败的海外 CDN | `/video/*` `/bangumi/play/*` `player` | document-start · 进子框架 |
+| [**评论属地** · Comment Location](scripts/comment-location.user.js) | 评论/回复时间旁显示 IP 属地，替代会拖卡的第三方「开盒」脚本 | `/video/*` `/bangumi/play/*` | document-idle · 进子框架 |
 
 ## 安装
 
@@ -24,7 +25,7 @@
 
 ## 协同关系
 
-- **防睡眠 / 清晰度自适应 / CDN 优选 × 浮窗抽屉**：这三者**进子框架**，会自然在抽屉的 iframe 内生效——抽屉里看视频同样防息屏、自适应清晰度、走优选 CDN。
+- **防睡眠 / 清晰度自适应 / CDN 优选 / 评论属地 × 浮窗抽屉**：这几个**进子框架**，会自然在抽屉的 iframe 内生效——抽屉里看视频同样防息屏、自适应清晰度、走优选 CDN，评论也照样标属地。
 - **主题同步 × 浮窗抽屉**：主题同步**仅顶层运行**，不进抽屉 iframe；抽屉内主题由浮窗抽屉自己镜像宿主页（切主题时抽屉**实时跟随、无刷新**）。
 - **回程 × 浮窗抽屉**：回程在浮窗抽屉在场时让位——抽屉接管视频点击（不导航），回程只管 SPA 历史压扁与回退栈，不与抽屉抢点击。
 
@@ -107,6 +108,18 @@
 
 **配置**：`TARGET_HOST`（主镜像，改一行换节点、置空关闭）/ `BACKUP_HOSTS`。最优镜像随地区/线路而异，**按真实下载吞吐、用视频流样本**自测——见 [`test/cdn-benchmark.md`](test/cdn-benchmark.md) 与 [`test/cdnbatch.sh`](test/cdnbatch.sh)。
 
+## 评论属地 · Comment Location
+
+在每条评论/回复的发布时间旁显示 IP 属地，替代会把视频页拖卡（实测内存飙到 4GB、被 Safari 判休眠）的第三方「开盒」类脚本。
+
+新版 B 站评论是 **lit Web Component、层层嵌套 Shadow DOM**，属地数据（`reply_control.location`）挂在组件实例上。要点：
+
+- **作用域观察**：只给评论子树的各层 shadowRoot 挂 MutationObserver（不跨 shadow 边界，故逐层挂），绝不观察 body；变更每帧（rAF）合并、整树补标签，输入框打字的变更滤掉不扫。
+- **直读数据 + 轻注入**：属地沿 shadow 宿主链向上从 `.data.reply_control.location` 取，不 fetch/eval 评论 bundle；注入用 `createElement` + `pubdate.after(span)`，绝不碰 `outerHTML`。
+- **Safari 关键**：`@grant none` 跑页面世界才读得到 lit 实例属性（`.data`）；带 `@grant` 会被注入隔离世界、只看得到 DOM。
+
+> 这正是开盒拖卡的反面：开盒 `observe(body,{subtree})` 不去抖全文档扫、`outerHTML +=` 重解析、fetch+eval bundle，主线程打满后 WebKit 没空闲 GC/退图、内存滚雪球。逐条反制的实现见[脚本头注释](scripts/comment-location.user.js)。
+
 ---
 
 ## 设计取舍备忘
@@ -124,6 +137,7 @@
 - [x] 回程：历史压扁 + 回退栈 + 左滑原生关标签页
 - [x] 清晰度自适应：闭环爬山
 - [x] CDN 优选：playurl 改写 + 多样本吞吐实测选镜像
+- [x] 评论属地：嵌套 Shadow DOM 逐层观察 + rAF 合并，替代拖卡的开盒脚本
 - [ ] 浮窗抽屉：设置面板 / 更多页面适配（动态、空间页、收藏夹）
 - [ ] 浮窗抽屉：可选 Document Picture-in-Picture 浮窗模式
 - [ ] 出现共享代码诉求后，迁移到 `vite-plugin-monkey` 工程
