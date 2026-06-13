@@ -2,12 +2,14 @@
 // @name         BiliKit · 回程
 // @name:en      BiliKit · Way Back
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.9.1
+// @version      0.9.2
 // @description    视频标签页的来时路：站内跨视频跳转零刷新压扁（历史钉在 1，链接新开的标签左滑即原生关闭），左下角悬浮回退栈点击即跳回并续播。与 BiliKit·浮窗抽屉自动协同。
 // @description:en Flatten in-site cross-video SPA history with zero reloads (history pinned at 1, so Safari's native swipe closes link-opened tabs), and keep a floating back-stack you can click to jump back, resuming playback. Auto-coordinates with BiliKit Float.
 // @author       shiinayane
 // @match        *://www.bilibili.com/video/*
 // @match        *://www.bilibili.com/bangumi/play/*
+// @match        *://www.bilibili.com/list/*
+// @match        *://www.bilibili.com/cheese/play/*
 // @run-at       document-start
 // @grant        none
 // @license      MIT
@@ -57,13 +59,18 @@
   const STACK_KEY = 'bilikit-wayback-stack' // float.user.js 推新标签时按此键名摘栈防克隆，改名两边同步
   const STACK_MAX = 20 // 栈深上限，超出丢最老的
 
-  // 提取「同一个视频」的标识：BV/av 号或番剧 ep/ss 号；取不到返回空串。
-  // 路径形态与 float.user.js 的 VIDEO_LINK_RE 是同一份认知，B 站改 URL 时两边同步改。
+  // 提取「同一个视频」的标识：BV/av 号、番剧/课程 ep/ss 号，或列表播放页查询串里的 bvid；取不到返回空串。
+  // 注：比 float.user.js 的 VIDEO_LINK_RE 多认 /list/?bvid= 与 /cheese/play/——那边判「链接要不要拦」，
+  // 这里判「当前页是哪个视频」，范围更宽无妨；B 站改 URL 形态时两边按各自需要同步。
   function videoIdOf(href) {
     try {
-      const p = new URL(href, location.href).pathname
+      const u = new URL(href, location.href)
+      const p = u.pathname
       return p.match(/\/video\/(BV\w+|av\d+)/i)?.[1]?.toLowerCase()
-        || p.match(/\/bangumi\/play\/((ep|ss)\d+)/i)?.[1]?.toLowerCase()
+        // 番剧与付费课程(cheese)都用 ep/ss 号
+        || p.match(/\/(?:bangumi|cheese)\/play\/((ep|ss)\d+)/i)?.[1]?.toLowerCase()
+        // 稍后再看/收藏夹列表播放页(/list/*)：BV 号在查询串而非路径
+        || (u.searchParams.get('bvid') || '').toLowerCase()
         || ''
     } catch (_) {
       return ''
