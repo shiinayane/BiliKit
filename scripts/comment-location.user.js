@@ -2,7 +2,7 @@
 // @name         BiliKit · 评论属地
 // @name:en      BiliKit · Comment Location
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.1.2
+// @version      0.1.3
 // @description    在评论/回复的发布时间旁显示 IP 属地。轻量、Safari 友好，替代会把视频页拖卡的第三方「开盒」类脚本（实现见脚本头注释）。
 // @description:en Show each comment's IP location next to its timestamp. Lightweight and Safari-friendly — a performant replacement for heavy third-party scripts.
 // @author       shiinayane
@@ -131,9 +131,9 @@
     const span = document.createElement('span')
     span.className = 'bilikit-loc'
     span.textContent = PIN + format(loc)
-    // 左外边距对齐原生块间距：时间块没有右边距，若只给个小 margin，「时间→属地」会比其余块都窄；
-    // color 借组件自己的 --text3 变量贴合主题
-    span.style.cssText = `margin-left:${blockGap(sr)};color:var(--text3,#9499a0);font-size:inherit;white-space:nowrap;`
+    // 属地紧跟时间：左外边距取原生块间距的一半，让「时间→属地」比其余块间距更窄、视觉上贴着时间。
+    // 想再调远近改这里的除数即可（/2 半距 → /3 更近、/1.5 更远）。color 借 --text3 变量贴合主题。
+    span.style.cssText = `margin-left:calc(${blockGap(sr)} / 2);color:var(--text3,#9499a0);font-size:inherit;white-space:nowrap;`
     pubdate.after(span)
     return true
   }
