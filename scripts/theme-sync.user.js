@@ -2,7 +2,7 @@
 // @name         BiliKit · 主题同步
 // @name:en      BiliKit · Theme Sync
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.4.5
+// @version      0.4.6
 // @description    让 B 站跟随系统深浅色，全站无刷新实时切换并同步所有 Tab。
 // @description:en Make Bilibili follow the system light/dark theme, switching live across the whole site with no reload and syncing every tab.
 // @author       shiinayane
@@ -22,6 +22,9 @@
  * - 同时 toggle <html> 的 bili_dark / night-mode 标记类（部分组件/JS 读取它们）。
  * - theme_style cookie（dark/light）保证新页面/新 Tab 的初始主题。
  * - prefers-color-scheme 的 change 在每个 Tab 各自触发，天然跨 Tab 同步；visibilitychange 兜底冻结 Tab。
+ * - 例外通道：部分 Web Component（如评论 <bili-comments>）用自身 reactive 的 theme 属性控制其
+ *   Shadow DOM 主题，不读全站 CSS 变量/cookie——换样式表换不动它（表现为「UP主觉得很赞」等组件内
+ *   元素不跟随深浅切换）；故额外把这些组件的 .theme 直接设成目标值。
  */
 (() => {
   'use strict';
@@ -57,6 +60,16 @@
     }
   }
 
+  // 让 B 站评论等 Web Component 跟随主题：它们用自身 reactive 的 `theme` 属性控制 Shadow DOM 内主题
+  // （如「UP主觉得很赞」标签），不读全站 CSS 变量/cookie——换样式表换不动，必须直接设 .theme。
+  // 只在值不符时写，平时近乎零成本，也不与 B 站自己的换肤打架（设成同值它不会反复触发）。
+  function syncComponentTheme(dark) {
+    const want = dark ? 'dark' : 'light';
+    for (const el of document.querySelectorAll('bili-comments')) {
+      try { if (el.theme !== want) el.theme = want; } catch (_) {}
+    }
+  }
+
   function apply() {
     const dark = systemDark();
     setCookie(COOKIE_NAME, dark ? 'dark' : 'light'); // 持久化：保证后续加载的初始主题
@@ -68,6 +81,7 @@
     // （跨文档回退没命中 bfcache 时尤其明显）；document-start 直接给 <html>
     // 垫上深色底，首帧即深色。浅色模式清掉，不与 B 站自己的背景打架。
     root.style.backgroundColor = dark ? '#18191c' : '';
+    syncComponentTheme(dark); // 评论等组件的私有主题通道，单独同步
   }
 
   apply(); // document-start
@@ -84,4 +98,13 @@
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') apply();
   });
+
+  // 评论宿主懒加载、SPA 换视频后会重建，新元素带的是 B 站自己（可能过期）的主题值；
+  // 轻量观察 DOM 增删，有新组件就补设一次（rAF 合并；只在 .theme 不符时才写，平时近乎零成本）。
+  let syncPending = 0;
+  const scheduleComponentSync = () => {
+    if (syncPending) return;
+    syncPending = requestAnimationFrame(() => { syncPending = 0; syncComponentTheme(systemDark()); });
+  };
+  new MutationObserver(scheduleComponentSync).observe(document.documentElement, { childList: true, subtree: true });
 })();
