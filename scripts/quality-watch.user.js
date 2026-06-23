@@ -2,7 +2,7 @@
 // @name         BiliKit · 清晰度自适应
 // @name:en      BiliKit · Adaptive Quality
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.4.1
+// @version      0.4.2
 // @description    替代 B 站那个一上来就顶 4K 然后卡死的「自动」：从稳妥档起步，网速充裕才逐档上爬，卡顿立刻降档，永不卡死在扛不住的清晰度。
 // @description:en Replace Bilibili's "Auto" (which jumps to 4K and stalls): start at a safe level, climb up only when bandwidth is ample, drop instantly on stalls — never stuck buffering at a tier your network can't sustain.
 // @author       shiinayane
@@ -10,6 +10,7 @@
 // @match        *://www.bilibili.com/bangumi/play/*
 // @match        *://www.bilibili.com/list/*
 // @match        *://www.bilibili.com/cheese/play/*
+// @match        *://www.bilibili.com/festival/*
 // @run-at       document-idle
 // @grant        none
 // @license      MIT
