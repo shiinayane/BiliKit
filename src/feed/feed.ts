@@ -41,23 +41,23 @@ function injectStyle(): void {
   s.id = 'bk-feed-style'
   s.textContent = `
     .${NS}{ display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:22px 16px; padding:16px 0; }
-    .${NS}-card{ cursor:pointer; content-visibility:auto; contain-intrinsic-size:auto 290px; }
+    .${NS}-card{ cursor:pointer; content-visibility:auto; contain-intrinsic-size:auto 330px; }
     .${NS}-cover{ position:relative; aspect-ratio:16/9; border-radius:8px; overflow:hidden; background:var(--bg2,#e3e5e7); }
     .${NS}-cover img{ width:100%; height:100%; object-fit:cover; display:block; opacity:0; transition:opacity .35s ease; }
     .${NS}-cover.loaded img{ opacity:1; }
-    /* 骨架微光：铺在 var(--bg2) 底上的一条流动高光。用 background-position 匀速平移(linear)，
-       不会像 transform+ease 那样在两端「停住」。封面 .loaded 后停掉。 */
-    .${NS}-cover:not(.loaded), .${NS}-shimmer{
-      background-color:var(--bg2,#e3e5e7);
-      background-image:linear-gradient(90deg, rgba(255,255,255,0) 25%, rgba(255,255,255,.28) 50%, rgba(255,255,255,0) 75%);
-      background-repeat:no-repeat; background-size:250% 100%;
-      animation:bk-shimmer 1.6s linear infinite;
+    /* 骨架微光：统一走「合成层友好的 transform 位移伪元素」——封面(未加载)、骨架条、头像同一套，
+       只动 transform（GPU 合成，不逐帧重绘），滚动/加载期都不掉帧。封面 .loaded/.failed 后伪元素消失。 */
+    .${NS}-shimmer{ position:relative; overflow:hidden; background-color:var(--bg2,#e3e5e7); }
+    .${NS}-cover:not(.loaded):not(.failed)::after, .${NS}-shimmer::after{
+      content:''; position:absolute; inset:0;
+      background:linear-gradient(90deg, transparent 25%, rgba(255,255,255,.28) 50%, transparent 75%);
+      transform:translateX(-100%); animation:bk-shimmer 1.6s linear infinite;
     }
     /* 深色模式下白色高光过刺眼，压到很淡 */
     @media (prefers-color-scheme: dark){
-      .${NS}-cover:not(.loaded), .${NS}-shimmer{ background-image:linear-gradient(90deg, rgba(255,255,255,0) 25%, rgba(255,255,255,.09) 50%, rgba(255,255,255,0) 75%); }
+      .${NS}-cover:not(.loaded):not(.failed)::after, .${NS}-shimmer::after{ background:linear-gradient(90deg, transparent 25%, rgba(255,255,255,.09) 50%, transparent 75%); }
     }
-    @keyframes bk-shimmer{ 0%{ background-position:150% 0; } 100%{ background-position:-150% 0; } }
+    @keyframes bk-shimmer{ to{ transform:translateX(100%); } }
     /* 封面底部遮罩：左「播放·弹幕」右「时长」 */
     /* z-index:1 必需：封面 img 有 opacity 过渡，Safari 会把它提升为合成层、盖住本遮罩；
        给遮罩显式 z-index 才能压在图片层之上（否则 z-index:auto 不进合成层，被图片遮住）。 */
@@ -70,8 +70,11 @@ function injectStyle(): void {
     .${NS}-face{ width:34px; height:34px; flex:0 0 34px; border-radius:50%; object-fit:cover; background:var(--bg2,#e3e5e7); }
     .${NS}-right{ flex:1; min-width:0; }
     .${NS}-title{ margin:0 0 6px; font-size:15px; font-weight:500; line-height:1.4; color:var(--text1,#18191c); display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
-    .${NS}-sub{ font-size:13px; color:var(--text3,#9499a0); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .${NS}-sub{ display:flex; align-items:center; font-size:13px; color:var(--text3,#9499a0); }
+    .${NS}-who{ min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .${NS}-sub i{ margin:0 5px; font-style:normal; }
+    /* 推荐理由行内 pill（学 Gate）：只描边+文字色、不填充；实际配色由 B 站 reason style 内联覆盖 */
+    .${NS}-badge{ flex:none; margin-right:6px; padding:0 6px; border:1px solid var(--brand_blue,#00aeec); border-radius:6px; color:var(--brand_blue,#00aeec); background:transparent; font-size:11px; line-height:16px; }
     /* 骨架占位（数据未到时） */
     .${NS}-skline{ height:13px; border-radius:4px; margin-bottom:8px; }
     .${NS}-sentinel{ grid-column:1/-1; height:1px; }
@@ -112,8 +115,11 @@ function makeCard(c: FeedCard): HTMLElement {
   const mstat =
     (c.play ? `<span>${PLAY_SVG}${esc(stripUnit(c.play))}</span>` : '') +
     (c.danmaku ? `<span>${DM_SVG}${esc(stripUnit(c.danmaku))}</span>` : '')
-  // 「UP名 · 日期」——中间圆点分割；无日期只显示名字
-  const sub = esc(c.up) + (c.date ? `<i>·</i>${esc(c.date)}` : '')
+  // 推荐理由小徽章（如「已关注」）放在 UP 名之前，学 Gate 的行内 pill，统一用品牌色描边；
+  // 名字+日期单独一段以便省略号；整行 flex 居中对齐徽章与文字。
+  const badge = c.reason ? `<span class="${NS}-badge">${esc(c.reason)}</span>` : ''
+  const who = esc(c.up) + (c.date ? `<i>·</i>${esc(c.date)}` : '')
+  const sub = badge + `<span class="${NS}-who">${who}</span>`
   el.innerHTML =
     `<div class="${NS}-cover"><img alt="" data-src="${coverUrl(c.cover)}">` +
     `<div class="${NS}-mask"><div class="${NS}-mstat">${mstat}</div>` +
@@ -131,12 +137,13 @@ function makeCard(c: FeedCard): HTMLElement {
   imgEl.addEventListener('load', () => {
     coverEl.classList.toggle('loaded', !imgEl.src.startsWith('data:'))
   })
+  // 封面 404/解码失败：标 .failed 停微光、露灰底，避免那张卡无限转骨架
+  imgEl.addEventListener('error', () => { if (!imgEl.src.startsWith('data:')) coverEl.classList.add('failed') })
   el.addEventListener('click', () => {
     const url = c.bvid ? `https://www.bilibili.com/video/${c.bvid}` : c.uri
     if (url) window.open(url, '_blank')
   })
-  if (cardIo) cardIo.observe(el) // 观察整卡：切 content-visibility + 封面加载/卸载
-  return el
+  return el // 注意：observe 要等插入 DOM 后再做（Safari 下观察未连接元素不可靠）
 }
 
 // 骨架占位卡：数据未到时先铺满首屏，避免空白。纯 shimmer，无图片、不被 IO 观察。
@@ -179,24 +186,37 @@ function showTip(text: string): void {
   tip.textContent = text
 }
 
+// 是否已有真实卡片（骨架 .skcard 不算）——用于判定「首屏就失败」
+function hasRealCard(): boolean {
+  return !!grid && !!grid.querySelector(`.${NS}-card:not(.${NS}-skcard)`)
+}
+
 async function loadMore(): Promise<void> {
   if (loading || exhausted || !grid || !sentinel) return
   loading = true
+  let failed = false
   try {
     let emptyStreak = 0
     // 一直拉到「哨兵离开加载区」或「连续 3 页都无新内容」（匿名固定池耗尽）
     while (sentinelInView() && emptyStreak < 3) {
       const { code, message, cards } = await fetchAppFeed(getAccessKey())
-      if (code !== 0) { console.warn(`[BiliKit Feed] 加载失败 code=${code} ${message}`); break }
-      clearSkeletons() // 拿到真实数据，撤掉占位骨架
-      let added = 0
+      if (code !== 0) { console.warn(`[BiliKit Feed] 加载失败 code=${code} ${message}`); failed = true; break }
+      clearSkeletons() // 拿到数据后立刻撤骨架：否则骨架的占位高度会撑出哨兵，导致填充循环提前退出
+      // 批量插入：先攒进 DocumentFragment，再一次 insertBefore，减少逐张插入的重排
+      const frag = document.createDocumentFragment()
+      const fresh: HTMLElement[] = []
       for (const c of cards) {
         if (!c.bvid || seen.has(c.bvid)) continue
         seen.add(c.bvid)
-        grid.insertBefore(makeCard(c), sentinel)
-        added++
+        const el = makeCard(c)
+        fresh.push(el)
+        frag.appendChild(el)
       }
-      emptyStreak = added === 0 ? emptyStreak + 1 : 0
+      if (fresh.length) {
+        grid.insertBefore(frag, sentinel)
+        if (cardIo) for (const el of fresh) cardIo.observe(el) // 连接进 DOM 后再观察
+      }
+      emptyStreak = fresh.length === 0 ? emptyStreak + 1 : 0
     }
     if (emptyStreak >= 3) {
       exhausted = true
@@ -204,14 +224,19 @@ async function loadMore(): Promise<void> {
     }
   } catch (e) {
     console.error('[BiliKit Feed] 加载出错：', e)
+    failed = true
   } finally {
+    clearSkeletons() // 无论成败都撤骨架，避免请求失败时永久卡在骨架态
     loading = false
   }
+  // 首屏就失败（一张真实卡都没有）时给出可见提示，而不是空白/永久骨架
+  if (failed && !hasRealCard()) showTip('加载失败，请稍后重试；若持续失败可在设置里配置 access_key 或检查网络。')
 }
 
 // 刷新内容：清空当前卡片（保留哨兵）+ 重置去重/耗尽 → 回顶 → 重新拉。
 function refreshFeed(btn?: HTMLElement): void {
   if (!grid || !sentinel || loading) return
+  if (cardIo) cardIo.disconnect() // 先解除对旧卡的观察，避免 observer 持有已删除节点（泄漏）
   for (const el of [...grid.children]) if (el !== sentinel) grid.removeChild(el)
   seen.clear()
   exhausted = false
@@ -229,8 +254,14 @@ function refreshFeed(btn?: HTMLElement): void {
 // 右下角悬浮按钮：刷新内容 + 返回顶部。只挂一次。
 // 返回顶部的显隐用 IntersectionObserver 盯一个顶部标记（零 scroll 监听成本）。
 let controls: HTMLElement | null = null
+let markerEl: HTMLElement | null = null
+let markerIo: IntersectionObserver | null = null
 function mountControls(): void {
   if (controls && controls.isConnected) return
+  // 走到这说明上一份 fab 已不在（SPA 重入）——清掉残留的 fab / marker / observer，防止累积泄漏
+  controls?.remove()
+  markerEl?.remove()
+  markerIo?.disconnect()
   const REFRESH_SVG = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg>'
   const TOP_SVG = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>'
   const fab = document.createElement('div')
@@ -252,7 +283,9 @@ function mountControls(): void {
   const marker = document.createElement('div')
   marker.style.cssText = 'position:absolute;top:400px;left:0;width:1px;height:1px;pointer-events:none;'
   document.body.appendChild(marker)
-  new IntersectionObserver((es) => fab.classList.toggle('scrolled', !es[0].isIntersecting)).observe(marker)
+  markerEl = marker
+  markerIo = new IntersectionObserver((es) => fab.classList.toggle('scrolled', !es[0].isIntersecting))
+  markerIo.observe(marker)
 }
 
 function findNativeFeed(): HTMLElement | null {
@@ -274,14 +307,15 @@ function takeover(): boolean {
   // 重新接管前清理上一次的残留（SPA 重入首页）
   if (cardIo) cardIo.disconnect()
   if (sentinelIo) sentinelIo.disconnect()
+  document.querySelectorAll(`.${NS}`).forEach((g) => g.remove()) // 移除旧/孤儿 grid，防止重复网格
   seen.clear()
   exhausted = false
 
   injectStyle()
   native.style.setProperty('display', 'none', 'important')
 
-  // 给 content-visibility 人为加「提前量」：卡片进视口前 1200px 就切 visible（提前渲染+解码封面），
-  // 远离再回到 auto（屏外跳过布局/绘制 + 卸封面位图）。消除 pop-in 半拍，同时保内存。
+  // 给 content-visibility 人为加「提前量」：卡片进视口前 1000px 就切 visible（提前渲染+解码封面），
+  // 远离再回到 auto（屏外跳过布局/绘制 + 卸封面位图）。兼顾消除 pop-in 与限制同时强渲染的工作集。
   cardIo = new IntersectionObserver(
     (ents) => {
       for (const e of ents) {
@@ -296,7 +330,7 @@ function takeover(): boolean {
         }
       }
     },
-    { rootMargin: '1200px 0px' },
+    { rootMargin: '1000px 0px' },
   )
 
   grid = document.createElement('div')

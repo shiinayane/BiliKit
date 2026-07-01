@@ -97,7 +97,13 @@ export async function fetchAppFeed(accessKey = ''): Promise<{ code: number; mess
   })
   const url = `https://app.bilibili.com/x/v2/feed/index?${query}`
   const text = await gmRequest({ method: 'GET', url })
-  const json = JSON.parse(text)
+  let json: any
+  try {
+    json = JSON.parse(text)
+  } catch {
+    // 风控/登录拦截返回 HTML 而非 JSON（gmRequest 已打印诊断）——转成错误码，别让 JSON.parse 抛穿导致骨架卡死
+    return { code: -1, message: '响应非 JSON（可能被风控/登录拦截）', cards: [], raw: text }
+  }
   const items: any[] = (json && json.data && json.data.items) || []
   const cards = items.map(normalize).filter((c): c is FeedCard => !!c && c.goto === 'av')
   return { code: json?.code, message: json?.message || '', cards, raw: json }
