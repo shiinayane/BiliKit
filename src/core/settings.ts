@@ -15,11 +15,12 @@ function load(): Store {
   }
 }
 
-function save(s: Store): void {
+function save(s: Store): boolean {
   try {
     localStorage.setItem(KEY, JSON.stringify(s))
+    return true
   } catch {
-    /* 隐私模式/超限：放弃持久化，本次会话内存态照常 */
+    return false // 隐私模式/超限：持久化失败，交由调用方决定是否提示
   }
 }
 
@@ -28,10 +29,10 @@ export function get<T>(key: string, fallback: T): T {
   return key in s ? (s[key] as T) : fallback
 }
 
-export function set(key: string, value: unknown): void {
+export function set(key: string, value: unknown): boolean {
   const s = load()
   s[key] = value
-  save(s)
+  return save(s) // 返回是否落盘成功（隐私模式/超限时为 false）
 }
 
 const enabledKey = (id: string) => `module.${id}.enabled`
@@ -54,8 +55,8 @@ export function getField(m: BiliKitModule, key: string): unknown {
   return get(cfgKey(m.id, key), field ? field.default : undefined)
 }
 
-export function setField(id: string, key: string, value: unknown): void {
-  set(cfgKey(id, key), value)
+export function setField(id: string, key: string, value: unknown): boolean {
+  return set(cfgKey(id, key), value)
 }
 
 /** 绑定到某模块的配置读取器，传给它的 init(cfg)。 */

@@ -7,6 +7,9 @@ import { signAppQuery } from '../lib/app-sign'
 declare const GM: any
 declare const GM_xmlhttpRequest: any
 
+// 日志脱敏：抹掉 URL 里的 access_key，避免账号 token 进 console
+const redactKey = (u: string) => (u || '').replace(/(access_key=)[^&]*/i, '$1<redacted>')
+
 /** GM 跨域请求（GET/POST）。GM.xmlHttpRequest / GM_xmlhttpRequest 都是 onload 回调式，统一包成 Promise。 */
 export function gmRequest(opts: { method: string; url: string; data?: string; headers?: Record<string, string>; anonymous?: boolean }): Promise<string> {
   const xhr = typeof GM !== 'undefined' && GM && GM.xmlHttpRequest
@@ -26,17 +29,17 @@ export function gmRequest(opts: { method: string; url: string; data?: string; he
       onload: (r: any) => {
         const t = r.responseText || ''
         if (t.trimStart().startsWith('<')) {
-          // 诊断：返回 HTML 而非 JSON 时，把状态/最终URL(查重定向)/响应头/正文都打出来
-          console.error('[BiliKit Feed] 非 JSON 响应诊断：',
-            '\n  status =', r.status, r.statusText,
-            '\n  finalUrl =', r.finalUrl,
-            '\n  responseHeaders =\n', r.responseHeaders,
-            '\n  正文(前 800) =\n', t.slice(0, 800))
+          // 诊断：返回 HTML 而非 JSON（多为风控/登录拦截）。注意 access_key 脱敏、不打响应头(可能含 Set-Cookie)。
+          console.error('[BiliKit Feed] 非 JSON 响应（可能被风控/登录拦截）：',
+            'status =', r.status, r.statusText,
+            'url =', redactKey(r.finalUrl || opts.url),
+            '\n  正文(前 300) =\n', t.slice(0, 300))
         }
         resolve(t)
       },
-      onerror: (r: any) => { console.error('[BiliKit Feed] onerror：', r && r.status, r && r.finalUrl); reject(new Error('网络错误')) },
+      onerror: (r: any) => { console.error('[BiliKit Feed] onerror：', r && r.status); reject(new Error('网络错误')) },
       ontimeout: () => reject(new Error('请求超时')),
+      onabort: () => reject(new Error('请求被中止')), // 否则中止时 Promise 永不 settle → 上游 loading 卡死
     })
   })
 }
@@ -104,7 +107,9 @@ export async function fetchAppFeed(accessKey = ''): Promise<{ code: number; mess
     // 风控/登录拦截返回 HTML 而非 JSON（gmRequest 已打印诊断）——转成错误码，别让 JSON.parse 抛穿导致骨架卡死
     return { code: -1, message: '响应非 JSON（可能被风控/登录拦截）', cards: [], raw: text }
   }
-  const items: any[] = (json && json.data && json.data.items) || []
+  const items: any[] = Array.isArray(json?.data?.items) ? json.data.items : [] // 防 items 非数组时 .map 抛错
   const cards = items.map(normalize).filter((c): c is FeedCard => !!c && c.goto === 'av')
-  return { code: json?.code, message: json?.message || '', cards, raw: json }
+  // code 归一为 number：缺失/非数字一律当失败(-1)，避免调用方 `===0`/`!code` 误判
+  const code = typeof json?.code === 'number' ? json.code : -1
+  return { code, message: json?.message || '', cards, raw: json }
 }

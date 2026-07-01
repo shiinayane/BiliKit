@@ -18,6 +18,7 @@ let loading = false
 let exhausted = false // 匿名固定池刷完（连续多页无新内容）→ 停止并提示
 let cardIo: IntersectionObserver | null = null
 let sentinelIo: IntersectionObserver | null = null
+let feedGen = 0 // 代际令牌：每次重新接管/刷新自增；在途 loadMore 察觉代际变化即作废，避免竞态写入新 grid
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' } as any)[ch])
 const coverUrl = (u: string) => (u ? u.replace(/^http:/, 'https:') : BLANK)
@@ -121,12 +122,12 @@ function makeCard(c: FeedCard): HTMLElement {
   const who = esc(c.up) + (c.date ? `<i>·</i>${esc(c.date)}` : '')
   const sub = badge + `<span class="${NS}-who">${who}</span>`
   el.innerHTML =
-    `<div class="${NS}-cover"><img alt="" data-src="${coverUrl(c.cover)}">` +
+    `<div class="${NS}-cover"><img alt="" data-src="${esc(coverUrl(c.cover))}">` +
     `<div class="${NS}-mask"><div class="${NS}-mstat">${mstat}</div>` +
     (c.duration ? `<span>${esc(c.duration)}</span>` : '<span></span>') +
     `</div></div>` +
     `<div class="${NS}-bottom">` +
-    (c.face ? `<img class="${NS}-face" src="${coverUrl(c.face)}" alt="" loading="lazy">` : `<div class="${NS}-face"></div>`) +
+    (c.face ? `<img class="${NS}-face" src="${esc(coverUrl(c.face))}" alt="" loading="lazy">` : `<div class="${NS}-face"></div>`) +
     `<div class="${NS}-right">` +
     `<div class="${NS}-title">${esc(c.title)}</div>` +
     `<div class="${NS}-sub">${sub}</div>` +
@@ -141,7 +142,7 @@ function makeCard(c: FeedCard): HTMLElement {
   imgEl.addEventListener('error', () => { if (!imgEl.src.startsWith('data:')) coverEl.classList.add('failed') })
   el.addEventListener('click', () => {
     const url = c.bvid ? `https://www.bilibili.com/video/${c.bvid}` : c.uri
-    if (url) window.open(url, '_blank')
+    if (url && /^https?:\/\//i.test(url)) window.open(url, '_blank', 'noopener') // 只开 http(s)，防 javascript:/开放重定向
   })
   return el // 注意：observe 要等插入 DOM 后再做（Safari 下观察未连接元素不可靠）
 }
@@ -186,6 +187,10 @@ function showTip(text: string): void {
   tip.textContent = text
 }
 
+function removeTip(): void {
+  grid?.querySelector(`.${NS}-tip`)?.remove()
+}
+
 // 是否已有真实卡片（骨架 .skcard 不算）——用于判定「首屏就失败」
 function hasRealCard(): boolean {
   return !!grid && !!grid.querySelector(`.${NS}-card:not(.${NS}-skcard)`)
@@ -194,14 +199,20 @@ function hasRealCard(): boolean {
 async function loadMore(): Promise<void> {
   if (loading || exhausted || !grid || !sentinel) return
   loading = true
+  const gen = feedGen // 记录本次代际；重新接管/刷新会改变它 → 本次作废
   let failed = false
   try {
     let emptyStreak = 0
-    // 一直拉到「哨兵离开加载区」或「连续 3 页都无新内容」（匿名固定池耗尽）
-    while (sentinelInView() && emptyStreak < 3) {
+    // 至少强制拉一页（first）：骨架占位会撑高哨兵，若只看 sentinelInView 窄视口下可能一页都不拉。
+    // 之后再按「哨兵是否仍在加载区」决定是否继续，直到填满或连续 3 页无新内容（匿名池耗尽）。
+    let first = true
+    while ((first || sentinelInView()) && emptyStreak < 3) {
+      first = false
       const { code, message, cards } = await fetchAppFeed(getAccessKey())
+      if (gen !== feedGen) return // 期间发生了重新接管/刷新，本次已过期，交给新一轮（finally 不清新代的状态）
       if (code !== 0) { console.warn(`[BiliKit Feed] 加载失败 code=${code} ${message}`); failed = true; break }
-      clearSkeletons() // 拿到数据后立刻撤骨架：否则骨架的占位高度会撑出哨兵，导致填充循环提前退出
+      clearSkeletons() // 拿到数据后立刻撤骨架：否则骨架占位高度会撑出哨兵，导致填充循环提前退出
+      removeTip() // 有新数据 → 撤掉上一次的「失败/刷完」提示
       // 批量插入：先攒进 DocumentFragment，再一次 insertBefore，减少逐张插入的重排
       const frag = document.createDocumentFragment()
       const fresh: HTMLElement[] = []
@@ -226,16 +237,17 @@ async function loadMore(): Promise<void> {
     console.error('[BiliKit Feed] 加载出错：', e)
     failed = true
   } finally {
-    clearSkeletons() // 无论成败都撤骨架，避免请求失败时永久卡在骨架态
-    loading = false
+    if (gen === feedGen) { clearSkeletons(); loading = false } // 仅当仍是本代才清理，别踩到新一轮的状态
   }
   // 首屏就失败（一张真实卡都没有）时给出可见提示，而不是空白/永久骨架
-  if (failed && !hasRealCard()) showTip('加载失败，请稍后重试；若持续失败可在设置里配置 access_key 或检查网络。')
+  if (gen === feedGen && failed && !hasRealCard()) showTip('加载失败，请稍后重试；若持续失败可在设置里配置 access_key 或检查网络。')
 }
 
 // 刷新内容：清空当前卡片（保留哨兵）+ 重置去重/耗尽 → 回顶 → 重新拉。
 function refreshFeed(btn?: HTMLElement): void {
-  if (!grid || !sentinel || loading) return
+  if (!grid || !sentinel) return
+  feedGen++ // 作废在途的 loadMore，使刷新即便在加载中也能立即生效（不再静默失效）
+  loading = false
   if (cardIo) cardIo.disconnect() // 先解除对旧卡的观察，避免 observer 持有已删除节点（泄漏）
   for (const el of [...grid.children]) if (el !== sentinel) grid.removeChild(el)
   seen.clear()
@@ -308,6 +320,8 @@ function takeover(): boolean {
   if (cardIo) cardIo.disconnect()
   if (sentinelIo) sentinelIo.disconnect()
   document.querySelectorAll(`.${NS}`).forEach((g) => g.remove()) // 移除旧/孤儿 grid，防止重复网格
+  feedGen++ // 作废在途的 loadMore（SPA 重入撞上在途加载时的竞态）
+  loading = false
   seen.clear()
   exhausted = false
 
@@ -323,7 +337,10 @@ function takeover(): boolean {
         const img = card.querySelector('img') as HTMLImageElement | null
         if (e.isIntersecting) {
           card.style.contentVisibility = 'visible'
-          if (img && (!img.getAttribute('src') || img.src.startsWith('data:')) && img.dataset.src) img.src = img.dataset.src
+          if (img && (!img.getAttribute('src') || img.src.startsWith('data:')) && img.dataset.src) {
+            img.parentElement?.classList.remove('failed') // 重新加载 → 清掉上次的失败态，给一次重试
+            img.src = img.dataset.src
+          }
         } else {
           card.style.contentVisibility = '' // 回退到样式表里的 auto：屏外跳过
           if (img && img.src && !img.src.startsWith('data:')) img.src = BLANK

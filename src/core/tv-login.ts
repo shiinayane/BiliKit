@@ -19,7 +19,8 @@ async function postSigned(path: string, params: Record<string, string>): Promise
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body,
   })
-  return res.json()
+  const text = await res.text()
+  try { return JSON.parse(text) } catch { throw new Error('响应非 JSON（可能被风控拦截）') } // 别让 res.json() 直接抛穿
 }
 
 /* ------------------------------------------------------------------ *
@@ -29,14 +30,23 @@ let root: HTMLElement | null = null
 let qrImg: HTMLImageElement | null = null
 let statusEl: HTMLElement | null = null
 let running = false
+let pollTimer: ReturnType<typeof setInterval> | null = null
 
-function closeOverlay(): void {
+// 仅清 DOM（openOverlay 重建时用，不动 running/timer）
+function resetOverlayDom(): void {
   if (root) root.remove()
   root = qrImg = statusEl = null
 }
 
+// 完整收尾（取消/失效/失败时）：停轮询 + 解锁 running + 清 DOM，避免 running 卡 true 致无法再次登录
+function closeOverlay(): void {
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
+  running = false
+  resetOverlayDom()
+}
+
 function openOverlay(): void {
-  closeOverlay()
+  resetOverlayDom()
   root = document.createElement('div')
   const sr = root.attachShadow({ mode: 'open' })
   sr.innerHTML = `<style>
@@ -90,23 +100,36 @@ export function startTvLogin(onSuccess: (accessKey: string) => void): void {
   ;(async () => {
     try {
       const auth = await postSigned('/x/passport-tv-login/qrcode/auth_code', {})
+      if (!root) { running = false; return } // 期间用户已取消
       if (auth.code !== 0 || !auth.data) { setStatus(`获取二维码失败：${auth.code} ${auth.message || ''}`); running = false; return }
       const { url, auth_code } = auth.data
       renderQR(url)
       const started = Date.now()
-      const timer = setInterval(async () => {
-        if (!root) { clearInterval(timer); running = false; return } // 用户关了
-        if (Date.now() - started > 180000) { clearInterval(timer); running = false; setStatus('二维码已过期，请重新登录'); return }
+      let polling = false // 防重入：上一次轮询未回不发新的（慢网叠请求）
+      let failStreak = 0 // 连续轮询失败计数，过多才中止（容忍偶发）
+      pollTimer = setInterval(async () => {
+        if (!root) { closeOverlay(); return } // 用户关了
+        if (Date.now() - started > 180000) { setStatus('二维码已过期，请重新登录'); closeOverlay(); return }
+        if (polling) return
+        polling = true
         try {
           const poll = await postSigned('/x/passport-tv-login/qrcode/poll', { auth_code })
+          failStreak = 0
           if (poll.code === 0 && poll.data && poll.data.access_token) {
-            clearInterval(timer); running = false
+            const t = pollTimer; pollTimer = null; if (t) clearInterval(t) // 停轮询，但保留浮层到刷新
+            running = false
             onSuccess(poll.data.access_token)
             setStatus('登录成功，即将刷新…')
-            setTimeout(() => { closeOverlay(); location.reload() }, 1000)
-          } else if (poll.code === 86038) { clearInterval(timer); running = false; setStatus('二维码已失效，请重新登录') } else if (poll.code === 86090) { setStatus('已扫码，请在手机上确认') }
-          // 86039 = 未扫码，继续等
-        } catch (_) { /* 单次轮询失败忽略 */ }
+            setTimeout(() => { resetOverlayDom(); location.reload() }, 1000)
+          } else if (poll.code === 86038) { setStatus('二维码已失效，请重新登录'); closeOverlay() }
+          else if (poll.code === 86090) { setStatus('已扫码，请在手机上确认') }
+          else if (poll.code === 86039) { /* 未扫码，继续等 */ }
+          else { setStatus(`登录失败：${poll.code} ${poll.message || ''}`); closeOverlay() } // 未知/错误码不再空转到超时
+        } catch (_) {
+          if (++failStreak >= 5) { setStatus('网络或风控异常，请稍后重试'); closeOverlay() }
+        } finally {
+          polling = false
+        }
       }, 2000)
     } catch (e) {
       setStatus('登录出错：' + (e as Error).message)

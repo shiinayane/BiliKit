@@ -211,7 +211,10 @@ function renderField(m: BiliKitModule, f: SettingField): HTMLElement {
       input!.value = String(cur)
       input!.style.display = ''
     } else {
-      sel.value = isPreset ? String(cur) : f.default
+      const useDefault = !isPreset // 存的值已不在当前选项里 → 显示默认
+      sel.value = useDefault ? f.default : String(cur)
+      // 回写默认，避免「面板显示默认、实际仍用已失效的旧值」的 UI/配置不一致
+      if (useDefault && String(cur) !== f.default) setField(m.id, f.key, f.default)
       if (input) input.style.display = 'none'
     }
     sel.addEventListener('change', () => {
@@ -322,7 +325,10 @@ function renderFeedDetail(d: HTMLElement): void {
       location.reload()
     } else {
       st.textContent = '正在拉起二维码…'
-      startTvLogin((accessKey) => set('feed.accessKey', accessKey))
+      startTvLogin((accessKey) => {
+        // 落盘失败（隐私模式/存储超限）时明确报错——否则「登录成功」但刷新后仍匿名，静默误导
+        if (!set('feed.accessKey', accessKey)) console.error('[BiliKit] access_key 持久化失败：刷新后可能仍为匿名（浏览器隐私模式或存储已满）。')
+      })
     }
   })
   fields.appendChild(btn)
