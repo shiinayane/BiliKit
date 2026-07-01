@@ -32,6 +32,8 @@ export interface BiliKitModule {
   name: string
   /** 设置面板副标题 */
   description?: string
+  /** 左栏分组类别（如「播放」「界面」）；缺省归入「其它」 */
+  category?: string
   /** 默认是否启用，缺省 true */
   defaultEnabled?: boolean
   /** 'start'：注册即跑；'idle'：DOM 就绪后跑（默认 'start'） */

@@ -144,6 +144,7 @@ export const cdnPick: BiliKitModule = {
   id: 'cdn-pick',
   name: 'CDN 优选',
   description: '视频分片重定向到更快的大陆镜像',
+  category: '播放',
   runAt: 'start',
   settings: [
     {

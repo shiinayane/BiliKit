@@ -1,14 +1,22 @@
-import { getModules, type BiliKitModule, type SettingField } from './module'
 import { get, set, isModuleEnabled, setModuleEnabled, getField, setField } from './settings'
+import { getModules, type BiliKitModule, type SettingField } from './module'
 import { startTvLogin } from './tv-login'
 
 /**
- * 设置面板：左下悬浮齿轮 → 居中模态。整个 UI 挂在 Shadow DOM 里，样式与 B 站彻底隔离
- * （不被 B 站 CSS 污染，也不污染 B 站）。模块列表 + 每模块声明的配置项自动渲染成控件。
- * 只在顶层窗口挂（不进 Float 抽屉 iframe）。深浅色跟随系统。
+ * 设置面板：左下悬浮齿轮 → 居中模态，Shadow DOM 隔离。
+ * 主从布局（scales to many modules）：左栏按 category 分组，每行 = 模块名 + 「有可调项」粉点 + 启用开关；
+ * 右栏只渲染当前选中模块的配置（无配置则空态）。开关在左栏 → 只有开关的模块也不用进右栏、不空亏。
+ * 深浅色跟随系统。只在顶层窗口挂。
  */
 const PANEL_ID = 'bilikit-panel-root'
-let dirty = false // 有改动 → 提示刷新（模块在 init 时读配置，改动需刷新生效）
+const FEED_ID = '__feed__'
+const FEED_CAT = '推荐'
+let dirty = false
+let selected = ''
+
+let navEl: HTMLElement | null = null
+let detailEl: HTMLElement | null = null
+let footEl: HTMLElement | null = null
 
 const STYLE = `
 :host { all: initial; }
@@ -18,10 +26,9 @@ const STYLE = `
   position: fixed; left: 18px; bottom: 26px; z-index: 2147483500;
   width: 38px; height: 38px; border-radius: 50%; cursor: pointer;
   display: flex; align-items: center; justify-content: center;
-  border: 1px solid rgba(255,255,255,.1);
-  background: rgba(22,23,28,.9); color: #fff;
-  box-shadow: 0 3px 14px rgba(0,0,0,.3);
-  opacity: .45; transition: opacity .16s ease, transform .16s ease;
+  border: 1px solid rgba(255,255,255,.1); background: rgba(22,23,28,.9); color: #fff;
+  box-shadow: 0 3px 14px rgba(0,0,0,.3); opacity: .45;
+  transition: opacity .16s ease, transform .16s ease;
   -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
 }
 .gear:hover { opacity: 1; transform: translateY(-1px) rotate(30deg); }
@@ -29,8 +36,7 @@ const STYLE = `
 .gear svg { width: 20px; height: 20px; display: block; }
 
 .overlay {
-  position: fixed; inset: 0; z-index: 2147483501;
-  background: rgba(0,0,0,.5);
+  position: fixed; inset: 0; z-index: 2147483501; background: rgba(0,0,0,.5);
   display: flex; align-items: center; justify-content: center;
   opacity: 0; visibility: hidden; transition: opacity .2s ease, visibility 0s linear .2s;
   -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px);
@@ -38,119 +44,147 @@ const STYLE = `
 .overlay.open { opacity: 1; visibility: visible; transition: opacity .2s ease; }
 
 .card {
-  width: min(520px, calc(100vw - 32px)); max-height: 82vh;
+  width: min(660px, calc(100vw - 32px)); height: 560px; max-height: 90vh;
   display: flex; flex-direction: column;
   background: #1c1d22; color: #e3e5e7; border-radius: 18px;
-  box-shadow: 0 16px 56px rgba(0,0,0,.5);
+  box-shadow: 0 16px 56px rgba(0,0,0,.5); overflow: hidden;
   transform: translateY(10px) scale(.98); transition: transform .2s ease;
-  overflow: hidden;
 }
 .overlay.open .card { transform: none; }
 
-.head { display: flex; align-items: baseline; gap: 10px; padding: 22px 24px 16px; }
-.head .title { font-size: 16px; font-weight: 600; letter-spacing: .2px; }
+.head { display: flex; align-items: baseline; gap: 10px; padding: 18px 22px 14px; border-bottom: 1px solid rgba(255,255,255,.06); flex: 0 0 auto; }
+.head .title { font-size: 17px; font-weight: 600; letter-spacing: .2px; }
 .head .brand { color: #fb7299; }
-.head .sub { font-size: 12px; color: rgba(255,255,255,.4); }
-.head .close { margin-left: auto; align-self: flex-start; cursor: pointer; opacity: .55; font-size: 22px; line-height: 1; padding: 2px 8px; border-radius: 9px; }
+.head .close { margin-left: auto; cursor: pointer; opacity: .55; font-size: 22px; line-height: 1; padding: 2px 8px; border-radius: 9px; }
 .head .close:hover { opacity: 1; background: rgba(255,255,255,.09); }
 
-.body { overflow: auto; padding: 2px 24px 8px; }
+.main { flex: 1; display: flex; min-height: 0; }
+.nav { width: 228px; flex: 0 0 auto; border-right: 1px solid rgba(255,255,255,.06); overflow: auto; padding: 12px 10px; }
+.nav-cat { font-size: 12px; letter-spacing: .3px; color: rgba(255,255,255,.35); padding: 12px 8px 5px; }
+.nav-cat:first-child { padding-top: 4px; }
+.nav-item { display: flex; align-items: center; gap: 8px; padding: 9px 9px; border-radius: 9px; cursor: pointer; }
+.nav-item:hover { background: rgba(255,255,255,.05); }
+.nav-item.sel { background: rgba(251,114,153,.16); }
+.nm-wrap { flex: 1; min-width: 0; display: flex; align-items: center; gap: 5px; }
+.nav-item .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; color: rgba(255,255,255,.85); }
+.nav-item.sel .nm { color: #fb7299; font-weight: 500; }
+.gear-ico { flex: 0 0 auto; width: 13px; height: 13px; color: rgba(255,255,255,.38); display: flex; }
+.gear-ico svg { width: 13px; height: 13px; display: block; }
+.nav-item:hover .gear-ico, .nav-item.sel .gear-ico { color: #fb7299; }
 
-.mod { padding: 18px 0; border-top: 1px solid rgba(255,255,255,.06); }
-.mod:first-child { border-top: none; padding-top: 6px; }
-.mod-head { display: flex; align-items: flex-start; gap: 14px; }
-.mod-main { flex: 1; min-width: 0; }
-.mod-name { font-size: 14.5px; font-weight: 550; line-height: 1.4; }
-.mod-desc { font-size: 12.5px; color: rgba(255,255,255,.45); margin-top: 4px; line-height: 1.5; }
-.mod.off .mod-name, .mod.off .mod-desc { opacity: .5; }
+.detail { flex: 1; min-width: 0; overflow: auto; padding: 26px; display: flex; flex-direction: column; }
+.detail-title { font-size: 19px; font-weight: 600; }
+.detail-desc { font-size: 14px; color: rgba(255,255,255,.5); margin-top: 7px; line-height: 1.55; }
+.fields { margin-top: 22px; display: flex; flex-direction: column; gap: 18px; }
+.field { display: flex; flex-direction: column; gap: 8px; }
+.field.row { flex-direction: row; align-items: center; justify-content: space-between; gap: 14px; }
+.field.row .flabel { flex: 1; }
+.field .flabel { font-size: 14px; color: rgba(255,255,255,.8); line-height: 1.4; }
+.field .hint { font-size: 13px; color: rgba(255,255,255,.4); line-height: 1.45; }
+.field input[type=text], .field textarea, .field select {
+  width: 100%; background: rgba(255,255,255,.06); color: #e3e5e7;
+  border: 1px solid rgba(255,255,255,.14); border-radius: 9px; padding: 9px 12px;
+  font-size: 14px; font-family: inherit; outline: none;
+}
+.field input[type=text]:focus, .field textarea:focus, .field select:focus { border-color: #fb7299; }
+.field textarea { min-height: 72px; resize: vertical; line-height: 1.5; }
 
-.sw { position: relative; flex: 0 0 auto; width: 44px; height: 24px; margin-top: 1px; }
+.empty { margin: auto; text-align: center; color: rgba(255,255,255,.3); font-size: 14px; padding: 24px; }
+.empty .ei { font-size: 30px; opacity: .5; margin-bottom: 8px; }
+.empty .es { margin-top: 3px; font-size: 13px; }
+
+.sw { position: relative; flex: 0 0 auto; width: 44px; height: 24px; }
+.sw.sm { width: 34px; height: 19px; }
 .sw input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; z-index: 1; }
 .sw .track { position: absolute; inset: 0; border-radius: 24px; background: rgba(255,255,255,.16); transition: background .16s ease; }
 .sw .track::after { content: ''; position: absolute; top: 2px; left: 2px; width: 20px; height: 20px; border-radius: 50%; background: #fff; transition: transform .16s ease; box-shadow: 0 1px 3px rgba(0,0,0,.3); }
+.sw.sm .track::after { width: 15px; height: 15px; }
 .sw input:checked + .track { background: #fb7299; }
 .sw input:checked + .track::after { transform: translateX(20px); }
+.sw.sm input:checked + .track::after { transform: translateX(15px); }
 
-/* 配置项收进一个凹陷分组框，与模块标题拉开层级、给足呼吸 */
-/* 分组靠「左竖线 + 左缩进」，右侧不缩进 → 子选项开关与模块开关落在同一条右缘线上 */
-.fields {
-  margin-top: 12px; padding-left: 14px;
-  border-left: 2px solid rgba(255,255,255,.1);
-  display: flex; flex-direction: column; gap: 15px;
-}
-.field { display: flex; flex-direction: column; gap: 7px; }
-.field.row { flex-direction: row; align-items: center; justify-content: space-between; gap: 14px; }
-.field .flabel { font-size: 13px; color: rgba(255,255,255,.8); line-height: 1.4; }
-.field .hint { font-size: 12px; color: rgba(255,255,255,.4); line-height: 1.45; }
-.field input[type=text], .field textarea, .field select {
-  width: 100%; background: rgba(255,255,255,.06); color: #e3e5e7;
-  border: 1px solid rgba(255,255,255,.14); border-radius: 9px; padding: 8px 11px;
-  font-size: 13px; font-family: inherit; outline: none;
-}
-.field input[type=text]:focus, .field textarea:focus, .field select:focus { border-color: #fb7299; }
-.field.row .flabel { flex: 1; } /* 标签占满、把开关顶到右缘，与模块开关同一右缘对齐 */
-.field textarea { min-height: 64px; resize: vertical; line-height: 1.5; }
-
-.feed-status { font-size: 13px; color: rgba(255,255,255,.55); }
+.feed-status { font-size: 14px; color: rgba(255,255,255,.55); }
 .feed-status.on { color: #fb7299; }
-.feed-btn { align-self: flex-start; cursor: pointer; color: #fff; background: #fb7299; border: none; border-radius: 9px; padding: 8px 16px; font-size: 13px; font-family: inherit; font-weight: 500; }
+.feed-btn { align-self: flex-start; cursor: pointer; color: #fff; background: #fb7299; border: none; border-radius: 9px; padding: 9px 18px; font-size: 14px; font-family: inherit; font-weight: 500; }
 .feed-btn.ghost { background: transparent; border: 1px solid rgba(255,255,255,.2); color: #e3e5e7; }
 .feed-btn:hover { filter: brightness(1.08); }
 
-.foot { padding: 14px 24px 18px; font-size: 12px; color: rgba(255,255,255,.4); display: flex; align-items: center; gap: 12px; border-top: 1px solid rgba(255,255,255,.06); }
-.reload { display: none; margin-left: auto; cursor: pointer; color: #fff; background: #fb7299; border: none; border-radius: 9px; padding: 7px 16px; font-size: 12.5px; font-family: inherit; font-weight: 500; }
-.reload:hover { filter: brightness(1.08); }
+.foot { padding: 12px 22px 15px; font-size: 12px; color: rgba(255,255,255,.4); display: flex; align-items: center; gap: 12px; border-top: 1px solid rgba(255,255,255,.06); flex: 0 0 auto; }
+.foot .legend { margin-left: auto; display: flex; align-items: center; gap: 5px; }
+.foot .legend .gear-ico { width: 12px; height: 12px; color: #fb7299; }
+.foot .legend .gear-ico svg { width: 12px; height: 12px; }
+.reload { display: none; cursor: pointer; color: #fff; background: #fb7299; border: none; border-radius: 9px; padding: 6px 14px; font-size: 12px; font-family: inherit; font-weight: 500; }
 .foot.dirty .reload { display: inline-block; }
 .foot.dirty .note { color: #fb7299; }
 
 @media (prefers-color-scheme: light) {
   .gear { background: rgba(255,255,255,.95); color: #18191c; border-color: rgba(0,0,0,.08); box-shadow: 0 3px 14px rgba(0,0,0,.14); }
   .card { background: #fff; color: #18191c; box-shadow: 0 16px 56px rgba(0,0,0,.22); }
+  .head { border-bottom-color: rgba(0,0,0,.07); }
   .head .brand { color: #d6336c; }
-  .head .sub { color: rgba(0,0,0,.4); }
   .head .close:hover { background: rgba(0,0,0,.06); }
-  .mod { border-top-color: rgba(0,0,0,.07); }
-  .mod-desc { color: rgba(0,0,0,.45); }
-  .sw .track { background: rgba(0,0,0,.16); }
-  .sw input:checked + .track { background: #d6336c; }
-  .fields { border-left-color: rgba(0,0,0,.1); }
+  .main .nav { border-right-color: rgba(0,0,0,.07); }
+  .nav-cat { color: rgba(0,0,0,.4); }
+  .nav-item:hover { background: rgba(0,0,0,.05); }
+  .nav-item.sel { background: rgba(214,51,108,.12); }
+  .nav-item .nm { color: rgba(0,0,0,.82); }
+  .nav-item.sel .nm { color: #d6336c; }
+  .nav-item:hover .gear-ico, .nav-item.sel .gear-ico, .foot .legend .gear-ico { color: #d6336c; }
+  .detail-desc { color: rgba(0,0,0,.5); }
   .field .flabel { color: rgba(0,0,0,.75); }
   .field .hint { color: rgba(0,0,0,.42); }
   .field input[type=text], .field textarea, .field select { background: rgba(0,0,0,.04); color: #18191c; border-color: rgba(0,0,0,.14); }
   .field input[type=text]:focus, .field textarea:focus, .field select:focus { border-color: #d6336c; }
-  .foot { color: rgba(0,0,0,.45); border-top-color: rgba(0,0,0,.07); }
-  .reload { background: #d6336c; }
-  .foot.dirty .note { color: #d6336c; }
+  .empty { color: rgba(0,0,0,.35); }
+  .sw .track { background: rgba(0,0,0,.16); }
+  .sw input:checked + .track { background: #d6336c; }
   .feed-status { color: rgba(0,0,0,.55); }
   .feed-status.on { color: #d6336c; }
   .feed-btn { background: #d6336c; }
   .feed-btn.ghost { border-color: rgba(0,0,0,.2); color: #18191c; }
+  .foot { color: rgba(0,0,0,.45); border-top-color: rgba(0,0,0,.07); }
+  .reload { background: #d6336c; }
+  .foot.dirty .note { color: #d6336c; }
 }
 `
 
 const GEAR_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>`
 
-function markDirty(foot: HTMLElement): void {
-  dirty = true
-  foot.classList.add('dirty')
+function el(tag: string, cls?: string | null, text?: string): HTMLElement {
+  const e = document.createElement(tag)
+  if (cls) e.className = cls
+  if (text != null) e.textContent = text
+  return e
 }
 
-function renderField(m: BiliKitModule, f: SettingField, foot: HTMLElement): HTMLElement {
-  const wrap = document.createElement('div')
+function markDirty(): void {
+  dirty = true
+  if (footEl) footEl.classList.add('dirty')
+}
+
+function switchEl(checked: boolean, onChange: (on: boolean) => void, small = false): HTMLElement {
+  const sw = el('span', 'sw' + (small ? ' sm' : ''))
+  const inp = document.createElement('input')
+  inp.type = 'checkbox'
+  inp.checked = checked
+  const track = el('span', 'track')
+  inp.addEventListener('change', () => onChange(inp.checked))
+  sw.append(inp, track)
+  return sw
+}
+
+function renderField(m: BiliKitModule, f: SettingField): HTMLElement {
+  const wrap = el('div')
   const cur = getField(m, f.key)
 
   if (f.type === 'toggle') {
     wrap.className = 'field row'
-    const lab = document.createElement('span')
-    lab.className = 'flabel'
-    lab.textContent = f.label
-    const sw = switchEl(!!cur, (on) => { setField(m.id, f.key, on); markDirty(foot) })
+    const lab = el('span', 'flabel', f.label)
+    const sw = switchEl(!!cur, (on) => { setField(m.id, f.key, on); markDirty() })
     wrap.append(lab, sw)
   } else if (f.type === 'select') {
-    wrap.className = 'field' // 标签在上、下拉占满整行（不右对齐，免与开关错位）
-    const lab = document.createElement('span')
-    lab.className = 'flabel'
-    lab.textContent = f.label
+    wrap.className = 'field'
+    wrap.appendChild(el('span', 'flabel', f.label))
     const sel = document.createElement('select')
     const presets = f.options.map((o) => o.value)
     for (const o of f.options) {
@@ -169,9 +203,8 @@ function renderField(m: BiliKitModule, f: SettingField, foot: HTMLElement): HTML
       input = document.createElement('input')
       input.type = 'text'
       if (f.customPlaceholder) input.placeholder = f.customPlaceholder
-      input.addEventListener('input', () => { setField(m.id, f.key, input!.value); markDirty(foot) })
+      input.addEventListener('input', () => { setField(m.id, f.key, input!.value); markDirty() })
     }
-    // 当前值若不在预设里且非空 → 判为自定义：选中「自定义…」并把值填进输入框
     const isPreset = presets.includes(cur as string)
     if (f.allowCustom && !isPreset && cur) {
       sel.value = CUSTOM
@@ -184,201 +217,196 @@ function renderField(m: BiliKitModule, f: SettingField, foot: HTMLElement): HTML
     sel.addEventListener('change', () => {
       if (sel.value === CUSTOM && input) {
         input.style.display = ''
-        setField(m.id, f.key, input.value) // 空则暂等同「关闭」，输入后即更新
+        setField(m.id, f.key, input.value)
         input.focus()
       } else {
         if (input) input.style.display = 'none'
         setField(m.id, f.key, sel.value)
       }
-      markDirty(foot)
+      markDirty()
     })
-    wrap.append(lab, sel)
+    wrap.appendChild(sel)
     if (input) wrap.appendChild(input)
   } else if (f.type === 'textarea') {
     wrap.className = 'field'
-    const lab = document.createElement('span')
-    lab.className = 'flabel'
-    lab.textContent = f.label
+    wrap.appendChild(el('span', 'flabel', f.label))
     const ta = document.createElement('textarea')
     ta.value = String(cur ?? '')
     if (f.placeholder) ta.placeholder = f.placeholder
-    ta.addEventListener('change', () => { setField(m.id, f.key, ta.value); markDirty(foot) })
-    wrap.append(lab, ta)
+    ta.addEventListener('change', () => { setField(m.id, f.key, ta.value); markDirty() })
+    wrap.appendChild(ta)
   } else {
     wrap.className = 'field'
-    const lab = document.createElement('span')
-    lab.className = 'flabel'
-    lab.textContent = f.label
+    wrap.appendChild(el('span', 'flabel', f.label))
     const inp = document.createElement('input')
     inp.type = 'text'
     inp.value = String(cur ?? '')
     if (f.placeholder) inp.placeholder = f.placeholder
-    inp.addEventListener('change', () => { setField(m.id, f.key, inp.value); markDirty(foot) })
-    wrap.append(lab, inp)
+    inp.addEventListener('change', () => { setField(m.id, f.key, inp.value); markDirty() })
+    wrap.appendChild(inp)
   }
 
-  if (f.hint) {
-    const hint = document.createElement('div')
-    hint.className = 'hint'
-    hint.textContent = f.hint
-    wrap.appendChild(hint)
-  }
+  if (f.hint) wrap.appendChild(el('div', 'hint', f.hint))
   return wrap
 }
 
-function switchEl(checked: boolean, onChange: (on: boolean) => void): HTMLElement {
-  const sw = document.createElement('span')
-  sw.className = 'sw'
-  const inp = document.createElement('input')
-  inp.type = 'checkbox'
-  inp.checked = checked
-  const track = document.createElement('span')
-  track.className = 'track'
-  inp.addEventListener('change', () => onChange(inp.checked))
-  sw.append(inp, track)
-  return sw
+function emptyState(main: string, sub?: string): HTMLElement {
+  const e = el('div', 'empty')
+  e.appendChild(el('div', 'ei', '◔'))
+  e.appendChild(el('div', null, main))
+  if (sub) e.appendChild(el('div', 'es', sub))
+  return e
 }
 
-function renderBody(body: HTMLElement, foot: HTMLElement): void {
-  body.textContent = ''
+/* ------------------------------------------------------------------ *
+ * 左栏（分组 + 每行 名字/粉点/开关）
+ * ------------------------------------------------------------------ */
+function navItemModule(m: BiliKitModule): HTMLElement {
+  const row = el('div', 'nav-item' + (selected === m.id ? ' sel' : ''))
+  const wrap = el('div', 'nm-wrap')
+  wrap.appendChild(el('span', 'nm', m.name))
+  if (m.settings && m.settings.length) { const g = el('span', 'gear-ico'); g.innerHTML = GEAR_SVG; wrap.appendChild(g) }
+  row.appendChild(wrap)
+  const sw = switchEl(isModuleEnabled(m), (on) => { setModuleEnabled(m.id, on); markDirty() }, true)
+  sw.addEventListener('click', (e) => e.stopPropagation()) // 点开关不触发选中
+  row.appendChild(sw)
+  row.addEventListener('click', () => select(m.id))
+  return row
+}
+
+function navItemFeed(): HTMLElement {
+  const row = el('div', 'nav-item' + (selected === FEED_ID ? ' sel' : ''))
+  const wrap = el('div', 'nm-wrap')
+  wrap.appendChild(el('span', 'nm', 'App 推荐 Feed'))
+  const g = el('span', 'gear-ico'); g.innerHTML = GEAR_SVG; wrap.appendChild(g)
+  row.appendChild(wrap)
+  row.addEventListener('click', () => select(FEED_ID))
+  return row
+}
+
+function renderNav(): void {
+  if (!navEl) return
+  navEl.textContent = ''
+  const cats: string[] = []
+  const byCat = new Map<string, BiliKitModule[]>()
   for (const m of getModules()) {
-    const enabled = isModuleEnabled(m)
-    const mod = document.createElement('div')
-    mod.className = enabled ? 'mod' : 'mod off'
-
-    const headRow = document.createElement('div')
-    headRow.className = 'mod-head'
-    const main = document.createElement('div')
-    main.className = 'mod-main'
-    const name = document.createElement('div')
-    name.className = 'mod-name'
-    name.textContent = m.name
-    main.appendChild(name)
-    if (m.description) {
-      const desc = document.createElement('div')
-      desc.className = 'mod-desc'
-      desc.textContent = m.description
-      main.appendChild(desc)
-    }
-    const sw = switchEl(enabled, (on) => {
-      setModuleEnabled(m.id, on)
-      markDirty(foot)
-      renderBody(body, foot) // 重渲染：启用后露出该模块配置项，禁用则收起并变灰
-    })
-    headRow.append(main, sw)
-    mod.appendChild(headRow)
-
-    // 仅在启用且有配置项时渲染控件
-    if (enabled && m.settings && m.settings.length) {
-      const fields = document.createElement('div')
-      fields.className = 'fields'
-      for (const f of m.settings) fields.appendChild(renderField(m, f, foot))
-      mod.appendChild(fields)
-    }
-    body.appendChild(mod)
+    const c = m.category || '其它'
+    if (!byCat.has(c)) { byCat.set(c, []); cats.push(c) }
+    byCat.get(c)!.push(m)
   }
-  renderFeedSection(body)
+  if (!cats.includes(FEED_CAT)) cats.push(FEED_CAT)
+  for (const c of cats) {
+    navEl.appendChild(el('div', 'nav-cat', c))
+    for (const m of byCat.get(c) || []) navEl.appendChild(navItemModule(m))
+    if (c === FEED_CAT) navEl.appendChild(navItemFeed())
+  }
 }
 
-// App 推荐 Feed 区块：状态 + 登录/退出。Feed 是独立脚本（隔离世界），这里经 localStorage
-// 命令通道触发它扫码；access_key 状态从共享设置读。（需另装 BiliKit Feed 脚本）
-function renderFeedSection(body: HTMLElement): void {
+/* ------------------------------------------------------------------ *
+ * 右栏（当前选中项的配置 / 空态 / Feed 登录）
+ * ------------------------------------------------------------------ */
+function renderFeedDetail(d: HTMLElement): void {
   const loggedIn = !!get<string>('feed.accessKey', '')
-  const mod = document.createElement('div')
-  mod.className = 'mod'
-  const head = document.createElement('div')
-  head.className = 'mod-head'
-  const main = document.createElement('div')
-  main.className = 'mod-main'
-  main.innerHTML = `<div class="mod-name">App 推荐 Feed</div><div class="mod-desc">首页换成手机 App 的推荐流（需 BiliKit Feed 脚本）</div>`
-  head.appendChild(main)
-  mod.appendChild(head)
-
-  const fields = document.createElement('div')
-  fields.className = 'fields'
-  const row = document.createElement('div')
-  row.className = 'field row'
-  const lab = document.createElement('span')
-  lab.className = 'flabel'
-  lab.textContent = '登录状态'
-  const st = document.createElement('span')
-  st.className = 'feed-status' + (loggedIn ? ' on' : '')
-  st.textContent = loggedIn ? '已登录 · 个性化推荐' : '未登录 · 匿名（内容有限）'
-  row.append(lab, st)
+  d.appendChild(el('div', 'detail-title', 'App 推荐 Feed'))
+  d.appendChild(el('div', 'detail-desc', '首页换成手机 App 的推荐流（需另装 BiliKit Feed 脚本）'))
+  const fields = el('div', 'fields')
+  const row = el('div', 'field row')
+  row.appendChild(el('span', 'flabel', '登录状态'))
+  const st = el('span', 'feed-status' + (loggedIn ? ' on' : ''), loggedIn ? '已登录 · 个性化推荐' : '未登录 · 匿名（内容有限）')
+  row.appendChild(st)
   fields.appendChild(row)
-
-  const btn = document.createElement('button')
-  btn.className = 'feed-btn' + (loggedIn ? ' ghost' : '')
-  btn.textContent = loggedIn ? '退出登录' : '扫码登录（TV）'
+  const btn = el('button', 'feed-btn' + (loggedIn ? ' ghost' : ''), loggedIn ? '退出登录' : '扫码登录（TV）')
   btn.addEventListener('click', () => {
     if (loggedIn) {
       set('feed.accessKey', '')
       location.reload()
     } else {
       st.textContent = '正在拉起二维码…'
-      startTvLogin((accessKey) => set('feed.accessKey', accessKey)) // tv-login 成功后自动刷新
+      startTvLogin((accessKey) => set('feed.accessKey', accessKey))
     }
   })
   fields.appendChild(btn)
+  fields.appendChild(el('div', 'hint', loggedIn ? '退出后回到匿名推荐并刷新。' : '用手机哔哩哔哩扫码，获得个性化、不重复的 App 推荐。'))
+  d.appendChild(fields)
+}
 
-  const hint = document.createElement('div')
-  hint.className = 'hint'
-  hint.textContent = loggedIn ? '退出后回到匿名推荐并刷新页面。' : '用手机哔哩哔哩扫码登录，获得个性化、不重复的 App 推荐。'
-  fields.appendChild(hint)
+function renderDetail(): void {
+  if (!detailEl) return
+  detailEl.textContent = ''
+  if (selected === FEED_ID) { renderFeedDetail(detailEl); return }
+  const m = getModules().find((x) => x.id === selected)
+  if (!m) { detailEl.appendChild(emptyState('选择左侧一项')); return }
+  detailEl.appendChild(el('div', 'detail-title', m.name))
+  if (m.description) detailEl.appendChild(el('div', 'detail-desc', m.description))
+  if (m.settings && m.settings.length) {
+    const fields = el('div', 'fields')
+    for (const f of m.settings) fields.appendChild(renderField(m, f))
+    detailEl.appendChild(fields)
+  } else {
+    detailEl.appendChild(emptyState('此模块无额外配置', '开关在左侧列表'))
+  }
+}
 
-  mod.appendChild(fields)
-  body.appendChild(mod)
+function firstNavId(): string {
+  const ms = getModules()
+  return ms.length ? ms[0].id : FEED_ID
+}
+
+function select(id: string): void {
+  selected = id
+  renderNav()
+  renderDetail()
 }
 
 export function mountPanel(): void {
-  if (window.top !== window.self) return // 不进 iframe
+  if (window.top !== window.self) return
   if (!document.body) {
     document.addEventListener('DOMContentLoaded', mountPanel, { once: true })
     return
   }
   if (document.getElementById(PANEL_ID)) return
 
-  const root = document.createElement('div')
+  const root = el('div')
   root.id = PANEL_ID
   const sr = root.attachShadow({ mode: 'open' })
   sr.innerHTML = `<style>${STYLE}</style>`
 
-  const gear = document.createElement('div')
-  gear.className = 'gear'
+  const gear = el('div', 'gear')
   gear.title = 'BiliKit 设置'
   gear.innerHTML = GEAR_SVG
 
-  const overlay = document.createElement('div')
-  overlay.className = 'overlay'
-  const card = document.createElement('div')
-  card.className = 'card'
+  const overlay = el('div', 'overlay')
+  const card = el('div', 'card')
 
-  const head = document.createElement('div')
-  head.className = 'head'
-  head.innerHTML = `<span class="title"><span class="brand">BiliKit</span> 设置</span><span class="sub">模块开关与配置</span>`
-  const close = document.createElement('span')
-  close.className = 'close'
-  close.textContent = '×'
+  const head = el('div', 'head')
+  head.innerHTML = `<span class="title"><span class="brand">BiliKit</span> 设置</span>`
+  const close = el('span', 'close', '×')
   head.appendChild(close)
 
-  const body = document.createElement('div')
-  body.className = 'body'
+  const main = el('div', 'main')
+  navEl = el('div', 'nav')
+  detailEl = el('div', 'detail')
+  main.append(navEl, detailEl)
 
-  const foot = document.createElement('div')
-  foot.className = 'foot'
-  const note = document.createElement('span')
-  note.className = 'note'
-  note.textContent = '改动需刷新页面生效'
-  const reload = document.createElement('button')
-  reload.className = 'reload'
-  reload.textContent = '刷新'
+  footEl = el('div', 'foot')
+  const note = el('span', 'note', '改动需刷新页面生效')
+  const reload = el('button', 'reload', '刷新')
   reload.addEventListener('click', () => location.reload())
-  foot.append(note, reload)
+  const legend = el('div', 'legend')
+  const lg = el('span', 'gear-ico')
+  lg.innerHTML = GEAR_SVG
+  legend.append(lg, el('span', null, '有可调项'))
+  footEl.append(note, reload, legend)
 
-  card.append(head, body, foot)
+  card.append(head, main, footEl)
   overlay.appendChild(card)
 
-  const open = () => { renderBody(body, foot); overlay.classList.add('open') }
+  const open = () => {
+    if (!selected || (selected !== FEED_ID && !getModules().some((m) => m.id === selected))) selected = firstNavId()
+    renderNav()
+    renderDetail()
+    overlay.classList.add('open')
+  }
   const closePanel = () => overlay.classList.remove('open')
   gear.addEventListener('click', open)
   close.addEventListener('click', closePanel)

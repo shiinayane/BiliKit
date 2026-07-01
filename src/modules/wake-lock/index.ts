@@ -127,6 +127,7 @@ export const wakeLock: BiliKitModule = {
   id: 'wake-lock',
   name: '防睡眠',
   description: '播放视频时阻止 Safari 休眠 / 屏保',
+  category: '播放',
   runAt: 'idle',
   init,
 }

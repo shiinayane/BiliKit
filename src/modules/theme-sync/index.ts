@@ -95,6 +95,7 @@ export const themeSync: BiliKitModule = {
   id: 'theme-sync',
   name: '主题同步',
   description: '跟随系统深浅色，全站无刷新实时切换',
+  category: '界面',
   runAt: 'start',
   settings: [
     {

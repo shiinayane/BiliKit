@@ -136,6 +136,7 @@ export const commentLocation: BiliKitModule = {
   id: 'comment-location',
   name: '评论属地',
   description: '评论/回复时间旁显示 IP 属地',
+  category: '界面',
   runAt: 'idle',
   settings: [
     { key: 'pin', type: 'text', label: '地名前缀符', default: '', placeholder: '如 📍 ', hint: '显示在属地前，默认无；想加自己填' },
