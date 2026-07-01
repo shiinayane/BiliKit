@@ -45,12 +45,23 @@ export interface FeedCard {
   goto: string
   title: string
   up: string
+  face: string // UP 头像 URL（avatar.cover）
   cover: string
   uri: string
   bvid: string
   aid: string
   duration: string
   play: string
+  danmaku: string // 弹幕数（cover_left_text_3）
+  date: string // 发布日期，如「6月11日」——仅存在于 desc 文本，无原始时间戳
+  reason: string // 推荐理由，如「已关注」（bottom_rcmd_reason）
+}
+
+// desc 形如「UP名 · 6月11日」或仅「UP名」。取「·」后一段当日期；没有则空。
+function descDate(desc: string): string {
+  if (!desc) return ''
+  const i = desc.lastIndexOf(' · ')
+  return i >= 0 ? desc.slice(i + 3).trim() : ''
 }
 
 function normalize(item: any): FeedCard | null {
@@ -61,12 +72,16 @@ function normalize(item: any): FeedCard | null {
     goto: item.goto || '',
     title: item.title || '',
     up: args.up_name || '',
+    face: (item.avatar && item.avatar.cover) || '',
     cover: item.cover || '',
     uri: item.uri || '',
     bvid: item.bvid || pa.bvid || '',
     aid: String(args.aid || pa.aid || item.param || ''),
     duration: item.cover_left_text_1 || '', // 时长（实测在 text_1，如 13:02）
     play: item.cover_left_text_2 || '', // 观看数（实测在 text_2，如 25.4万观看）
+    danmaku: item.cover_left_text_3 || '', // 弹幕数（如 13弹幕）
+    date: descDate(item.desc || ''),
+    reason: item.bottom_rcmd_reason || '',
   }
 }
 
