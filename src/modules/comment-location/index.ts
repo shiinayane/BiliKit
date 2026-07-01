@@ -10,8 +10,7 @@ function init(cfg: Cfg): void {
   ;(window as any).__BILIKIT_COMMENT_LOC__ = true
 
   const DEBUG = false // 排查时改 true
-  const STRIP_PREFIX = cfg.get<boolean>('stripPrefix') // 去掉「IP属地：」前缀，只留地名
-  const PIN = cfg.get<string>('pin') || '' // 地名前缀符，默认无
+  const PIN = cfg.get<string>('pin') || '' // 地名前缀符，默认无（想加自己填）
 
   const log = (...a: unknown[]) => { if (DEBUG) console.log('[评论属地]', ...a) }
 
@@ -30,7 +29,7 @@ function init(cfg: Cfg): void {
     return null
   }
 
-  const format = (loc: string) => (STRIP_PREFIX ? loc.replace(/^\s*IP属地[:：]\s*/, '') : loc)
+  const format = (loc: string) => loc.replace(/^\s*IP属地[:：]\s*/, '') // 恒去「IP属地：」前缀，只留地名
 
   // 穿透嵌套 shadow：给每个 action-buttons 注入属地；给每个尚未观察的嵌套 shadowRoot 挂作用域 observer。
   const observed = new WeakSet<ShadowRoot>()
@@ -139,8 +138,7 @@ export const commentLocation: BiliKitModule = {
   description: '评论/回复时间旁显示 IP 属地',
   runAt: 'idle',
   settings: [
-    { key: 'stripPrefix', type: 'toggle', label: '去掉「IP属地：」前缀，只留地名', default: true },
-    { key: 'pin', type: 'text', label: '地名前缀符', default: '', placeholder: '如 📍 ', hint: '显示在属地前，默认无' },
+    { key: 'pin', type: 'text', label: '地名前缀符', default: '', placeholder: '如 📍 ', hint: '显示在属地前，默认无；想加自己填' },
   ],
   init,
 }

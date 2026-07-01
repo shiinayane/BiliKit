@@ -18,7 +18,7 @@ export type SettingField =
   | { key: string; type: 'toggle'; label: string; default: boolean; hint?: string }
   | { key: string; type: 'text'; label: string; default: string; placeholder?: string; hint?: string }
   | { key: string; type: 'textarea'; label: string; default: string; placeholder?: string; hint?: string }
-  | { key: string; type: 'select'; label: string; default: string; options: { label: string; value: string }[]; hint?: string }
+  | { key: string; type: 'select'; label: string; default: string; options: { label: string; value: string }[]; allowCustom?: boolean; customPlaceholder?: string; hint?: string }
 
 /** 传给 init 的配置读取器，绑定到该模块自身的命名空间 */
 export interface Cfg {

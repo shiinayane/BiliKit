@@ -1,11 +1,11 @@
-import type { BiliKitModule } from '../../core/module'
+import type { BiliKitModule, Cfg } from '../../core/module'
 
 /**
  * 主题同步：让 B 站跟随系统深浅色，全站无刷新实时切换并同步所有 Tab。
  * 迁移自 scripts/theme-sync.user.js（逻辑逐字保留）。
  * 只在顶层窗口跑（跳过 Float 抽屉 iframe），故保留 window.top 守卫。
  */
-function init(): void {
+function init(cfg: Cfg): void {
   // 仅在顶层窗口运行：避免跑进 BiliKit·Float 的抽屉 iframe（其主题由 Float 自行处理）。
   if (window.top !== window.self) return
 
@@ -19,6 +19,13 @@ function init(): void {
 
   const mql = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null
   const systemDark = () => !!(mql && mql.matches)
+  // 主题模式：'auto' 跟随系统 / 'dark' 始终深 / 'light' 始终浅（面板可调；每次 apply 时读取）
+  const wantDark = () => {
+    const mode = cfg.get<string>('mode') || 'auto'
+    if (mode === 'dark') return true
+    if (mode === 'light') return false
+    return systemDark()
+  }
 
   // document.cookie 写入是同步操作，apply() 在每次切回标签页时都会跑，值没变就跳过
   let lastCookieValue: string | null = null
@@ -48,7 +55,7 @@ function init(): void {
   }
 
   function apply(): void {
-    const dark = systemDark()
+    const dark = wantDark()
     setCookie(COOKIE_NAME, dark ? 'dark' : 'light') // 持久化：保证后续加载的初始主题
     swapThemeStylesheet(document, dark) // 当前页：无刷新换肤（document-start 时表可能还没插入，由后续时机兜底）
     const root = document.documentElement
@@ -79,7 +86,7 @@ function init(): void {
   let syncPending = 0
   const scheduleComponentSync = () => {
     if (syncPending) return
-    syncPending = requestAnimationFrame(() => { syncPending = 0; syncComponentTheme(systemDark()) })
+    syncPending = requestAnimationFrame(() => { syncPending = 0; syncComponentTheme(wantDark()) })
   }
   new MutationObserver(scheduleComponentSync).observe(document.documentElement, { childList: true, subtree: true })
 }
@@ -89,5 +96,19 @@ export const themeSync: BiliKitModule = {
   name: '主题同步',
   description: '跟随系统深浅色，全站无刷新实时切换',
   runAt: 'start',
+  settings: [
+    {
+      key: 'mode',
+      type: 'select',
+      label: '主题模式',
+      default: 'auto',
+      options: [
+        { label: '跟随系统', value: 'auto' },
+        { label: '始终深色', value: 'dark' },
+        { label: '始终浅色', value: 'light' },
+      ],
+      hint: '跟随系统深浅，或强制固定一种',
+    },
+  ],
   init,
 }
