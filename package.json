@@ -1,0 +1,18 @@
+{
+  "name": "bilikit",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "BiliKit · B 站增强套件（Safari 友好，页面世界注入）。构建产出统一的 BiliKit Core / Feed 用户脚本。",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "build:core": "vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "typescript": "^5",
+    "vite": "^6",
+    "vite-plugin-monkey": "^5"
+  }
+}

@@ -6,6 +6,9 @@
 .idea/
 node_modules/
 
+# 构建产物（BiliKit Core/Feed 打包输出，发布到 GreasyFork，不入库）
+dist/
+
 # 参考项目（外部仓库克隆，非 BiliKit 一部分，不纳入版本库）
 BewlyCat/
 Bilibili-Gate/

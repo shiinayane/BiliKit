@@ -1,0 +1,6 @@
+allowBuilds:
+  esbuild: set this to true or false
+# pnpm 11 起，设置项从 package.json 的 "pnpm" 字段移到这里。
+# 放行 esbuild 的安装脚本（vite 依赖它）。
+onlyBuiltDependencies:
+  - esbuild
