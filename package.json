@@ -6,13 +6,18 @@
   "description": "BiliKit · B 站增强套件（Safari 友好，页面世界注入）。构建产出统一的 BiliKit Core / Feed 用户脚本。",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "npm run build:core && npm run build:feed",
     "build:core": "vite build",
+    "build:feed": "vite build --config vite.feed.config.ts",
     "preview": "vite preview"
   },
   "devDependencies": {
+    "@types/qrcode-generator": "^1.0.6",
     "typescript": "^5",
     "vite": "^6",
     "vite-plugin-monkey": "^5"
+  },
+  "dependencies": {
+    "qrcode-generator": "^2.0.4"
   }
 }

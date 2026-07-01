@@ -1,5 +1,6 @@
 import { getModules, type BiliKitModule, type SettingField } from './module'
-import { isModuleEnabled, setModuleEnabled, getField, setField } from './settings'
+import { get, set, isModuleEnabled, setModuleEnabled, getField, setField } from './settings'
+import { startTvLogin } from './tv-login'
 
 /**
  * 设置面板：左下悬浮齿轮 → 居中模态。整个 UI 挂在 Shadow DOM 里，样式与 B 站彻底隔离
@@ -90,6 +91,12 @@ const STYLE = `
 .field.row .flabel { flex: 1; } /* 标签占满、把开关顶到右缘，与模块开关同一右缘对齐 */
 .field textarea { min-height: 64px; resize: vertical; line-height: 1.5; }
 
+.feed-status { font-size: 13px; color: rgba(255,255,255,.55); }
+.feed-status.on { color: #fb7299; }
+.feed-btn { align-self: flex-start; cursor: pointer; color: #fff; background: #fb7299; border: none; border-radius: 9px; padding: 8px 16px; font-size: 13px; font-family: inherit; font-weight: 500; }
+.feed-btn.ghost { background: transparent; border: 1px solid rgba(255,255,255,.2); color: #e3e5e7; }
+.feed-btn:hover { filter: brightness(1.08); }
+
 .foot { padding: 14px 24px 18px; font-size: 12px; color: rgba(255,255,255,.4); display: flex; align-items: center; gap: 12px; border-top: 1px solid rgba(255,255,255,.06); }
 .reload { display: none; margin-left: auto; cursor: pointer; color: #fff; background: #fb7299; border: none; border-radius: 9px; padding: 7px 16px; font-size: 12.5px; font-family: inherit; font-weight: 500; }
 .reload:hover { filter: brightness(1.08); }
@@ -114,6 +121,10 @@ const STYLE = `
   .foot { color: rgba(0,0,0,.45); border-top-color: rgba(0,0,0,.07); }
   .reload { background: #d6336c; }
   .foot.dirty .note { color: #d6336c; }
+  .feed-status { color: rgba(0,0,0,.55); }
+  .feed-status.on { color: #d6336c; }
+  .feed-btn { background: #d6336c; }
+  .feed-btn.ghost { border-color: rgba(0,0,0,.2); color: #18191c; }
 }
 `
 
@@ -266,6 +277,57 @@ function renderBody(body: HTMLElement, foot: HTMLElement): void {
     }
     body.appendChild(mod)
   }
+  renderFeedSection(body)
+}
+
+// App 推荐 Feed 区块：状态 + 登录/退出。Feed 是独立脚本（隔离世界），这里经 localStorage
+// 命令通道触发它扫码；access_key 状态从共享设置读。（需另装 BiliKit Feed 脚本）
+function renderFeedSection(body: HTMLElement): void {
+  const loggedIn = !!get<string>('feed.accessKey', '')
+  const mod = document.createElement('div')
+  mod.className = 'mod'
+  const head = document.createElement('div')
+  head.className = 'mod-head'
+  const main = document.createElement('div')
+  main.className = 'mod-main'
+  main.innerHTML = `<div class="mod-name">App 推荐 Feed</div><div class="mod-desc">首页换成手机 App 的推荐流（需 BiliKit Feed 脚本）</div>`
+  head.appendChild(main)
+  mod.appendChild(head)
+
+  const fields = document.createElement('div')
+  fields.className = 'fields'
+  const row = document.createElement('div')
+  row.className = 'field row'
+  const lab = document.createElement('span')
+  lab.className = 'flabel'
+  lab.textContent = '登录状态'
+  const st = document.createElement('span')
+  st.className = 'feed-status' + (loggedIn ? ' on' : '')
+  st.textContent = loggedIn ? '已登录 · 个性化推荐' : '未登录 · 匿名（内容有限）'
+  row.append(lab, st)
+  fields.appendChild(row)
+
+  const btn = document.createElement('button')
+  btn.className = 'feed-btn' + (loggedIn ? ' ghost' : '')
+  btn.textContent = loggedIn ? '退出登录' : '扫码登录（TV）'
+  btn.addEventListener('click', () => {
+    if (loggedIn) {
+      set('feed.accessKey', '')
+      location.reload()
+    } else {
+      st.textContent = '正在拉起二维码…'
+      startTvLogin((accessKey) => set('feed.accessKey', accessKey)) // tv-login 成功后自动刷新
+    }
+  })
+  fields.appendChild(btn)
+
+  const hint = document.createElement('div')
+  hint.className = 'hint'
+  hint.textContent = loggedIn ? '退出后回到匿名推荐并刷新页面。' : '用手机哔哩哔哩扫码登录，获得个性化、不重复的 App 推荐。'
+  fields.appendChild(hint)
+
+  mod.appendChild(fields)
+  body.appendChild(mod)
 }
 
 export function mountPanel(): void {
