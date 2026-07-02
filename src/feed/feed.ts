@@ -40,6 +40,20 @@ function getAccessKey(): string {
   }
 }
 
+// 按页面真实底色(--bg2 亮度)判深浅——比 @media prefers-color-scheme 可靠（系统浅/B站深也能对）。
+// 探针元素解析出 var(--bg2) 的实际 rgb，算感知亮度。骨架高光据此选亮/暗扫光。
+let darkProbe: HTMLElement | null = null
+function pageIsDark(): boolean {
+  if (!darkProbe) {
+    darkProbe = document.createElement('div')
+    darkProbe.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:1px;height:1px;background:var(--bg2,#fff);pointer-events:none'
+    ;(document.body || document.documentElement).appendChild(darkProbe)
+  }
+  const m = getComputedStyle(darkProbe).backgroundColor.match(/\d+(?:\.\d+)?/g)
+  if (!m) return false
+  return 0.299 * +m[0] + 0.587 * +m[1] + 0.114 * +m[2] < 128
+}
+
 // 量当前列数与「行高」（卡片高 + 行间距）。列数从 grid 计算样式取——正常已解析成 px 列表，逐个数；
 // 偶发未解析(含 repeat/minmax 等非 px)则回落到上次有效值，防误判。行高量一张已渲染卡（卡等高，任取），无则回落。
 function metrics(): { cols: number; rowH: number } {
@@ -280,6 +294,7 @@ function takeover(): boolean {
 
   grid = document.createElement('div')
   grid.className = NS
+  grid.classList.toggle('bk-dark', pageIsDark()) // 骨架高光按真实底色选亮/暗扫光
   topSpacer = document.createElement('div'); topSpacer.className = `${NS}-spacer`
   bottomSpacer = document.createElement('div'); bottomSpacer.className = `${NS}-spacer`
   sentinel = document.createElement('div'); sentinel.className = `${NS}-sentinel`
@@ -338,6 +353,7 @@ export function mountFeed(): void {
     try { localStorage.setItem('bilikit:alive.feed', String(Date.now())) } catch { /* ignore */ } // 刷新心跳，供 Core 面板实时探测
     hideNativeChrome()
     if (takeover()) { /* 挂上了；仍继续轮询以应对 SPA 重建 */ }
+    if (grid) grid.classList.toggle('bk-dark', pageIsDark()) // 跟随主题切换实时更新深浅
     if (++tries > 600) clearInterval(t) // ~10min 后停轮询兜底
   }, 1000)
 }

@@ -2,7 +2,7 @@
 // @name         BiliKit · CDN 优选
 // @name:en      BiliKit · CDN Pick
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.7.2
+// @version      0.7.3
 // @description    把 B 站视频分片重定向到指定 CDN 镜像，绕开被分到的慢节点（海外 Akamai 等）。Safari 友好：页面世界注入、不依赖 GM/unsafeWindow，故能拦到播放器真正的请求（CCB 等脚本在 Safari Userscripts 下因 grant 被注入隔离世界而失效）。
 // @description:en Redirect Bilibili video segments to a chosen CDN mirror, bypassing the slow node you were assigned (e.g. overseas Akamai). Safari-friendly: page-world injection without GM/unsafeWindow.
 // @author       shiinayane
@@ -35,6 +35,24 @@
  */
 (() => {
   'use strict'
+
+  // 【已并入 BiliKit Core】检测到 Core 在运行则提示本独立脚本可卸载（一次性、可关闭；不影响本脚本功能）。
+  if (window.top === window.self) setTimeout(() => {
+    try {
+      if (Date.now() - (Number(localStorage.getItem('bilikit:alive.core')) || 0) > 15000) return
+      const K = 'bilikit:dismiss.legacy-cdn-pick'
+      if (localStorage.getItem(K)) return
+      const b = document.createElement('div')
+      b.style.cssText = 'position:fixed;left:16px;bottom:16px;z-index:2147483600;max-width:300px;padding:10px 34px 10px 14px;border-radius:10px;background:rgba(22,23,28,.96);color:#e3e5e7;font:13px/1.5 -apple-system,"PingFang SC",sans-serif;box-shadow:0 6px 24px rgba(0,0,0,.4)'
+      b.innerHTML = '「CDN 优选」已并入 <b style="color:#fb7299">BiliKit Core</b>，本独立脚本可卸载。<a href="https://github.com/shiinayane/BiliKit" target="_blank" rel="noopener" style="color:#fb7299;text-decoration:none">详情</a>'
+      const x = document.createElement('span')
+      x.textContent = '✕'
+      x.style.cssText = 'position:absolute;top:7px;right:11px;cursor:pointer;opacity:.55'
+      x.onclick = () => { try { localStorage.setItem(K, '1') } catch (e) {} b.remove() }
+      b.appendChild(x)
+      ;(document.body || document.documentElement).appendChild(b)
+    } catch (e) {}
+  }, 2500)
 
   // 不设顶层窗口守卫：本脚本无 UI、纯按帧改写请求，需要在子框架里也跑——
   // float 抽屉(同源 iframe 载视频页) 与番剧 player.bilibili.com 播放器都靠它。

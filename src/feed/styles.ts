@@ -27,12 +27,13 @@ export function injectStyle(): void {
     .${NS}-shimmer{ position:relative; overflow:hidden; background-color:var(--bg2,#e3e5e7); }
     .${NS}-cover:not(.loaded):not(.failed)::after, .${NS}-shimmer::after{
       content:''; position:absolute; inset:0;
-      background:linear-gradient(90deg, transparent 25%, rgba(255,255,255,.28) 50%, transparent 75%);
+      /* 浅色默认：白光打在浅灰底上看不见 → 用暗色扫光（浅底上才有对比） */
+      background:linear-gradient(90deg, transparent 20%, rgba(0,0,0,.07) 50%, transparent 80%);
       transform:translateX(-100%); animation:bk-shimmer 1.6s linear infinite;
     }
-    /* 深色模式下白色高光过刺眼，压到很淡 */
-    @media (prefers-color-scheme: dark){
-      .${NS}-cover:not(.loaded):not(.failed)::after, .${NS}-shimmer::after{ background:linear-gradient(90deg, transparent 25%, rgba(255,255,255,.09) 50%, transparent 75%); }
+    /* 深色：按页面真实底色判定(JS 给 grid 加 .bk-dark)，不用 @media prefers——避免「系统浅/B站深」时不生效。用淡白扫光 */
+    .${NS}.bk-dark .${NS}-cover:not(.loaded):not(.failed)::after, .${NS}.bk-dark .${NS}-shimmer::after{
+      background:linear-gradient(90deg, transparent 15%, rgba(255,255,255,.11) 50%, transparent 85%);
     }
     @keyframes bk-shimmer{ to{ transform:translateX(100%); } }
     /* 封面底部遮罩：左「播放·弹幕」右「时长」 */
@@ -69,22 +70,29 @@ export function injectStyle(): void {
     .${NS}-sentinel{ grid-column:1/-1; height:1px; }
     .${NS}-tip{ grid-column:1/-1; text-align:center; color:var(--text3,#9499a0); font-size:13px; padding:20px; }
     .${NS}-fab{ position:fixed; right:24px; bottom:32px; z-index:1000; display:flex; flex-direction:column; gap:10px; }
-    .${NS}-fab button{ width:44px; height:44px; border-radius:50%; border:1px solid var(--line_regular,#e3e5e7); background:var(--bg1,#fff); color:var(--text2,#61666d); cursor:pointer; box-shadow:0 2px 8px rgba(0,0,0,.14); display:flex; align-items:center; justify-content:center; padding:0; transition:opacity .18s, transform .18s, color .18s; }
-    .${NS}-fab button:hover{ color:var(--brand_blue,#00aeec); transform:translateY(-2px); }
-    .${NS}-fab button:active{ transform:translateY(0); }
+    /* 统一图标按钮：圆形 + 细描边 + 表面底 + 轻阴影，hover 变品牌色微浮起、按下微缩。悬浮按钮与抽屉浮动按钮共用 */
+    .${NS}-fab button, .${NS}-dctrls button{
+      width:40px; height:40px; border-radius:50%; padding:0;
+      display:flex; align-items:center; justify-content:center;
+      border:1px solid var(--line_regular,#e3e5e7); background:var(--bg1,#fff); color:var(--text2,#61666d);
+      cursor:pointer; box-shadow:0 2px 10px rgba(0,0,0,.12);
+      transition:color .16s ease, transform .16s ease, box-shadow .16s ease, opacity .18s ease;
+    }
+    .${NS}-fab button:hover, .${NS}-dctrls button:hover{ color:var(--brand_blue,#00aeec); transform:translateY(-2px); box-shadow:0 5px 16px rgba(0,0,0,.2); }
+    .${NS}-fab button:active, .${NS}-dctrls button:active{ transform:scale(.94); }
     .${NS}-fab .bk-top{ opacity:0; pointer-events:none; transform:scale(.85); }      /* 默认藏，滚动后现 */
     .${NS}-fab.scrolled .bk-top{ opacity:1; pointer-events:auto; transform:none; }
     .${NS}-fab button.busy{ pointer-events:none; }
     .${NS}-fab button.busy svg{ animation:bk-spin .8s linear infinite; }
     @keyframes bk-spin{ to{ transform:rotate(360deg); } }
-    /* 底部上滑抽屉：顶部留 48px 缝(显遮罩、点击关闭)；关闭/新标签是缝里的独立浮动按钮 */
+    /* 底部上滑抽屉：顶部留 64px 缝(显遮罩、点击关闭)；关闭/新标签是缝里的独立浮动按钮 */
     .${NS}-dmask{ position:fixed; inset:0; z-index:100000; background:rgba(0,0,0,.5); opacity:0; pointer-events:none; transition:opacity .3s ease; }
     .${NS}-dmask.on{ opacity:1; pointer-events:auto; } /* 关闭后 pointer-events:none，否则透明遮罩仍拦全站点击 */
-    .${NS}-drawer{ position:fixed; left:0; right:0; bottom:0; height:calc(100% - 48px); z-index:100001; display:flex; flex-direction:column; background:var(--bg1,#fff); border-radius:14px 14px 0 0; box-shadow:0 -8px 40px rgba(0,0,0,.35); transform:translateY(100%); transition:transform .32s cubic-bezier(.32,.72,0,1); overflow:hidden; }
+    .${NS}-drawer{ position:fixed; left:0; right:0; bottom:0; height:calc(100% - 64px); z-index:100001; display:flex; flex-direction:column; background:var(--bg1,#fff); border-radius:14px 14px 0 0; box-shadow:0 -8px 40px rgba(0,0,0,.35); transform:translateY(100%); transition:transform .32s cubic-bezier(.32,.72,0,1); overflow:hidden; }
     .${NS}-drawer.on{ transform:translateY(0); }
     .${NS}-dframe{ flex:1; width:100%; border:0; display:block; }
     /* 下拉提示气泡（顶部缝里居中，拖拽时淡入） */
-    .${NS}-dhint{ position:fixed; top:14px; left:50%; transform:translateX(-50%); z-index:100002; font-size:12px; color:#fff; background:rgba(0,0,0,.55); padding:3px 12px; border-radius:12px; opacity:0; pointer-events:none; transition:opacity .15s ease; -webkit-backdrop-filter:blur(4px); backdrop-filter:blur(4px); }
+    .${NS}-dhint{ position:fixed; top:19px; left:50%; transform:translateX(-50%); z-index:100002; font-size:12px; color:#fff; background:rgba(0,0,0,.55); padding:3px 12px; border-radius:12px; opacity:0; pointer-events:none; transition:opacity .15s ease; -webkit-backdrop-filter:blur(4px); backdrop-filter:blur(4px); }
     .${NS}-dhint.on{ opacity:1; }
     /* 加载遮罩：封面模糊铺底 + spinner，盖住打开瞬间黑→白闪 */
     .${NS}-dload{ position:absolute; inset:0; z-index:1; display:flex; align-items:center; justify-content:center; background:#18191c; opacity:0; pointer-events:none; transition:opacity .3s ease; }
@@ -93,10 +101,8 @@ export function injectStyle(): void {
     .${NS}-dspin{ position:relative; width:42px; height:42px; border:3px solid rgba(255,255,255,.2); border-top-color:var(--brand_blue,#00aeec); border-radius:50%; animation:bk-spin .8s linear infinite; }
     @media (prefers-color-scheme: light){ .${NS}-dload{ background:#f4f4f5; } .${NS}-dspin{ border-color:rgba(0,0,0,.12); border-top-color:var(--brand_blue,#00aeec); } }
     /* 顶部缝里的独立浮动按钮 */
-    .${NS}-dctrls{ position:fixed; top:9px; right:16px; z-index:100002; display:flex; gap:10px; opacity:0; pointer-events:none; transition:opacity .3s ease; }
-    .${NS}-dctrls.on{ opacity:1; pointer-events:auto; }
-    .${NS}-dctrls button{ width:34px; height:34px; border-radius:50%; border:0; background:rgba(0,0,0,.55); color:#fff; cursor:pointer; display:flex; align-items:center; justify-content:center; -webkit-backdrop-filter:blur(4px); backdrop-filter:blur(4px); }
-    .${NS}-dctrls button:hover{ background:rgba(0,0,0,.78); }
+    .${NS}-dctrls{ position:fixed; top:14px; right:18px; z-index:100002; display:flex; gap:10px; opacity:0; pointer-events:none; transition:opacity .3s ease; }
+    .${NS}-dctrls.on{ opacity:1; pointer-events:auto; } /* 按钮样式与 .bk-feed-fab button 共用（统一） */
   `
   ;(document.head || document.documentElement).appendChild(s)
 }

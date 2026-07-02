@@ -13,7 +13,7 @@ export default defineConfig({
         name: 'BiliKit Feed',
         namespace: 'https://github.com/shiinayane/BiliKit',
         version: '0.2.0',
-        description: 'BiliKit · App 推荐 feed：把手机 App 的推荐流搬上 B 站首页。需配合 BiliKit Core。',
+        description: 'B 站首页换成手机 App 的个性化推荐流；点卡片在底部抽屉内播放、封面悬停秒预览，窗口化虚拟化滚动流畅。需配合 BiliKit Core（登录 / 设置）。',
         author: 'shiinayane',
         license: 'MIT',
         // 只接管首页；登录已移到 Core，Feed 不再需要全站注入，也不碰 passport

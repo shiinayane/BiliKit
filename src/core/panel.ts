@@ -56,8 +56,9 @@ const STYLE = `
 .head { display: flex; align-items: baseline; gap: 10px; padding: 18px 22px 14px; border-bottom: 1px solid rgba(255,255,255,.06); flex: 0 0 auto; }
 .head .title { font-size: 17px; font-weight: 600; letter-spacing: .2px; }
 .head .brand { color: #fb7299; }
-.head .close { margin-left: auto; cursor: pointer; opacity: .55; font-size: 22px; line-height: 1; padding: 2px 8px; border-radius: 9px; }
-.head .close:hover { opacity: 1; background: rgba(255,255,255,.09); }
+.head .close { margin-left: auto; cursor: pointer; width: 30px; height: 30px; border-radius: 50%; border: 1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.05); color: rgba(255,255,255,.7); font-size: 18px; line-height: 1; display: flex; align-items: center; justify-content: center; transition: color .16s ease, border-color .16s ease, transform .12s ease; }
+.head .close:hover { color: #fb7299; border-color: #fb7299; }
+.head .close:active { transform: scale(.92); }
 
 .main { flex: 1; display: flex; min-height: 0; }
 .nav { width: 228px; flex: 0 0 auto; border-right: 1px solid rgba(255,255,255,.06); overflow: auto; padding: 12px 10px; }
@@ -104,8 +105,19 @@ const STYLE = `
 .sw input:checked + .track::after { transform: translateX(20px); }
 .sw.sm input:checked + .track::after { transform: translateX(15px); }
 
-.feed-status { font-size: 14px; color: rgba(255,255,255,.55); }
-.feed-status.on { color: #fb7299; }
+/* 提示块：淡底圆角 + 图标，取代浮着的灰字。info 常规 / warn 品牌色调 */
+.callout { display: flex; gap: 9px; align-items: flex-start; padding: 10px 12px; border-radius: 10px; background: rgba(255,255,255,.055); font-size: 12.5px; line-height: 1.5; color: rgba(255,255,255,.62); }
+.callout .ci { flex: 0 0 auto; margin-top: 1px; opacity: .85; }
+.callout .ci svg { display: block; width: 14px; height: 14px; }
+.callout a { color: #fb7299; text-decoration: none; font-weight: 500; }
+.callout a:hover { text-decoration: underline; }
+.callout.warn { background: rgba(251,114,153,.13); color: rgba(255,255,255,.82); }
+.callout.warn .ci { color: #fb7299; opacity: 1; }
+/* 状态徽章：带色点的 pill */
+.status { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; padding: 5px 12px; border-radius: 20px; background: rgba(255,255,255,.07); color: rgba(255,255,255,.6); }
+.status .dot { width: 7px; height: 7px; border-radius: 50%; background: rgba(255,255,255,.35); flex: 0 0 auto; }
+.status.on { background: rgba(251,114,153,.15); color: #fb7299; }
+.status.on .dot { background: #fb7299; box-shadow: 0 0 0 3px rgba(251,114,153,.2); }
 .feed-btn { align-self: flex-start; cursor: pointer; color: #fff; background: #fb7299; border: none; border-radius: 9px; padding: 9px 18px; font-size: 14px; font-family: inherit; font-weight: 500; }
 .feed-btn.ghost { background: transparent; border: 1px solid rgba(255,255,255,.2); color: #e3e5e7; }
 .feed-btn:hover { filter: brightness(1.08); }
@@ -123,7 +135,8 @@ const STYLE = `
   .card { background: #fff; color: #18191c; box-shadow: 0 16px 56px rgba(0,0,0,.22); }
   .head { border-bottom-color: rgba(0,0,0,.07); }
   .head .brand { color: #d6336c; }
-  .head .close:hover { background: rgba(0,0,0,.06); }
+  .head .close { border-color: rgba(0,0,0,.12); background: rgba(0,0,0,.04); color: rgba(0,0,0,.55); }
+  .head .close:hover { color: #d6336c; border-color: #d6336c; }
   .main .nav { border-right-color: rgba(0,0,0,.07); }
   .nav-cat { color: rgba(0,0,0,.4); }
   .nav-item:hover { background: rgba(0,0,0,.05); }
@@ -139,8 +152,14 @@ const STYLE = `
   .empty { color: rgba(0,0,0,.35); }
   .sw .track { background: rgba(0,0,0,.16); }
   .sw input:checked + .track { background: #d6336c; }
-  .feed-status { color: rgba(0,0,0,.55); }
-  .feed-status.on { color: #d6336c; }
+  .callout { background: rgba(0,0,0,.04); color: rgba(0,0,0,.6); }
+  .callout.warn { background: rgba(214,51,108,.1); color: rgba(0,0,0,.75); }
+  .callout.warn .ci { color: #d6336c; }
+  .callout a { color: #d6336c; }
+  .status { background: rgba(0,0,0,.05); color: rgba(0,0,0,.55); }
+  .status .dot { background: rgba(0,0,0,.3); }
+  .status.on { background: rgba(214,51,108,.12); color: #d6336c; }
+  .status.on .dot { background: #d6336c; box-shadow: 0 0 0 3px rgba(214,51,108,.18); }
   .feed-btn { background: #d6336c; }
   .feed-btn.ghost { border-color: rgba(0,0,0,.2); color: #18191c; }
   .foot { color: rgba(0,0,0,.45); border-top-color: rgba(0,0,0,.07); }
@@ -156,6 +175,16 @@ function el(tag: string, cls?: string | null, text?: string): HTMLElement {
   if (cls) e.className = cls
   if (text != null) e.textContent = text
   return e
+}
+
+const INFO_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>'
+const WARN_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>'
+
+// 提示块：图标 + 富文本（可含链接）。variant='warn' 用品牌色调强调。
+function callout(html: string, variant: 'info' | 'warn' = 'info'): HTMLElement {
+  const c = el('div', 'callout' + (variant === 'warn' ? ' warn' : ''))
+  c.innerHTML = `<span class="ci">${variant === 'warn' ? WARN_SVG : INFO_SVG}</span><span class="ctext">${html}</span>`
+  return c
 }
 
 function markDirty(): void {
@@ -321,15 +350,15 @@ function renderFeedDetail(d: HTMLElement): void {
   const onHome = location.pathname === '/' || location.pathname === '/index.html'
   const feedAlive = Number(localStorage.getItem('bilikit:alive.feed') || 0)
   if (onHome && Date.now() - feedAlive > 8000) {
-    const warn = el('div', 'hint')
-    warn.innerHTML = '⚠ 未检测到 <b>BiliKit Feed</b>，首页推荐流需要它。<a href="https://github.com/shiinayane/BiliKit" target="_blank" rel="noopener">前往安装</a>'
-    d.appendChild(warn)
+    d.appendChild(callout('未检测到 <b>BiliKit Feed</b>，首页推荐流需要它。<a href="https://github.com/shiinayane/BiliKit" target="_blank" rel="noopener">前往安装</a>', 'warn'))
   }
   const fields = el('div', 'fields')
 
   const row = el('div', 'field row')
   row.appendChild(el('span', 'flabel', '登录状态'))
-  const st = el('span', 'feed-status' + (loggedIn ? ' on' : ''), loggedIn ? '已登录 · 个性化推荐' : '未登录 · 匿名（内容有限）')
+  const st = el('span', 'status' + (loggedIn ? ' on' : ''))
+  const setStatus = (t: string) => { st.innerHTML = `<span class="dot"></span>${t}` }
+  setStatus(loggedIn ? '已登录 · 个性化推荐' : '未登录 · 匿名（内容有限）')
   row.appendChild(st)
   fields.appendChild(row)
   const btn = el('button', 'feed-btn' + (loggedIn ? ' ghost' : ''), loggedIn ? '退出登录' : '扫码登录（TV）')
@@ -338,7 +367,7 @@ function renderFeedDetail(d: HTMLElement): void {
       set('feed.accessKey', '')
       location.reload()
     } else {
-      st.textContent = '正在拉起二维码…'
+      setStatus('正在拉起二维码…')
       startTvLogin((accessKey) => {
         // 落盘失败（隐私模式/存储超限）时明确报错——否则「登录成功」但刷新后仍匿名，静默误导
         if (!set('feed.accessKey', accessKey)) console.error('[BiliKit] access_key 持久化失败：刷新后可能仍为匿名（浏览器隐私模式或存储已满）。')
@@ -346,7 +375,7 @@ function renderFeedDetail(d: HTMLElement): void {
     }
   })
   fields.appendChild(btn)
-  fields.appendChild(el('div', 'hint', loggedIn ? '退出后回到匿名推荐并刷新。' : '用手机哔哩哔哩扫码，获得个性化、不重复的 App 推荐。'))
+  fields.appendChild(callout(loggedIn ? '退出后回到匿名推荐并刷新。' : '用手机哔哩哔哩扫码，获得个性化、不重复的 App 推荐。'))
   d.appendChild(fields)
 }
 
@@ -368,7 +397,7 @@ function renderOpenDetail(d: HTMLElement): void {
   modeSel.addEventListener('change', () => set('feed.openMode', modeSel.value))
   modeRow.appendChild(modeSel)
   fields.appendChild(modeRow)
-  fields.appendChild(el('div', 'hint', '抽屉：同源内嵌播放、顶部留缝放关闭/新标签按钮，隐藏站内顶栏。'))
+  fields.appendChild(callout('抽屉：同源内嵌播放、顶部留缝放关闭/新标签按钮，隐藏站内顶栏；在顶部继续下拉可关闭。'))
   d.appendChild(fields)
 }
 

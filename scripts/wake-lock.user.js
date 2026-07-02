@@ -2,7 +2,7 @@
 // @name         BiliKit · 防睡眠
 // @name:en      BiliKit · Wake Lock
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.2.3
+// @version      0.2.4
 // @description    防止使用 Safari 在 B 站播放视频时休眠或睡眠。
 // @description:en Keep Safari from sleeping while playing a Bilibili video.
 // @match        *://www.bilibili.com/video/*
@@ -19,6 +19,24 @@
 
 (() => {
   'use strict';
+
+  // 【已并入 BiliKit Core】检测到 Core 在运行则提示本独立脚本可卸载（一次性、可关闭；不影响本脚本功能）。
+  if (window.top === window.self) setTimeout(() => {
+    try {
+      if (Date.now() - (Number(localStorage.getItem('bilikit:alive.core')) || 0) > 15000) return;
+      const K = 'bilikit:dismiss.legacy-wake-lock';
+      if (localStorage.getItem(K)) return;
+      const b = document.createElement('div');
+      b.style.cssText = 'position:fixed;left:16px;bottom:16px;z-index:2147483600;max-width:300px;padding:10px 34px 10px 14px;border-radius:10px;background:rgba(22,23,28,.96);color:#e3e5e7;font:13px/1.5 -apple-system,"PingFang SC",sans-serif;box-shadow:0 6px 24px rgba(0,0,0,.4)';
+      b.innerHTML = '「防睡眠」已并入 <b style="color:#fb7299">BiliKit Core</b>，本独立脚本可卸载。<a href="https://github.com/shiinayane/BiliKit" target="_blank" rel="noopener" style="color:#fb7299;text-decoration:none">详情</a>';
+      const x = document.createElement('span');
+      x.textContent = '✕';
+      x.style.cssText = 'position:absolute;top:7px;right:11px;cursor:pointer;opacity:.55';
+      x.onclick = () => { try { localStorage.setItem(K, '1'); } catch (e) {} b.remove(); };
+      b.appendChild(x);
+      (document.body || document.documentElement).appendChild(b);
+    } catch (e) {}
+  }, 2500);
 
   if (!('wakeLock' in navigator)) {
     console.log('[WakeLock] Not supported');

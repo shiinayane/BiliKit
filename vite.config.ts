@@ -10,10 +10,10 @@ export default defineConfig({
     monkey({
       entry: 'src/entry-core.ts',
       userscript: {
-        name: 'BiliKit',
+        name: 'BiliKit Core',
         namespace: 'https://github.com/shiinayane/BiliKit',
         version: '0.3.1',
-        description: 'BiliKit · B 站增强套件（核心）：CDN 优选 / 主题同步 / 评论属地 / 防睡眠 + 统一设置面板。Safari 友好、页面世界注入、无外部依赖。',
+        description: 'B 站体验增强核心，一装到位：CDN 优选（救海外卡顿）· 主题跟随系统深浅 · 评论显 IP 属地 · 播放不息屏——统一设置面板集中开关。Safari 友好、无需扩展、零外部依赖。',
         author: 'shiinayane',
         license: 'MIT',
         // 全站匹配：theme-sync 本就全站换肤，cdn-pick 需覆盖 player.bilibili.com；
