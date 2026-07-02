@@ -1,4 +1,4 @@
-import { fetchAppFeed, type FeedCard } from './app-api'
+import { fetchAppFeed, gmRequest, type FeedCard } from './app-api'
 
 /**
  * App 推荐 feed 就地接管首页：
@@ -42,10 +42,19 @@ function injectStyle(): void {
   s.id = 'bk-feed-style'
   s.textContent = `
     .${NS}{ display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:22px 16px; padding:16px 0; }
-    .${NS}-card{ cursor:pointer; content-visibility:auto; contain-intrinsic-size:auto 330px; }
-    .${NS}-cover{ position:relative; aspect-ratio:16/9; border-radius:8px; overflow:hidden; background:var(--bg2,#e3e5e7); }
+    .${NS}-card{ cursor:pointer; content-visibility:auto; contain-intrinsic-size:auto 330px; transition:transform .18s ease; }
+    .${NS}-card:hover{ transform:translateY(-4px); } /* 悬浮浮起（transform → 合成层，不触发重排） */
+    .${NS}-cover{ position:relative; aspect-ratio:16/9; border-radius:8px; overflow:hidden; background:var(--bg2,#e3e5e7); transition:box-shadow .18s ease; }
+    .${NS}-card:hover .${NS}-cover{ box-shadow:0 6px 20px rgba(0,0,0,.22); }
     .${NS}-cover img{ width:100%; height:100%; object-fit:cover; display:block; opacity:0; transition:opacity .35s ease; }
     .${NS}-cover.loaded img{ opacity:1; }
+    /* hover 雪碧图预览：盖在封面上，鼠标横向刮帧；在遮罩(z-index:2)之下、图片之上 */
+    .${NS}-preview{ position:absolute; inset:0; z-index:1; background-repeat:no-repeat; opacity:0; transition:opacity .15s ease; pointer-events:none; }
+    .${NS}-preview.on{ opacity:1; }
+    /* 预览进度条：底部细条，随播放推进（scaleX → 合成层）。z-index:3 压在遮罩之上，短视频也看得清进度 */
+    .${NS}-pbar{ position:absolute; left:0; right:0; bottom:0; z-index:3; height:3px; background:rgba(0,0,0,.28); opacity:0; transition:opacity .15s ease; pointer-events:none; }
+    .${NS}-pbar.on{ opacity:1; }
+    .${NS}-pbar i{ display:block; width:100%; height:100%; background:var(--brand_blue,#00aeec); transform:scaleX(0); transform-origin:left; }
     /* 骨架微光：统一走「合成层友好的 transform 位移伪元素」——封面(未加载)、骨架条、头像同一套，
        只动 transform（GPU 合成，不逐帧重绘），滚动/加载期都不掉帧。封面 .loaded/.failed 后伪元素消失。 */
     .${NS}-shimmer{ position:relative; overflow:hidden; background-color:var(--bg2,#e3e5e7); }
@@ -62,7 +71,7 @@ function injectStyle(): void {
     /* 封面底部遮罩：左「播放·弹幕」右「时长」 */
     /* z-index:1 必需：封面 img 有 opacity 过渡，Safari 会把它提升为合成层、盖住本遮罩；
        给遮罩显式 z-index 才能压在图片层之上（否则 z-index:auto 不进合成层，被图片遮住）。 */
-    .${NS}-mask{ position:absolute; left:0; right:0; bottom:0; z-index:1; display:flex; align-items:flex-end; justify-content:space-between; padding:8px 8px 7px; color:#fff; font-size:12px; line-height:1; background:linear-gradient(transparent, rgba(0,0,0,.85)); pointer-events:none; }
+    .${NS}-mask{ position:absolute; left:0; right:0; bottom:0; z-index:2; display:flex; align-items:flex-end; justify-content:space-between; padding:8px 8px 7px; color:#fff; font-size:12px; line-height:1; background:linear-gradient(transparent, rgba(0,0,0,.85)); pointer-events:none; }
     .${NS}-mstat{ display:flex; align-items:center; gap:9px; }
     .${NS}-mstat span{ display:inline-flex; align-items:center; gap:3px; }
     .${NS}-mstat svg{ width:15px; height:15px; }
@@ -109,6 +118,111 @@ function hideNativeChrome(): void {
   ;(document.head || document.documentElement).appendChild(s)
 }
 
+// ---- hover 预览：拉 videoshot 雪碧图，鼠标横向刮帧 ----
+interface Shot { images: string[]; index: number[]; xlen: number; ylen: number }
+const shotCache = new Map<string, Shot | null>() // 按 bvid 缓存（含「无预览」的 null），避免重复请求
+
+// 预加载雪碧图并解码，避免「塞进 background-image 后要等下载才出画」的空白等待
+const imgLoaded = new Set<string>()
+function preloadImg(src: string): Promise<void> {
+  if (!src || imgLoaded.has(src)) return Promise.resolve()
+  return new Promise((resolve) => {
+    const im = new Image()
+    im.onload = im.onerror = () => { imgLoaded.add(src); resolve() }
+    im.src = src
+  })
+}
+
+async function fetchVideoshot(bvid: string): Promise<Shot | null> {
+  if (shotCache.has(bvid)) return shotCache.get(bvid) as Shot | null
+  let shot: Shot | null = null
+  try {
+    const text = await gmRequest({ method: 'GET', url: `https://api.bilibili.com/x/player/videoshot?bvid=${bvid}&index=1` })
+    const d = JSON.parse(text)?.data
+    if (d && Array.isArray(d.image) && d.image.length && Array.isArray(d.index) && d.index.length) {
+      shot = { images: d.image.map((u: string) => coverUrl(u)), index: d.index, xlen: d.img_x_len || 10, ylen: d.img_y_len || 10 }
+    }
+  } catch { /* 无预览/网络失败 → 记为 null，不再重试 */ }
+  shotCache.set(bvid, shot)
+  return shot
+}
+
+// 给封面挂 hover 预览：停留 ~150ms 才拉数据（避免划过就请求），拿到并预载首图后自动轮播。
+// 用 rAF + 固定总时长(RUN)驱动：无论帧多帧少都摊到同样时长，短视频不再一闪而过；底部进度条随播放推进。
+function setupHoverPreview(cover: HTMLElement, bvid: string): void {
+  const RUN = 8000 // 全片轮播总时长（ms）——学 Gate，短视频也放满 8s，看得清
+  const FRAME_MS = 250 // 换图最短间隔：抽稀成「幻灯片」，避免帧太密闪烁（进度条仍每帧平滑）
+  let hovering = false
+  let enterTimer: ReturnType<typeof setTimeout> | null = null
+  let rafId = 0
+  let startT = 0
+  let lastFrameAt = 0
+  let lastIdx = -1
+  let preview: HTMLElement | null = null
+  let pbar: HTMLElement | null = null
+  let bar: HTMLElement | null = null
+  let shot: Shot | null = null
+
+  const showFrame = (idx: number) => {
+    if (!preview || !shot) return
+    const per = shot.xlen * shot.ylen
+    const sheet = Math.min(Math.floor(idx / per), shot.images.length - 1)
+    const local = idx % per
+    const col = local % shot.xlen
+    const row = Math.floor(local / shot.xlen)
+    preview.style.backgroundImage = `url("${shot.images[sheet]}")`
+    preview.style.backgroundSize = `${shot.xlen * 100}% ${shot.ylen * 100}%`
+    preview.style.backgroundPosition =
+      `${shot.xlen > 1 ? (col / (shot.xlen - 1)) * 100 : 0}% ${shot.ylen > 1 ? (row / (shot.ylen - 1)) * 100 : 0}%`
+  }
+
+  const tick = (now: number) => {
+    if (!hovering || !shot) { rafId = 0; return }
+    const p = ((now - startT) % RUN) / RUN // 0..1，循环
+    if (bar) bar.style.transform = `scaleX(${p})` // 进度条每帧平滑
+    if (now - lastFrameAt >= FRAME_MS) { // 换图节流：最多每 FRAME_MS 换一帧 → 抽稀不闪
+      lastFrameAt = now
+      const idx = Math.min(Math.floor(p * shot.index.length), shot.index.length - 1)
+      if (idx !== lastIdx) { lastIdx = idx; showFrame(idx) }
+    }
+    rafId = requestAnimationFrame(tick)
+  }
+
+  const stop = () => {
+    hovering = false
+    if (enterTimer) { clearTimeout(enterTimer); enterTimer = null }
+    if (rafId) { cancelAnimationFrame(rafId); rafId = 0 }
+    preview?.classList.remove('on')
+    pbar?.classList.remove('on')
+  }
+
+  cover.addEventListener('mouseenter', () => {
+    if (hovering) return
+    hovering = true
+    enterTimer = setTimeout(async () => {
+      enterTimer = null
+      const s = await fetchVideoshot(bvid)
+      if (!s || !hovering) return
+      await preloadImg(s.images[0]) // 首图先解码好，出画即完整
+      if (!hovering) return
+      shot = s
+      if (!preview) {
+        preview = document.createElement('div'); preview.className = `${NS}-preview`; cover.appendChild(preview)
+        pbar = document.createElement('div'); pbar.className = `${NS}-pbar`
+        bar = document.createElement('i'); pbar.appendChild(bar); cover.appendChild(pbar)
+      }
+      lastIdx = -1
+      lastFrameAt = 0
+      startT = performance.now()
+      showFrame(0)
+      preview.classList.add('on'); pbar!.classList.add('on')
+      rafId = requestAnimationFrame(tick)
+      for (const src of s.images.slice(1)) void preloadImg(src) // 其余雪碧图后台预载
+    }, 150)
+  })
+  cover.addEventListener('mouseleave', stop)
+}
+
 function makeCard(c: FeedCard): HTMLElement {
   const el = document.createElement('div')
   el.className = `${NS}-card`
@@ -140,6 +254,7 @@ function makeCard(c: FeedCard): HTMLElement {
   })
   // 封面 404/解码失败：标 .failed 停微光、露灰底，避免那张卡无限转骨架
   imgEl.addEventListener('error', () => { if (!imgEl.src.startsWith('data:')) coverEl.classList.add('failed') })
+  if (c.bvid) setupHoverPreview(coverEl, c.bvid) // hover 雪碧图预览
   el.addEventListener('click', () => {
     const url = c.bvid ? `https://www.bilibili.com/video/${c.bvid}` : c.uri
     if (url && /^https?:\/\//i.test(url)) window.open(url, '_blank', 'noopener') // 只开 http(s)，防 javascript:/开放重定向
@@ -177,7 +292,9 @@ function clearSkeletons(): void {
 // 哨兵是否还在「加载区」内（距视口底 <1000px）——用它驱动循环，不依赖 IO 的相交变化重触发
 function sentinelInView(): boolean {
   if (!sentinel) return false
-  return sentinel.getBoundingClientRect().top < window.innerHeight + 1000
+  // 填充目标按屏高成比例：让已加载内容延伸到「约两屏」高度（API 每页约 16 条，循环多拉直到填满）。
+  // 大屏自动多拉几页、不再显得稀疏；小屏也按比例不过量。
+  return sentinel.getBoundingClientRect().top < window.innerHeight * 2
 }
 
 function showTip(text: string): void {

@@ -12,7 +12,7 @@ export default defineConfig({
       userscript: {
         name: 'BiliKit Feed',
         namespace: 'https://github.com/shiinayane/BiliKit',
-        version: '0.0.1',
+        version: '0.1.0',
         description: 'BiliKit · App 推荐 feed：把手机 App 的推荐流搬上 B 站首页。需配合 BiliKit Core。',
         author: 'shiinayane',
         license: 'MIT',
@@ -22,7 +22,7 @@ export default defineConfig({
           '*://www.bilibili.com/?*',
           '*://www.bilibili.com/index.html*',
         ],
-        connect: ['app.bilibili.com'],
+        connect: ['app.bilibili.com', 'api.bilibili.com'], // app=推荐流；api=hover 预览的 videoshot 雪碧图
         grant: ['GM.xmlHttpRequest', 'GM_xmlhttpRequest'],
         'run-at': 'document-idle',
       },
