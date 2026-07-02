@@ -2,8 +2,8 @@
 // @name         BiliKit · 主题同步
 // @name:en      BiliKit · Theme Sync
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.4.8
-// @description    让 B 站跟随系统深浅色，全站无刷新实时切换并同步所有 Tab。
+// @version      0.4.9
+// @description    ⚠️【已废弃·功能并入 BiliKit Core，请改装 Core】让 B 站跟随系统深浅色，全站无刷新实时切换并同步所有 Tab。
 // @description:en Make Bilibili follow the system light/dark theme, switching live across the whole site with no reload and syncing every tab.
 // @author       shiinayane
 // @match        *://*.bilibili.com/*
