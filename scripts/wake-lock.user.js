@@ -2,7 +2,7 @@
 // @name         BiliKit · 防睡眠
 // @name:en      BiliKit · Wake Lock
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.2.4
+// @version      0.2.5
 // @description    防止使用 Safari 在 B 站播放视频时休眠或睡眠。
 // @description:en Keep Safari from sleeping while playing a Bilibili video.
 // @match        *://www.bilibili.com/video/*
