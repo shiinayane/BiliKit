@@ -19,6 +19,13 @@
 // ==/UserScript==
 
 /*
+ * ⚠️ 已并入 BiliKit Core，建议迁移：本功能已整合进新脚本 BiliKit Core
+ * （CDN 优选 + 主题同步 + 评论属地 + 防睡眠 + 统一设置面板），后续更新只在新脚本进行。
+ * 安装：https://greasyfork.org/scripts?q=BiliKit
+ * 装新版后可卸载本脚本；二者有单例守卫，短期并存不冲突。
+ */
+
+/*
  * 为什么不抄「开盒」那套：它的性能罪状（实测能把视频页内存推到 4GB、被 Safari 判休眠）——
  *   1. 全局 patch Body/Head 的 appendChild/insertBefore；
  *   2. observer.observe(body, {subtree:true}) + 回调不去抖，每次触发都 document.querySelectorAll 全文档；

@@ -17,6 +17,13 @@
 // @updateURL https://update.greasyfork.org/scripts/573479/%E9%98%B2%E6%AD%A2B%E7%AB%99%E7%9D%A1%E7%9C%A0.meta.js
 // ==/UserScript==
 
+/*
+ * ⚠️ 已并入 BiliKit Core，建议迁移：本功能已整合进新脚本 BiliKit Core
+ * （CDN 优选 + 主题同步 + 评论属地 + 防睡眠 + 统一设置面板），后续更新只在新脚本进行。
+ * 安装：https://greasyfork.org/scripts?q=BiliKit
+ * 装新版后可卸载本脚本；二者有单例守卫，短期并存不冲突。
+ */
+
 (() => {
   'use strict';
 

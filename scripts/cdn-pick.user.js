@@ -20,6 +20,13 @@
 // ==/UserScript==
 
 /*
+ * ⚠️ 已并入 BiliKit Core，建议迁移：本功能已整合进新脚本 BiliKit Core
+ * （CDN 优选 + 主题同步 + 评论属地 + 防睡眠 + 统一设置面板），后续更新只在新脚本进行。
+ * 安装：https://greasyfork.org/scripts?q=BiliKit
+ * 装新版后可卸载本脚本；二者有单例守卫，短期并存不冲突。
+ */
+
+/*
  * 原理：B 站把可用清晰度/编码的「带签名的分片地址」放在 playurl 响应里
  * （首帧在 window.__playinfo__，换片/切档时走 /x/player/wbi/playurl 等接口）。
  * 同一条视频通常同时给出多个 CDN 的地址：bilivideo.com 系（upos 签名，签名
