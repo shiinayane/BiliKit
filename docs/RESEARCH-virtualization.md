@@ -60,8 +60,11 @@
 ## 坑位
 
 - **列数/行高误差**：标题 1 vs 2 行造成微小高差 → 用「最大高度」当 `rowH` 略过量渲染，避免负 buffer 露白。
-- **content-visibility 去留**：窗口内节点数已很少，可保留 `content-visibility:auto` 作二级保险，
-  也可去掉（窗口已限制在可视附近）。先保留。
+- **content-visibility 必须去掉**（P2 实测 + 网络调研纠正了原判断）：CV 会让「窗口内但不在视口」的卡
+  塌回 `contain-intrinsic-size`，与视口内卡的真实高不一致 → 向上滚时总高在两值间抖动 → 抽搐。
+  真·窗口化已把 DOM 限制在可视附近，CV 是多余且有害的。去掉后每卡真实等高，占位估算精确，无需
+  scrollTop 补偿。（业界解法：TanStack `shouldAdjustScrollPositionOnItemSizeChange`、react-virtuoso
+  ResizeObserver 测量替换估值；我们靠 min-height 强制等高绕开了变高问题。）
 - **scroll 容器**：首页是 window 滚动；`scrollTop` 用 `window.scrollY`，grid 顶偏移用 `grid.offsetTop`。
 - **封面重载**：滚回已卸载区会重新 `makeCard` → 封面重新请求（缓存通常命中）。可接受。
 - **hover 预览**：节点销毁时若正在预览，rAF/timer 随闭包丢弃即可（`stop()` 依赖节点在场）；

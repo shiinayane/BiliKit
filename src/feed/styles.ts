@@ -7,7 +7,9 @@ export function injectStyle(): void {
   s.id = 'bk-feed-style'
   s.textContent = `
     .${NS}{ display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:22px 16px; padding:16px 0; }
-    .${NS}-card{ cursor:pointer; content-visibility:auto; contain-intrinsic-size:auto 330px; transition:transform .18s ease; }
+    /* 不再用 content-visibility：真·窗口化已把 DOM 限制在可视附近；且 CV 会让「窗口内但不在视口」的卡
+       塌回 contain-intrinsic-size，与视口内卡的真实高不一致 → 滚动时高度抖动。去掉后每卡真实等高。 */
+    .${NS}-card{ cursor:pointer; transition:transform .18s ease; }
     .${NS}-card:hover{ transform:translateY(-4px); } /* 悬浮浮起（transform → 合成层，不触发重排） */
     .${NS}-cover{ position:relative; aspect-ratio:16/9; border-radius:8px; overflow:hidden; background:var(--bg2,#e3e5e7); transition:box-shadow .18s ease; }
     .${NS}-card:hover .${NS}-cover{ box-shadow:0 6px 20px rgba(0,0,0,.22); }
@@ -44,7 +46,8 @@ export function injectStyle(): void {
     .${NS}-bottom{ display:flex; gap:10px; margin-top:9px; align-items:flex-start; }
     .${NS}-face{ width:34px; height:34px; flex:0 0 34px; border-radius:50%; object-fit:cover; background:var(--bg2,#e3e5e7); }
     .${NS}-right{ flex:1; min-width:0; }
-    .${NS}-title{ margin:0 0 6px; font-size:15px; font-weight:500; line-height:1.4; color:var(--text1,#18191c); display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+    /* min-height 固定 2 行：让每张卡等高，虚拟化的行高估算才准、不漂移抖动（1 行标题也占 2 行位） */
+    .${NS}-title{ margin:0 0 6px; font-size:15px; font-weight:500; line-height:1.4; min-height:2.8em; color:var(--text1,#18191c); display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
     .${NS}-sub{ display:flex; align-items:center; font-size:13px; color:var(--text3,#9499a0); }
     .${NS}-who{ min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .${NS}-sub i{ margin:0 5px; font-style:normal; }
@@ -52,6 +55,7 @@ export function injectStyle(): void {
     .${NS}-badge{ flex:none; margin-right:6px; padding:0 6px; border:1px solid var(--brand_blue,#00aeec); border-radius:6px; color:var(--brand_blue,#00aeec); background:transparent; font-size:11px; line-height:16px; }
     /* 骨架占位（数据未到时） */
     .${NS}-skline{ height:13px; border-radius:4px; margin-bottom:8px; }
+    .${NS}-spacer{ grid-column:1/-1; height:0; }  /* 窗口化：上下占位行，撑起未渲染区的高度，保滚动位置 */
     .${NS}-sentinel{ grid-column:1/-1; height:1px; }
     .${NS}-tip{ grid-column:1/-1; text-align:center; color:var(--text3,#9499a0); font-size:13px; padding:20px; }
     .${NS}-fab{ position:fixed; right:24px; bottom:32px; z-index:1000; display:flex; flex-direction:column; gap:10px; }

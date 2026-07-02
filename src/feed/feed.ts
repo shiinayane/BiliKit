@@ -16,6 +16,8 @@ import { mountControls } from './controls'
 const seen = new Set<string>() // 已展示 bvid，去重
 let grid: HTMLElement | null = null
 let sentinel: HTMLElement | null = null
+let topSpacer: HTMLElement | null = null // 窗口上方未渲染行的占位
+let bottomSpacer: HTMLElement | null = null // 窗口下方未渲染行的占位
 let loading = false
 let exhausted = false // 匿名固定池刷完（连续多页无新内容）→ 停止并提示
 let cardIo: IntersectionObserver | null = null
@@ -34,23 +36,72 @@ function getAccessKey(): string {
   }
 }
 
-// 把 items 落成卡片节点。P1：全量渲染——为尚未建节点的下标建节点、插到哨兵前、连接后再 observe。
-// P2 起改为按可视窗口增删。
+// 量当前列数与「行高」（卡片高 + 行间距）。列数从 grid 计算样式取，行高量一张已渲染卡、无则回落。
+function metrics(): { cols: number; rowH: number } {
+  const cs = getComputedStyle(grid!)
+  const cols = cs.gridTemplateColumns.split(' ').filter(Boolean).length || 1
+  let cardH = 330 // 回落估值（≈ contain-intrinsic-size）
+  const first = nodes.size ? (nodes.values().next().value as HTMLElement) : null
+  if (first && first.offsetHeight > 50) cardH = first.offsetHeight
+  const rowGap = parseFloat(cs.rowGap) || 22
+  return { cols, rowH: cardH + rowGap }
+}
+
+// 窗口化渲染：只保留「可视 ±1.5 屏」范围内的卡片节点，范围外移除；上下占位撑起未渲染区高度。
+// 按 item 下标 key、只在窗口边缘增删（绝不中途拿一个节点换内容）→ 无封面重载/闪烁。
 function render(): void {
-  if (!grid || !sentinel) return
-  const frag = document.createDocumentFragment()
-  const fresh: HTMLElement[] = []
-  for (let i = 0; i < items.length; i++) {
+  if (!grid || !sentinel || !topSpacer || !bottomSpacer) return
+  if (!items.length) { topSpacer.style.height = '0px'; bottomSpacer.style.height = '0px'; return }
+  const { cols, rowH } = metrics()
+  const totalRows = Math.ceil(items.length / cols)
+  const gridTop = grid.getBoundingClientRect().top + window.scrollY // grid 在文档中的顶偏移
+  const into = window.scrollY - gridTop // 已滚进 grid 的像素（负=grid 还在视口下方）
+  const vh = window.innerHeight
+  const BUF = vh * 1.5 // 视口上下各留 1.5 屏 buffer（封面提前加载，无 pop-in）
+  const firstRow = Math.max(0, Math.floor((into - BUF) / rowH))
+  const lastRow = Math.min(totalRows - 1, Math.max(0, Math.ceil((into + vh + BUF) / rowH)))
+  const startIdx = firstRow * cols
+  const endIdx = Math.min(items.length, (lastRow + 1) * cols) // 独占上界
+
+  // 锚点：取一张「会留在新窗口内、且当前在视口内(top≥0)」的最靠上卡，记下其视口位置。
+  // 渲染后测位移、反向 scrollBy 抵消——可见内容始终不动，与占位是否像素级精确解耦（消除抽动）。
+  let anchor: HTMLElement | null = null
+  let anchorTop = 0
+  for (const [i, el] of nodes) {
+    if (i < startIdx || i >= endIdx) continue
+    const t = el.getBoundingClientRect().top
+    if (t >= 0 && (!anchor || t < anchorTop)) { anchor = el; anchorTop = t }
+  }
+
+  // 1) 移除窗口外节点（连同 observer/监听器/闭包一起 GC）
+  for (const [i, el] of nodes) {
+    if (i < startIdx || i >= endIdx) { cardIo?.unobserve(el); el.remove(); nodes.delete(i) }
+  }
+  // 2) 占位高度 = 未渲染行数 × 行高
+  topSpacer.style.height = firstRow * rowH + 'px'
+  bottomSpacer.style.height = Math.max(0, (totalRows - (lastRow + 1)) * rowH) + 'px'
+  // 3) 补齐窗口内缺失节点：升序建卡，插到「下一个更高的已存在节点」前，否则底部占位前 → 保持顺序
+  for (let i = startIdx; i < endIdx; i++) {
     if (nodes.has(i)) continue
     const el = makeCard(items[i])
     nodes.set(i, el)
-    fresh.push(el)
-    frag.appendChild(el)
+    let ref: HTMLElement = bottomSpacer
+    for (let j = i + 1; j < endIdx; j++) { const n = nodes.get(j); if (n) { ref = n; break } }
+    grid.insertBefore(el, ref)
+    cardIo?.observe(el)
   }
-  if (fresh.length) {
-    grid.insertBefore(frag, sentinel)
-    if (cardIo) for (const el of fresh) cardIo.observe(el) // 连接进 DOM 后再观察（Safari 下观察未连接元素不可靠）
+  // 4) 补偿：锚点渲染后若位移了，反向滚回，保持可见内容不动（同一帧内完成，无中间态可见）
+  if (anchor) {
+    const delta = anchor.getBoundingClientRect().top - anchorTop
+    if (delta) window.scrollBy(0, delta)
   }
+}
+
+let renderRaf = 0
+// scroll/resize 用 rAF 节流地重算窗口
+function scheduleRender(): void {
+  if (renderRaf) return
+  renderRaf = requestAnimationFrame(() => { renderRaf = 0; render() })
 }
 
 // 清空全部已渲染卡片与数据（刷新/重新接管时用）
@@ -59,23 +110,26 @@ function clearAll(): void {
   for (const el of nodes.values()) el.remove()
   nodes.clear()
   items.length = 0
+  if (topSpacer) topSpacer.style.height = '0px'
+  if (bottomSpacer) bottomSpacer.style.height = '0px'
 }
 
 function renderSkeletons(n: number): void {
-  if (!grid || !sentinel) return
+  if (!grid || !bottomSpacer) return
   const frag = document.createDocumentFragment()
   for (let i = 0; i < n; i++) frag.appendChild(makeSkeleton())
-  grid.insertBefore(frag, sentinel)
+  grid.insertBefore(frag, bottomSpacer) // 骨架落在两占位之间（此时占位高度为 0）
 }
 
 function clearSkeletons(): void {
   if (grid) grid.querySelectorAll(`.${NS}-skcard`).forEach((n) => n.remove())
 }
 
-// 哨兵是否还在「加载区」内——填充目标按屏高成比例（约两屏）。大屏自动多拉几页、不显得稀疏。
+// 哨兵是否还在「加载区」内。填充目标必须 > 哨兵 IO 的触发区(innerH+1000)，否则填完哨兵仍在 IO 区内、
+// IO 不再产生跨越事件 → 触底加载卡住。取 innerH + max(innerH, 1200)：大屏≈两屏、短屏也稳超触发区。
 function sentinelInView(): boolean {
   if (!sentinel) return false
-  return sentinel.getBoundingClientRect().top < window.innerHeight * 2
+  return sentinel.getBoundingClientRect().top < window.innerHeight + Math.max(window.innerHeight, 1200)
 }
 
 function showTip(text: string): void {
@@ -186,21 +240,19 @@ function takeover(): boolean {
   injectStyle()
   native.style.setProperty('display', 'none', 'important')
 
-  // 给 content-visibility 人为加「提前量」：卡片进视口前 1000px 就切 visible（提前渲染+解码封面），
-  // 远离再回到 auto（屏外跳过布局/绘制 + 卸封面位图）。兼顾消除 pop-in 与限制同时强渲染的工作集。
+  // 封面懒加载/屏外卸载：卡进视口前 1000px 载图，远离(仍在窗口内)则卸成 BLANK 释放位图。
+  // 窗口化已负责增删节点，这里只管窗口内节点的封面位图内存。
   cardIo = new IntersectionObserver(
     (ents) => {
       for (const e of ents) {
         const card = e.target as HTMLElement
         const img = card.querySelector('img') as HTMLImageElement | null
         if (e.isIntersecting) {
-          card.style.contentVisibility = 'visible'
           if (img && (!img.getAttribute('src') || img.src.startsWith('data:')) && img.dataset.src) {
             img.parentElement?.classList.remove('failed') // 重新加载 → 清掉上次的失败态，给一次重试
             img.src = img.dataset.src
           }
         } else {
-          card.style.contentVisibility = '' // 回退到样式表里的 auto：屏外跳过
           if (img && img.src && !img.src.startsWith('data:')) img.src = BLANK
         }
       }
@@ -210,9 +262,11 @@ function takeover(): boolean {
 
   grid = document.createElement('div')
   grid.className = NS
-  sentinel = document.createElement('div')
-  sentinel.className = `${NS}-sentinel`
-  grid.appendChild(sentinel)
+  topSpacer = document.createElement('div'); topSpacer.className = `${NS}-spacer`
+  bottomSpacer = document.createElement('div'); bottomSpacer.className = `${NS}-spacer`
+  sentinel = document.createElement('div'); sentinel.className = `${NS}-sentinel`
+  // 顺序：上占位 → (卡片) → 下占位 → 哨兵。卡片由 render() 插在两占位之间。
+  grid.append(topSpacer, bottomSpacer, sentinel)
   native.parentElement.insertBefore(grid, native)
 
   sentinelIo = new IntersectionObserver((es) => { if (es.some((e) => e.isIntersecting)) loadMore() }, { rootMargin: '1000px 0px' })
@@ -227,6 +281,9 @@ function takeover(): boolean {
 /** 只在首页顶层窗口生效；SPA 出入首页后原生流可能重建，轮询补挂。 */
 export function mountFeed(): void {
   if (window.top !== window.self) return
+  // 窗口化：滚动/改窗都重算可视范围（rAF 节流；render 内部有 grid 空判）
+  window.addEventListener('scroll', scheduleRender, { passive: true })
+  window.addEventListener('resize', scheduleRender)
   const onHome = () => location.pathname === '/' || location.pathname === '/index.html'
   const tick = () => { if (onHome()) { hideNativeChrome(); takeover() } }
   tick()
