@@ -82,18 +82,27 @@ function init(): void {
   const onMediaStop = (e: Event) => {
     if (e.target === currentVideo) releaseWakeLock()
   }
+  // emptied 特殊处理：MSE 换清晰度/换 P 也会触发它、但随即恢复播放。若像 pause/ended 那样立刻放锁，
+  // 会在播放中途误放、可能息屏。改为延迟复查——800ms 后真的停了（暂停/结束/脱离 DOM）才放。
+  const onEmptied = (e: Event) => {
+    const v = e.target as HTMLVideoElement
+    if (v !== currentVideo) return
+    setTimeout(() => {
+      if (v === currentVideo && (v.paused || v.ended || !v.isConnected)) releaseWakeLock()
+    }, 800)
+  }
   function bindVideo(v: HTMLVideoElement): void {
     if (currentVideo === v) return
     if (currentVideo) {
       currentVideo.removeEventListener('pause', onMediaStop)
       currentVideo.removeEventListener('ended', onMediaStop)
-      currentVideo.removeEventListener('emptied', onMediaStop)
+      currentVideo.removeEventListener('emptied', onEmptied)
     }
     log('bind new video')
     currentVideo = v
     v.addEventListener('pause', onMediaStop)
     v.addEventListener('ended', onMediaStop)
-    v.addEventListener('emptied', onMediaStop)
+    v.addEventListener('emptied', onEmptied)
   }
 
   // 开播信号走 document 捕获代理（媒体事件不冒泡但经过捕获阶段）：换 P、播放器重建后的

@@ -37,11 +37,14 @@ function init(cfg: Cfg): void {
     if (observed.has(sr)) return
     observed.add(sr)
     new MutationObserver((muts) => {
-      // 跳过「在评论/回复输入框里打字」：编辑器(contenteditable)也在评论 shadow 内。
+      // 只在「编辑器之外新增了元素节点」时才排扫（新评论/回复批次都是元素节点）。
+      // 逐条按 target 判 contenteditable 在混合批次里会被绕过，导致输入框打字引发的 childList
+      // 抖动仍触发全树 walk；改为看 addedNodes：编辑器内新增节点 isContentEditable 继承为 true，跳过。
       for (const m of muts) {
-        const t = m.target as any
-        if (t && t.nodeType === 1 && t.isContentEditable) continue
-        schedule(); return
+        if (m.type !== 'childList') continue
+        for (const n of m.addedNodes as any) {
+          if (n.nodeType === 1 && !n.isContentEditable) { schedule(); return }
+        }
       }
     }).observe(sr, { childList: true, subtree: true })
   }

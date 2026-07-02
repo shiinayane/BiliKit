@@ -5,6 +5,8 @@ import type { BiliKitModule, Cfg } from './module'
  * 达成「两个 .user.js、一套设置」的统一体验）。不使用 GM_setValue，以保住 @grant none。
  */
 const KEY = 'bilikit:settings'
+// 本 Tab 内设置变更通知（同 Tab 的 storage 事件不触发）：模块可监听它即时响应面板改动
+export const SETTINGS_EVENT = 'bilikit:settings-changed'
 type Store = Record<string, unknown>
 
 function load(): Store {
@@ -18,6 +20,7 @@ function load(): Store {
 function save(s: Store): boolean {
   try {
     localStorage.setItem(KEY, JSON.stringify(s))
+    try { window.dispatchEvent(new Event(SETTINGS_EVENT)) } catch { /* 无 window/事件不可用时忽略 */ }
     return true
   } catch {
     return false // 隐私模式/超限：持久化失败，交由调用方决定是否提示

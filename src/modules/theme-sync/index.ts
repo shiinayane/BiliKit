@@ -1,4 +1,5 @@
 import type { BiliKitModule, Cfg } from '../../core/module'
+import { SETTINGS_EVENT } from '../../core/settings'
 
 /**
  * 主题同步：让 B 站跟随系统深浅色，全站无刷新实时切换并同步所有 Tab。
@@ -27,11 +28,14 @@ function init(cfg: Cfg): void {
     return systemDark()
   }
 
-  // document.cookie 写入是同步操作，apply() 在每次切回标签页时都会跑，值没变就跳过
-  let lastCookieValue: string | null = null
+  // 比对**真实** document.cookie（而非自己上次写的值）：B站自己改写 theme_style 后也能纠正回来，
+  // 否则下次整页导航会以 B站 写的值加载出错误的初始主题。
+  function readCookie(name: string): string | null {
+    const m = document.cookie.match(new RegExp('(?:^|;\\s*)' + name + '=([^;]*)'))
+    return m ? m[1] : null
+  }
   function setCookie(name: string, value: string): void {
-    if (value === lastCookieValue) return
-    lastCookieValue = value
+    if (readCookie(name) === value) return
     document.cookie = `${name}=${value}; path=/; domain=${COOKIE_DOMAIN}; max-age=31536000; SameSite=Lax`
   }
 
@@ -80,6 +84,10 @@ function init(cfg: Cfg): void {
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') apply()
   })
+
+  // 面板改「主题模式」后即时生效：本 Tab 收自定义事件、其他已开 Tab 收 storage 事件（兑现「同步所有 Tab」）
+  window.addEventListener(SETTINGS_EVENT, apply)
+  window.addEventListener('storage', (e) => { if (!e.key || e.key === 'bilikit:settings') apply() })
 
   // 评论宿主懒加载、SPA 换视频后会重建，新元素带的是 B 站自己（可能过期）的主题值；
   // 轻量观察 DOM 增删，有新组件就补设一次（rAF 合并；只在 .theme 不符时才写，平时近乎零成本）。
