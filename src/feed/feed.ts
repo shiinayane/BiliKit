@@ -175,6 +175,7 @@ async function loadMore(): Promise<void> {
       for (const c of cards) {
         if (!c.bvid || seen.has(c.bvid)) continue
         seen.add(c.bvid)
+        if (seen.size > 2000) seen.delete(seen.values().next().value as string) // 上限 2000，超出淘汰最老（防长会话无限增长）
         items.push(c)
         addedThisPage++
       }
@@ -295,18 +296,46 @@ function takeover(): boolean {
   return true
 }
 
+const REPO = 'https://github.com/shiinayane/BiliKit'
+
+// 未检测到 Core → 顶部插一条可关闭提示条（登录/设置/抽屉净化都靠 Core）。记住关闭，不再骚扰。
+function warnCoreMissing(): void {
+  if (!grid || !topSpacer) return
+  if (localStorage.getItem('bilikit:dismiss.core-missing') || grid.querySelector(`.${NS}-warn`)) return
+  const bar = document.createElement('div')
+  bar.className = `${NS}-warn`
+  bar.innerHTML =
+    `<span>未检测到 <b>BiliKit Core</b>：登录、设置、抽屉净化都需要它。</span>` +
+    `<a href="${REPO}" target="_blank" rel="noopener">前往安装</a>` +
+    `<button class="bk-x" aria-label="关闭">✕</button>`
+  bar.querySelector('.bk-x')!.addEventListener('click', () => {
+    try { localStorage.setItem('bilikit:dismiss.core-missing', '1') } catch { /* 隐私模式忽略 */ }
+    bar.remove()
+  })
+  grid.insertBefore(bar, topSpacer) // 置顶；窗口渲染只管两占位之间，不动它
+}
+
+// Core 心跳新鲜 = 已安装并在跑；否则提示安装
+function checkCore(): void {
+  const alive = Number(localStorage.getItem('bilikit:alive.core') || 0)
+  if (Date.now() - alive > 15000) warnCoreMissing()
+}
+
 /** 只在首页顶层窗口生效；SPA 出入首页后原生流可能重建，轮询补挂。 */
 export function mountFeed(): void {
   if (window.top !== window.self) return
+  try { localStorage.setItem('bilikit:alive.feed', String(Date.now())) } catch { /* 隐私模式忽略 */ } // 心跳，供 Core 探测
   // 窗口化：滚动/改窗都重算可视范围（rAF 节流；render 内部有 grid 空判）
   window.addEventListener('scroll', scheduleRender, { passive: true })
   window.addEventListener('resize', scheduleRender)
   const onHome = () => location.pathname === '/' || location.pathname === '/index.html'
   const tick = () => { if (onHome()) { hideNativeChrome(); takeover() } }
   tick()
+  setTimeout(() => { if (onHome()) checkCore() }, 2500) // 延迟等 Core 心跳就位后再判断是否缺失
   let tries = 0
   const t = setInterval(() => {
     if (!onHome()) return
+    try { localStorage.setItem('bilikit:alive.feed', String(Date.now())) } catch { /* ignore */ } // 刷新心跳，供 Core 面板实时探测
     hideNativeChrome()
     if (takeover()) { /* 挂上了；仍继续轮询以应对 SPA 重建 */ }
     if (++tries > 600) clearInterval(t) // ~10min 后停轮询兜底

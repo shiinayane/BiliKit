@@ -4,11 +4,12 @@ import { SETTINGS_EVENT } from '../../core/settings'
 /**
  * 主题同步：让 B 站跟随系统深浅色，全站无刷新实时切换并同步所有 Tab。
  * 迁移自 scripts/theme-sync.user.js（逻辑逐字保留）。
- * 只在顶层窗口跑（跳过 Float 抽屉 iframe），故保留 window.top 守卫。
+ * 顶层窗口运行；子框架只在 BiliKit 抽屉(#bk-drawer 标记)内运行 → 抽屉主题实时跟随宿主。
  */
 function init(cfg: Cfg): void {
-  // 仅在顶层窗口运行：避免跑进 BiliKit·Float 的抽屉 iframe（其主题由 Float 自行处理）。
-  if (window.top !== window.self) return
+  // 顶层窗口正常运行；子框架里仅当是 BiliKit 抽屉(#bk-drawer)才运行——其余 iframe(广告/旧 Float 抽屉)跳过。
+  // 抽屉 iframe 跑本模块：初始主题正确 + 宿主切系统/面板主题时(storage/mql 事件)实时同步，无需刷新。
+  if (window.top !== window.self && !location.hash.includes('bk-drawer')) return
 
   // 单例守卫：防止与仍在用的旧独立脚本共存时重复设 cookie / 重复换肤。
   if ((window as any).__BILIKIT_THEME_SYNC__) return

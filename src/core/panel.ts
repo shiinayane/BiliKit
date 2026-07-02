@@ -317,6 +317,14 @@ function renderFeedDetail(d: HTMLElement): void {
   const loggedIn = !!get<string>('feed.accessKey', '')
   d.appendChild(el('div', 'detail-title', 'App 推荐 Feed'))
   d.appendChild(el('div', 'detail-desc', '首页换成手机 App 的推荐流（需另装 BiliKit Feed 脚本）'))
+  // 在首页却探不到 Feed 心跳 → 提示未安装（仅首页判定：Feed 只在首页运行）
+  const onHome = location.pathname === '/' || location.pathname === '/index.html'
+  const feedAlive = Number(localStorage.getItem('bilikit:alive.feed') || 0)
+  if (onHome && Date.now() - feedAlive > 8000) {
+    const warn = el('div', 'hint')
+    warn.innerHTML = '⚠ 未检测到 <b>BiliKit Feed</b>，首页推荐流需要它。<a href="https://github.com/shiinayane/BiliKit" target="_blank" rel="noopener">前往安装</a>'
+    d.appendChild(warn)
+  }
   const fields = el('div', 'fields')
 
   const row = el('div', 'field row')

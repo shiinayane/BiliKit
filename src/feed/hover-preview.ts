@@ -14,7 +14,11 @@ function preloadImg(src: string): Promise<void> {
   if (!src || imgLoaded.has(src)) return Promise.resolve()
   return new Promise((resolve) => {
     const im = new Image()
-    im.onload = im.onerror = () => { imgLoaded.add(src); resolve() }
+    im.onload = im.onerror = () => {
+      imgLoaded.add(src)
+      if (imgLoaded.size > 400) imgLoaded.delete(imgLoaded.values().next().value as string) // 上限 400，淘汰最老
+      resolve()
+    }
     im.src = src
   })
 }
@@ -30,6 +34,7 @@ async function fetchVideoshot(bvid: string): Promise<Shot | null> {
     }
   } catch { /* 无预览/网络失败 → 记为 null，不再重试 */ }
   shotCache.set(bvid, shot)
+  if (shotCache.size > 200) shotCache.delete(shotCache.keys().next().value as string) // 上限 200，淘汰最老
   return shot
 }
 

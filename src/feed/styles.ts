@@ -59,6 +59,12 @@ export function injectStyle(): void {
     .${NS}-badge{ flex:none; margin-right:6px; padding:0 6px; border:1px solid var(--brand_blue,#00aeec); border-radius:6px; color:var(--brand_blue,#00aeec); background:transparent; font-size:11px; line-height:16px; }
     /* 骨架占位（数据未到时） */
     .${NS}-skline{ height:13px; border-radius:4px; margin-bottom:8px; }
+    /* 未装 Core 的提示条（可关闭） */
+    .${NS}-warn{ grid-column:1/-1; display:flex; align-items:center; gap:12px; margin-bottom:6px; padding:10px 14px; border-radius:10px; background:var(--bg2,#f1f2f3); color:var(--text2,#61666d); font-size:13px; }
+    .${NS}-warn b{ color:var(--text1,#18191c); }
+    .${NS}-warn a{ color:var(--brand_blue,#00aeec); text-decoration:none; white-space:nowrap; }
+    .${NS}-warn .bk-x{ margin-left:auto; border:0; background:transparent; color:var(--text3,#9499a0); cursor:pointer; font-size:14px; line-height:1; padding:4px; }
+    .${NS}-warn .bk-x:hover{ color:var(--text1,#18191c); }
     .${NS}-spacer{ grid-column:1/-1; height:0; }  /* 窗口化：上下占位行，撑起未渲染区的高度，保滚动位置 */
     .${NS}-sentinel{ grid-column:1/-1; height:1px; }
     .${NS}-tip{ grid-column:1/-1; text-align:center; color:var(--text3,#9499a0); font-size:13px; padding:20px; }
