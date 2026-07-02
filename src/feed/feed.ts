@@ -7,7 +7,7 @@ import { mountControls } from './controls'
 /**
  * App 推荐 feed 就地接管首页（编排层）：
  *  - 找到 B 站原生推荐流容器 → 隐藏 → 在原位挂我们自己的网格；
- *  - 纯 DOM 卡 + content-visibility:auto（屏外自动跳过布局/绘制，Safari 友好、不闪屏）；
+ *  - 窗口化：items[] 存全量数据，只渲染可视 ±1.5 屏的卡片节点、上下用占位撑高，DOM 数量有界；
  *  - 封面 IntersectionObserver 懒加载 + 屏外卸载（砍解码位图内存）；
  *  - 触底加载下一页；本会话 bvid 去重。
  * 样式/卡片/hover 预览/悬浮按钮已拆到 styles.ts / card.ts / hover-preview.ts / controls.ts。
@@ -27,6 +27,10 @@ let feedGen = 0 // 代际令牌：每次重新接管/刷新自增；在途 loadM
 // P1 阶段 render() 仍全量渲染（等价现状）；P2 起改为只渲染可视窗口。
 const items: FeedCard[] = []
 const nodes = new Map<number, HTMLElement>()
+let cachedCols = 1 // 上次量到的有效列数（getComputedStyle 偶发返回未解析值时回落用）
+let renderRaf = 0
+let suppressScroll = false // 补偿 scrollBy 会触发一次 scroll 事件，用它跳过、免得再引发一轮 render
+let cooldownUntil = 0 // 加载失败后的退避截止时刻（performance.now），期间不重试，避免疯狂打 API
 
 function getAccessKey(): string {
   try {
@@ -36,11 +40,14 @@ function getAccessKey(): string {
   }
 }
 
-// 量当前列数与「行高」（卡片高 + 行间距）。列数从 grid 计算样式取，行高量一张已渲染卡、无则回落。
+// 量当前列数与「行高」（卡片高 + 行间距）。列数从 grid 计算样式取——正常已解析成 px 列表，逐个数；
+// 偶发未解析(含 repeat/minmax 等非 px)则回落到上次有效值，防误判。行高量一张已渲染卡（卡等高，任取），无则回落。
 function metrics(): { cols: number; rowH: number } {
   const cs = getComputedStyle(grid!)
-  const cols = cs.gridTemplateColumns.split(' ').filter(Boolean).length || 1
-  let cardH = 330 // 回落估值（≈ contain-intrinsic-size）
+  const parts = cs.gridTemplateColumns.split(' ').filter(Boolean)
+  const cols = parts.length && parts.every((p) => p.endsWith('px')) ? parts.length : cachedCols
+  cachedCols = cols
+  let cardH = 330 // 首次未量到时的回落估值
   const first = nodes.size ? (nodes.values().next().value as HTMLElement) : null
   if (first && first.offsetHeight > 50) cardH = first.offsetHeight
   const rowGap = parseFloat(cs.rowGap) || 22
@@ -63,15 +70,11 @@ function render(): void {
   const startIdx = firstRow * cols
   const endIdx = Math.min(items.length, (lastRow + 1) * cols) // 独占上界
 
-  // 锚点：取一张「会留在新窗口内、且当前在视口内(top≥0)」的最靠上卡，记下其视口位置。
-  // 渲染后测位移、反向 scrollBy 抵消——可见内容始终不动，与占位是否像素级精确解耦（消除抽动）。
-  let anchor: HTMLElement | null = null
-  let anchorTop = 0
-  for (const [i, el] of nodes) {
-    if (i < startIdx || i >= endIdx) continue
-    const t = el.getBoundingClientRect().top
-    if (t >= 0 && (!anchor || t < anchorTop)) { anchor = el; anchorTop = t }
-  }
+  // 锚点补偿：仅当「窗口上方有占位」(firstRow>0) 时需要——顶部(首屏/刷新)时 firstRow=0 不补偿，
+  // 免得与 refreshFeed 的 scrollTo(top) 打架、也不会误落在非顶部。
+  // 单点锚：几何推出「当前视口顶那一行的首卡」(O(1))，避免每帧遍历全窗口读 BCR 造成布局抖动。
+  const anchor = firstRow > 0 ? nodes.get(Math.max(0, Math.floor(into / rowH)) * cols) || null : null
+  const anchorTop = anchor ? anchor.getBoundingClientRect().top : 0
 
   // 1) 移除窗口外节点（连同 observer/监听器/闭包一起 GC）
   for (const [i, el] of nodes) {
@@ -90,16 +93,17 @@ function render(): void {
     grid.insertBefore(el, ref)
     cardIo?.observe(el)
   }
-  // 4) 补偿：锚点渲染后若位移了，反向滚回，保持可见内容不动（同一帧内完成，无中间态可见）
+  // 4) 补偿：锚点渲染后若位移 >0.5px，反向滚回保持可见内容不动（同帧完成，无中间态）。
+  //    置 suppressScroll 跳过这次 scrollBy 触发的 scroll，免得再引发一轮 render（估算准时 delta≈0，通常不触发）。
   if (anchor) {
     const delta = anchor.getBoundingClientRect().top - anchorTop
-    if (delta) window.scrollBy(0, delta)
+    if (Math.abs(delta) > 0.5) { suppressScroll = true; window.scrollBy(0, delta) }
   }
 }
 
-let renderRaf = 0
 // scroll/resize 用 rAF 节流地重算窗口
 function scheduleRender(): void {
+  if (suppressScroll) { suppressScroll = false; return } // 跳过补偿 scrollBy 自己触发的这次 scroll
   if (renderRaf) return
   renderRaf = requestAnimationFrame(() => { renderRaf = 0; render() })
 }
@@ -150,6 +154,7 @@ function hasRealCard(): boolean {
 
 async function loadMore(): Promise<void> {
   if (loading || exhausted || !grid || !sentinel) return
+  if (performance.now() < cooldownUntil) return // 上次失败后的退避期内不重试，避免持续错误时疯狂打 API
   loading = true
   const gen = feedGen // 记录本次代际；重新接管/刷新会改变它 → 本次作废
   let failed = false
@@ -177,14 +182,24 @@ async function loadMore(): Promise<void> {
       emptyStreak = addedThisPage === 0 ? emptyStreak + 1 : 0
     }
     if (emptyStreak >= 3) {
-      exhausted = true
-      showTip('匿名推荐已刷完（B 站给匿名请求的是固定内容池）。配置 access_key 可看个性化、不重复的推荐。')
+      if (getAccessKey()) {
+        // 已登录不应「刷完」：多为瞬时空/重复页，不永久锁死，退避几秒后由滚动自然重试
+        cooldownUntil = performance.now() + 3000
+      } else {
+        // 匿名池确实是固定内容，连续 3 页无新 → 锁死并提示
+        exhausted = true
+        showTip('匿名推荐已刷完（B 站给匿名请求的是固定内容池）。配置 access_key 可看个性化、不重复的推荐。')
+      }
     }
   } catch (e) {
     console.error('[BiliKit Feed] 加载出错：', e)
     failed = true
   } finally {
-    if (gen === feedGen) { clearSkeletons(); loading = false } // 仅当仍是本代才清理，别踩到新一轮的状态
+    if (gen === feedGen) {
+      clearSkeletons()
+      loading = false
+      if (failed) cooldownUntil = performance.now() + 3000 // 失败退避：3s 内哨兵/滚动重触发也不重试
+    } // 仅当仍是本代才清理，别踩到新一轮的状态
   }
   // 首屏就失败（一张真实卡都没有）时给出可见提示，而不是空白/永久骨架
   if (gen === feedGen && failed && !hasRealCard()) showTip('加载失败，请稍后重试；若持续失败可在设置里配置 access_key 或检查网络。')
@@ -199,6 +214,7 @@ function refreshFeed(btn?: HTMLElement): void {
   removeTip()
   seen.clear()
   exhausted = false
+  cooldownUntil = 0 // 手动刷新清退避，立即重试
   renderSkeletons(12) // 刷新时也先铺骨架
   if (btn) {
     btn.classList.add('busy')
@@ -236,6 +252,7 @@ function takeover(): boolean {
   items.length = 0
   seen.clear()
   exhausted = false
+  cooldownUntil = 0
 
   injectStyle()
   native.style.setProperty('display', 'none', 'important')

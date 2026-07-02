@@ -63,6 +63,8 @@ export function setupHoverPreview(cover: HTMLElement, bvid: string): void {
   }
 
   const tick = (now: number) => {
+    // 窗口化可能在无 mouseleave 的情况下移除本卡（滚轮/键盘滚走）→ 节点脱离 DOM 就自停，避免 rAF 永久空转泄漏
+    if (!cover.isConnected) { stop(); return }
     if (!hovering || !shot) { rafId = 0; return }
     const p = ((now - startT) % RUN) / RUN // 0..1，循环
     if (bar) bar.style.transform = `scaleX(${p})` // 进度条每帧平滑
