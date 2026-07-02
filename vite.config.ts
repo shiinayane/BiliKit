@@ -12,7 +12,7 @@ export default defineConfig({
       userscript: {
         name: 'BiliKit',
         namespace: 'https://github.com/shiinayane/BiliKit',
-        version: '0.3.0',
+        version: '0.3.1',
         description: 'BiliKit · B 站增强套件（核心）：CDN 优选 / 主题同步 / 评论属地 / 防睡眠 + 统一设置面板。Safari 友好、页面世界注入、无外部依赖。',
         author: 'shiinayane',
         license: 'MIT',

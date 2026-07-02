@@ -45,7 +45,11 @@ export function injectStyle(): void {
     /* 下方：头像独占左栏，右栏上标题、下「UP名 · 日期」 */
     .${NS}-bottom{ display:flex; gap:10px; margin-top:9px; align-items:flex-start; }
     .${NS}-face{ width:34px; height:34px; flex:0 0 34px; border-radius:50%; object-fit:cover; background:var(--bg2,#e3e5e7); }
+    img.${NS}-face{ cursor:pointer; transition:box-shadow .15s ease; } /* 有头像时可点进空间（占位 div 不给手型） */
+    img.${NS}-face:hover{ box-shadow:0 0 0 2px var(--brand_blue,#00aeec); } /* hover 强调：品牌色圆环 */
     .${NS}-right{ flex:1; min-width:0; }
+    .${NS}-up{ cursor:pointer; } /* UP 名可点进空间 */
+    .${NS}-up:hover{ color:var(--brand_blue,#00aeec); }
     /* min-height 固定 2 行：让每张卡等高，虚拟化的行高估算才准、不漂移抖动（1 行标题也占 2 行位） */
     .${NS}-title{ margin:0 0 6px; font-size:15px; font-weight:500; line-height:1.4; min-height:2.8em; color:var(--text1,#18191c); display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
     .${NS}-sub{ display:flex; align-items:center; font-size:13px; color:var(--text3,#9499a0); }
@@ -67,6 +71,26 @@ export function injectStyle(): void {
     .${NS}-fab button.busy{ pointer-events:none; }
     .${NS}-fab button.busy svg{ animation:bk-spin .8s linear infinite; }
     @keyframes bk-spin{ to{ transform:rotate(360deg); } }
+    /* 底部上滑抽屉：顶部留 48px 缝(显遮罩、点击关闭)；关闭/新标签是缝里的独立浮动按钮 */
+    .${NS}-dmask{ position:fixed; inset:0; z-index:100000; background:rgba(0,0,0,.5); opacity:0; pointer-events:none; transition:opacity .3s ease; }
+    .${NS}-dmask.on{ opacity:1; pointer-events:auto; } /* 关闭后 pointer-events:none，否则透明遮罩仍拦全站点击 */
+    .${NS}-drawer{ position:fixed; left:0; right:0; bottom:0; height:calc(100% - 48px); z-index:100001; display:flex; flex-direction:column; background:var(--bg1,#fff); border-radius:14px 14px 0 0; box-shadow:0 -8px 40px rgba(0,0,0,.35); transform:translateY(100%); transition:transform .32s cubic-bezier(.32,.72,0,1); overflow:hidden; }
+    .${NS}-drawer.on{ transform:translateY(0); }
+    .${NS}-dframe{ flex:1; width:100%; border:0; display:block; }
+    /* 下拉提示气泡（顶部缝里居中，拖拽时淡入） */
+    .${NS}-dhint{ position:fixed; top:14px; left:50%; transform:translateX(-50%); z-index:100002; font-size:12px; color:#fff; background:rgba(0,0,0,.55); padding:3px 12px; border-radius:12px; opacity:0; pointer-events:none; transition:opacity .15s ease; -webkit-backdrop-filter:blur(4px); backdrop-filter:blur(4px); }
+    .${NS}-dhint.on{ opacity:1; }
+    /* 加载遮罩：封面模糊铺底 + spinner，盖住打开瞬间黑→白闪 */
+    .${NS}-dload{ position:absolute; inset:0; z-index:1; display:flex; align-items:center; justify-content:center; background:#18191c; opacity:0; pointer-events:none; transition:opacity .3s ease; }
+    .${NS}-drawer.loading .${NS}-dload{ opacity:1; }
+    .${NS}-dload-cover{ position:absolute; inset:0; background-size:cover; background-position:center; filter:blur(24px) brightness(.6); transform:scale(1.1); }
+    .${NS}-dspin{ position:relative; width:42px; height:42px; border:3px solid rgba(255,255,255,.2); border-top-color:var(--brand_blue,#00aeec); border-radius:50%; animation:bk-spin .8s linear infinite; }
+    @media (prefers-color-scheme: light){ .${NS}-dload{ background:#f4f4f5; } .${NS}-dspin{ border-color:rgba(0,0,0,.12); border-top-color:var(--brand_blue,#00aeec); } }
+    /* 顶部缝里的独立浮动按钮 */
+    .${NS}-dctrls{ position:fixed; top:9px; right:16px; z-index:100002; display:flex; gap:10px; opacity:0; pointer-events:none; transition:opacity .3s ease; }
+    .${NS}-dctrls.on{ opacity:1; pointer-events:auto; }
+    .${NS}-dctrls button{ width:34px; height:34px; border-radius:50%; border:0; background:rgba(0,0,0,.55); color:#fff; cursor:pointer; display:flex; align-items:center; justify-content:center; -webkit-backdrop-filter:blur(4px); backdrop-filter:blur(4px); }
+    .${NS}-dctrls button:hover{ background:rgba(0,0,0,.78); }
   `
   ;(document.head || document.documentElement).appendChild(s)
 }
@@ -79,6 +103,7 @@ export function hideNativeChrome(): void {
   s.textContent = `
     .feed-roll-btn { display: none !important; }        /* 右侧「换一换」 */
     .palette-button-wrap { display: none !important; }   /* 右下角 刷新内容/更多/返回顶部 */
+    .adblock-tips { display: none !important; }          /* 顶部「检测到浏览器插件…加入白名单」提示 */
     /* 分区栏「不钉顶」：.header-channel 是 B 站在滚动后注入的钉顶副本（首屏时 h=0、空），
        真正可见的分区在 .bili-header 内、会随页滚走。隐掉这个副本即可：分区仍在（顶部那份），
        只是不再钉顶，也避开了它注入高度时引发的画面抽搐。 */

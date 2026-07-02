@@ -48,6 +48,7 @@ export interface FeedCard {
   goto: string
   title: string
   up: string
+  mid: string // UP 的空间 id（args.up_id / avatar.up_id）——点头像/名字进 space
   face: string // UP 头像 URL（avatar.cover）
   cover: string
   uri: string
@@ -75,6 +76,7 @@ function normalize(item: any): FeedCard | null {
     goto: item.goto || '',
     title: item.title || '',
     up: args.up_name || '',
+    mid: String(args.up_id || (item.avatar && item.avatar.up_id) || ''),
     face: (item.avatar && item.avatar.cover) || '',
     cover: item.cover || '',
     uri: item.uri || '',

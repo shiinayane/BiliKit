@@ -12,7 +12,7 @@ export default defineConfig({
       userscript: {
         name: 'BiliKit Feed',
         namespace: 'https://github.com/shiinayane/BiliKit',
-        version: '0.1.0',
+        version: '0.2.0',
         description: 'BiliKit · App 推荐 feed：把手机 App 的推荐流搬上 B 站首页。需配合 BiliKit Core。',
         author: 'shiinayane',
         license: 'MIT',

@@ -10,6 +10,7 @@ import { startTvLogin } from './tv-login'
  */
 const PANEL_ID = 'bilikit-panel-root'
 const FEED_ID = '__feed__'
+const OPEN_ID = '__open__' // 「打开方式」独立成项，与 Feed 登录分开
 const FEED_CAT = '推荐'
 let dirty = false
 let selected = ''
@@ -277,13 +278,14 @@ function navItemModule(m: BiliKitModule): HTMLElement {
   return row
 }
 
-function navItemFeed(): HTMLElement {
-  const row = el('div', 'nav-item' + (selected === FEED_ID ? ' sel' : ''))
+// 通用「特殊项」行（Feed 登录 / 打开方式），非模块，带齿轮、可选中
+function navItemSpecial(id: string, name: string): HTMLElement {
+  const row = el('div', 'nav-item' + (selected === id ? ' sel' : ''))
   const wrap = el('div', 'nm-wrap')
-  wrap.appendChild(el('span', 'nm', 'App 推荐 Feed'))
+  wrap.appendChild(el('span', 'nm', name))
   const g = el('span', 'gear-ico'); g.innerHTML = GEAR_SVG; wrap.appendChild(g)
   row.appendChild(wrap)
-  row.addEventListener('click', () => select(FEED_ID))
+  row.addEventListener('click', () => select(id))
   return row
 }
 
@@ -301,7 +303,10 @@ function renderNav(): void {
   for (const c of cats) {
     navEl.appendChild(el('div', 'nav-cat', c))
     for (const m of byCat.get(c) || []) navEl.appendChild(navItemModule(m))
-    if (c === FEED_CAT) navEl.appendChild(navItemFeed())
+    if (c === FEED_CAT) {
+      navEl.appendChild(navItemSpecial(FEED_ID, 'App 推荐 Feed'))
+      navEl.appendChild(navItemSpecial(OPEN_ID, '打开方式')) // 独立于 Feed 登录
+    }
   }
 }
 
@@ -313,6 +318,7 @@ function renderFeedDetail(d: HTMLElement): void {
   d.appendChild(el('div', 'detail-title', 'App 推荐 Feed'))
   d.appendChild(el('div', 'detail-desc', '首页换成手机 App 的推荐流（需另装 BiliKit Feed 脚本）'))
   const fields = el('div', 'fields')
+
   const row = el('div', 'field row')
   row.appendChild(el('span', 'flabel', '登录状态'))
   const st = el('span', 'feed-status' + (loggedIn ? ' on' : ''), loggedIn ? '已登录 · 个性化推荐' : '未登录 · 匿名（内容有限）')
@@ -336,10 +342,33 @@ function renderFeedDetail(d: HTMLElement): void {
   d.appendChild(fields)
 }
 
+// 打开方式：点 feed 卡片如何打开视频（新标签页 / 当前页 / 底部抽屉）。Feed 每次点击时读取，无需刷新。
+function renderOpenDetail(d: HTMLElement): void {
+  d.appendChild(el('div', 'detail-title', '打开方式'))
+  d.appendChild(el('div', 'detail-desc', '在首页 feed 点视频卡片时如何打开'))
+  const fields = el('div', 'fields')
+  const modeRow = el('div', 'field')
+  modeRow.appendChild(el('span', 'flabel', '视频打开方式'))
+  const modeSel = document.createElement('select')
+  for (const [val, label] of [['drawer', '抽屉（底部弹出）'], ['newtab', '新标签页'], ['current', '当前页']]) {
+    const o = document.createElement('option')
+    o.value = val
+    o.textContent = label
+    modeSel.appendChild(o)
+  }
+  modeSel.value = get<string>('feed.openMode', 'drawer')
+  modeSel.addEventListener('change', () => set('feed.openMode', modeSel.value))
+  modeRow.appendChild(modeSel)
+  fields.appendChild(modeRow)
+  fields.appendChild(el('div', 'hint', '抽屉：同源内嵌播放、顶部留缝放关闭/新标签按钮，隐藏站内顶栏。'))
+  d.appendChild(fields)
+}
+
 function renderDetail(): void {
   if (!detailEl) return
   detailEl.textContent = ''
   if (selected === FEED_ID) { renderFeedDetail(detailEl); return }
+  if (selected === OPEN_ID) { renderOpenDetail(detailEl); return }
   const m = getModules().find((x) => x.id === selected)
   if (!m) { detailEl.appendChild(emptyState('选择左侧一项')); return }
   detailEl.appendChild(el('div', 'detail-title', m.name))
@@ -408,7 +437,7 @@ export function mountPanel(): void {
   overlay.appendChild(card)
 
   const open = () => {
-    if (!selected || (selected !== FEED_ID && !getModules().some((m) => m.id === selected))) selected = firstNavId()
+    if (!selected || (selected !== FEED_ID && selected !== OPEN_ID && !getModules().some((m) => m.id === selected))) selected = firstNavId()
     renderNav()
     renderDetail()
     overlay.classList.add('open')

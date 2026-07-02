@@ -5,6 +5,20 @@ import { themeSync } from './modules/theme-sync'
 import { commentLocation } from './modules/comment-location'
 import { wakeLock } from './modules/wake-lock'
 
+// 在 BiliKit 抽屉的 iframe 内（父页给 URL 打了 #bk-drawer 标记）隐藏站内顶栏 + 广告位，让播放器占满。
+// 只在「子框架 + 标记」时生效；Core @run-at document-start，注入的样式先于渲染就位，不闪。
+// 广告选择器沿用原 float 脚本的清单。
+function hideDrawerChrome(): void {
+  if (window.top === window.self || !location.hash.includes('bk-drawer')) return
+  const ads = ['.ad-report', '.video-page-special-card-small', '.video-page-game-card-small', '.slide-ad-exp', '.activity-m-v1', '.pop-live-small-mode', '.right-bottom-banner', '.eva-banner', '.gg-floor-module', '.video-card-ad-small']
+  const s = document.createElement('style')
+  s.textContent =
+    `#biliMainHeader,.bili-header,.fixed-header,.international-header{display:none!important}` +
+    ads.join(',') + `{display:none!important}`
+  ;(document.head || document.documentElement).appendChild(s)
+}
+hideDrawerChrome()
+
 // 注册所有 Core（页面世界，@grant none）模块。
 // cdn-pick / theme-sync 先跑（runAt='start'，需在页面用 fetch / 首帧换肤前挂钩）。
 // 暂缓：float / way-back（与将来的 App 推荐 feed 有交互冲突，待 feed 定后再迁）；

@@ -1,5 +1,6 @@
-import { NS, esc, coverUrl } from './shared'
+import { NS, esc, coverUrl, readSetting } from './shared'
 import { setupHoverPreview } from './hover-preview'
+import { openDrawer, preconnect } from './drawer'
 import type { FeedCard } from './app-api'
 
 // 封面遮罩的播放/弹幕图标（跟随 currentColor=白）
@@ -18,7 +19,8 @@ export function makeCard(c: FeedCard): HTMLElement {
   // 推荐理由小徽章（如「已关注」）放在 UP 名之前，学 Gate 的行内 pill，统一用品牌色描边；
   // 名字+日期单独一段以便省略号；整行 flex 居中对齐徽章与文字。
   const badge = c.reason ? `<span class="${NS}-badge">${esc(c.reason)}</span>` : ''
-  const who = esc(c.up) + (c.date ? `<i>·</i>${esc(c.date)}` : '')
+  // UP 名单独包一层 .bk-feed-up（可点进空间）；日期不可点
+  const who = `<span class="${NS}-up">${esc(c.up)}</span>` + (c.date ? `<i>·</i>${esc(c.date)}` : '')
   const sub = badge + `<span class="${NS}-who">${who}</span>`
   el.innerHTML =
     `<div class="${NS}-cover"><img alt="" data-src="${esc(coverUrl(c.cover))}">` +
@@ -40,9 +42,20 @@ export function makeCard(c: FeedCard): HTMLElement {
   // 封面 404/解码失败：标 .failed 停微光、露灰底，避免那张卡无限转骨架
   imgEl.addEventListener('error', () => { if (!imgEl.src.startsWith('data:')) coverEl.classList.add('failed') })
   if (c.bvid) setupHoverPreview(coverEl, c.bvid) // hover 雪碧图预览
-  el.addEventListener('click', () => {
+  el.addEventListener('mouseenter', preconnect) // 悬停预连接 B站主机（内部 12s 节流），点开更快
+  el.addEventListener('click', (e) => {
+    // 点头像或 UP 名 → 进 UP 空间（始终新标签，不进抽屉）
+    if (c.mid && (e.target as HTMLElement).closest(`.${NS}-face, .${NS}-up`)) {
+      window.open(`https://space.bilibili.com/${c.mid}`, '_blank', 'noopener')
+      return
+    }
     const url = c.bvid ? `https://www.bilibili.com/video/${c.bvid}` : c.uri
-    if (url && /^https?:\/\//i.test(url)) window.open(url, '_blank', 'noopener') // 只开 http(s)，防 javascript:/开放重定向
+    if (!url || !/^https?:\/\//i.test(url)) return // 只开 http(s)，防 javascript:/开放重定向
+    // 打开方式：面板设置 feed.openMode（默认新标签页）。抽屉仅对可 iframe 的视频页用。
+    const mode = readSetting<string>('feed.openMode', 'drawer')
+    if (mode === 'current') location.href = url
+    else if (mode === 'drawer' && c.bvid) openDrawer(url, coverUrl(c.cover)) // 封面作加载遮罩的模糊铺底
+    else window.open(url, '_blank', 'noopener')
   })
   return el // 注意：observe 要等插入 DOM 后再做（Safari 下观察未连接元素不可靠）
 }
