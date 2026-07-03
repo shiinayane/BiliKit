@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         BiliKit Feed
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.2.0
+// @version      0.2.1
 // @author       shiinayane
-// @description  B 站首页换成手机 App 的个性化推荐流；点卡片在底部抽屉内播放、封面悬停秒预览，窗口化虚拟化滚动流畅。需配合 BiliKit Core（登录 / 设置）。
+// @description  B 站首页换成手机 App 的个性化推荐流。零框架纯原生实现（无 React/Vue、gzip 仅 ~16KB）+ 窗口化虚拟化，DOM 数量恒定、长时间刷不涨内存。点卡片在底部抽屉内播放、封面悬停秒预览。需配合 BiliKit Core（登录 / 设置）。
 // @license      MIT
 // @match        *://www.bilibili.com/
 // @match        *://www.bilibili.com/?*
