@@ -1,7 +1,6 @@
 import { NS, esc, coverUrl, readSetting } from './shared'
 import { setupHoverPreview } from './hover-preview'
 import { setupVideoPreview } from './video-preview'
-import { openDrawer, preconnect } from './drawer'
 import type { FeedCard } from './app-api'
 
 // 封面遮罩的播放/弹幕图标（跟随 currentColor=白）
@@ -13,6 +12,7 @@ const stripUnit = (s: string) => s.replace(/观看|播放|弹幕|次/g, '').trim
 export function makeCard(c: FeedCard): HTMLElement {
   const el = document.createElement('div')
   el.className = `${NS}-card`
+  if (c.bvid) el.dataset.bvid = c.bvid // 供 Core「全站抽屉」识别 → 按「打开方式」打开（Feed 不再自管视频打开）
   // 封面遮罩左侧：播放 + 弹幕（带图标；缺项省略）
   const mstat =
     (c.play ? `<span>${PLAY_SVG}${esc(stripUnit(c.play))}</span>` : '') +
@@ -48,25 +48,22 @@ export function makeCard(c: FeedCard): HTMLElement {
     if (pm === 'sprite') setupHoverPreview(coverEl, c.bvid)
     else if (pm !== 'off') setupVideoPreview(coverEl, c.bvid, c.cid)
   }
-  el.addEventListener('mouseenter', preconnect) // 悬停预连接 B站主机（内部 12s 节流），点开更快
   el.addEventListener('click', (e) => {
-    // 点头像或 UP 名 → 进 UP 空间（始终新标签，不进抽屉）
+    // 点头像或 UP 名 → 进 UP 空间（始终新标签；Core 全站抽屉会跳过这块）
     if (c.mid && (e.target as HTMLElement).closest(`.${NS}-face, .${NS}-up`)) {
       window.open(`https://space.bilibili.com/${c.mid}`, '_blank', 'noopener')
       return
     }
-    const url = c.bvid ? `https://www.bilibili.com/video/${c.bvid}` : c.uri
-    if (!url || !/^https?:\/\//i.test(url)) return // 只开 http(s)，防 javascript:/开放重定向
-    // 打开方式：面板设置 feed.openMode（默认新标签页）。抽屉仅对可 iframe 的视频页用。
-    const mode = readSetting<string>('feed.openMode', 'drawer')
-    if (mode === 'current') location.href = url
-    // drawer-web：同抽屉，但让 iframe 内的播放器自动进「网页全屏」，铺满抽屉、隐评论/推荐（沉浸）
-    // feed.drawerImmersive（默认开）：网页全屏时是否延迟揭幕（遮罩留到铺满再撤，藏过渡）
-    else if ((mode === 'drawer' || mode === 'drawer-web') && c.bvid) {
-      const web = mode === 'drawer-web'
-      openDrawer(url, coverUrl(c.cover), web, web && readSetting<boolean>('feed.drawerImmersive', true)) // 封面作加载遮罩的模糊铺底
+    // 视频卡（有 bvid）：抽屉 / 网页全屏 / 新标签模式由 Core「全站抽屉」在捕获阶段接管（stopImmediatePropagation，
+    // 本 handler 不会执行到这）。走到这里 = 当前页模式，或 Core 缺失/太旧未接管 → 按 openMode 兜底打开，绝不「点了没反应」。
+    if (c.bvid) {
+      const url = `https://www.bilibili.com/video/${c.bvid}`
+      if (readSetting<string>('feed.openMode', 'drawer') === 'current') location.href = url
+      else window.open(url, '_blank', 'noopener')
+      return
     }
-    else window.open(url, '_blank', 'noopener')
+    // 非视频卡（直播 / 文章等，只有 uri）：直接新标签打开
+    if (c.uri && /^https?:\/\//i.test(c.uri)) window.open(c.uri, '_blank', 'noopener')
   })
   return el // 注意：observe 要等插入 DOM 后再做（Safari 下观察未连接元素不可靠）
 }

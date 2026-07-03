@@ -7,6 +7,7 @@ import { themeSync } from './modules/theme-sync'
 import { commentLocation } from './modules/comment-location'
 import { wakeLock } from './modules/wake-lock'
 import { noLogin } from './modules/no-login'
+import { installSiteDrawer } from './modules/site-drawer'
 
 // 跨子域对齐设置：把 .bilibili.com cookie 里的共享设置并回本域 localStorage（www/search/space 用同一份），
 // 老用户则反向种一次 cookie。必须在任何模块读设置（runAll）之前。
@@ -39,7 +40,9 @@ hideDrawerChrome()
 function setupDrawerReveal(): void {
   if (window.top === window.self || !location.hash.includes('bk-drawer')) return
   const wantWeb = location.hash.includes('bk-drawer-web')
-  const post = (m: string): void => { try { window.parent.postMessage(m, location.origin) } catch { /* 忽略 */ } }
+  // targetOrigin 用 '*'：抽屉从 search/space 等子域打开时，父页 origin 与本 iframe(www) 不同，
+  // 用 location.origin 会导致信号被浏览器丢弃 → 父页收不到、只能等 6s 兜底（揭幕很晚）。信号非敏感，'*' 即可。
+  const post = (m: string): void => { try { window.parent.postMessage(m, '*') } catch { /* 忽略 */ } }
   let readyDone = false
   let webDone = !wantWeb // 普通抽屉无需铺满，直接算完成
   let bound = false
@@ -77,6 +80,9 @@ register(
 )
 
 runAll()
+
+// 全站抽屉：无独立开关，由「打开方式」驱动（当前页=不拦）。委托点击拦截，自守卫顶层窗口 + 幂等。
+installSiteDrawer()
 
 // 左下悬浮齿轮 + 设置面板（仅顶层窗口）
 mountPanel()

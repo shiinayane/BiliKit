@@ -339,9 +339,10 @@ function renderNav(): void {
   for (const c of cats) {
     navEl.appendChild(el('div', 'nav-cat', c))
     for (const m of byCat.get(c) || []) navEl.appendChild(navItemModule(m))
+    // 「打开方式」归入「播放」组（已与 Feed 解耦，是全站视频打开行为，非 Feed 专属）
+    if (c === '播放') navEl.appendChild(navItemSpecial(OPEN_ID, '打开方式'))
     if (c === FEED_CAT) {
       navEl.appendChild(navItemSpecial(FEED_ID, 'App 推荐 Feed'))
-      navEl.appendChild(navItemSpecial(OPEN_ID, '打开方式')) // 独立于 Feed 登录
       navEl.appendChild(navItemSpecial(PREVIEW_ID, '封面预览'))
     }
   }
@@ -387,10 +388,10 @@ function renderFeedDetail(d: HTMLElement): void {
   d.appendChild(fields)
 }
 
-// 打开方式：点 feed 卡片如何打开视频（新标签页 / 当前页 / 底部抽屉）。Feed 每次点击时读取，无需刷新。
+// 打开方式：全站点视频如何打开（抽屉 / 网页全屏抽屉 / 新标签 / 当前页）。每次点击时读取，无需刷新。
 function renderOpenDetail(d: HTMLElement): void {
   d.appendChild(el('div', 'detail-title', '打开方式'))
-  d.appendChild(el('div', 'detail-desc', '在首页 feed 点视频卡片时如何打开'))
+  d.appendChild(el('div', 'detail-desc', '全站（首页 / 搜索 / 收藏 / 历史 / 空间…）点视频时如何打开'))
   const fields = el('div', 'fields')
   const modeRow = el('div', 'field')
   modeRow.appendChild(el('span', 'flabel', '视频打开方式'))
@@ -415,7 +416,7 @@ function renderOpenDetail(d: HTMLElement): void {
   syncImm()
   modeSel.addEventListener('change', () => { set('feed.openMode', modeSel.value); syncImm() })
 
-  fields.appendChild(callout('<b>抽屉</b>：视频从底部滑出、就地内嵌整页播放，弹幕评论都在，顶部下拉即关。<br><b>抽屉 · 网页全屏</b>：同样的抽屉，但播放器自动铺满、只看视频，更沉浸（需装 BiliKit Core）。<br><b>新标签页 / 当前页</b>：跳转到视频页打开。'))
+  fields.appendChild(callout('全站生效（搜索 / 收藏 / 历史 / 空间等页面点视频，就地开抽屉、不丢当前列表）。<br><b>抽屉</b>：视频从底部滑出、内嵌整页播放，弹幕评论都在，点缝 / 关闭键 / Esc 关闭。<br><b>抽屉 · 网页全屏</b>：同样的抽屉，但播放器自动铺满、只看视频，更沉浸。<br><b>新标签页 / 当前页</b>：跳转到视频页打开（当前页=不拦、走原生）。'))
   d.appendChild(fields)
 }
 

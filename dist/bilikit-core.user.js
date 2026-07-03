@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BiliKit Core
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.4.7
+// @version      0.5.0
 // @author       shiinayane
 // @description  B 站体验增强核心，一装到位：CDN 优选（救海外卡顿）· 埋点/广告拦截（省流量降开销）· 免登录看评论/动态/1080p · 主题跟随系统深浅 · 评论显 IP 属地 · 播放不息屏——统一设置面板集中开关。Safari 友好、无需扩展、零外部依赖。
 // @license      MIT
@@ -283,8 +283,8 @@
               if (byteIndex < data.length) {
                 dark = (data[byteIndex] >>> bitIndex & 1) == 1;
               }
-              const mask = maskFunc(row, col - c);
-              if (mask) {
+              const mask2 = maskFunc(row, col - c);
+              if (mask2) {
                 dark = !dark;
               }
               _modules[row][col - c] = dark;
@@ -2372,9 +2372,9 @@
     for (const c of cats) {
       navEl.appendChild(el("div", "nav-cat", c));
       for (const m of byCat.get(c) || []) navEl.appendChild(navItemModule(m));
+      if (c === "播放") navEl.appendChild(navItemSpecial(OPEN_ID, "打开方式"));
       if (c === FEED_CAT) {
         navEl.appendChild(navItemSpecial(FEED_ID, "App 推荐 Feed"));
-        navEl.appendChild(navItemSpecial(OPEN_ID, "打开方式"));
         navEl.appendChild(navItemSpecial(PREVIEW_ID, "封面预览"));
       }
     }
@@ -2416,7 +2416,7 @@
   }
   function renderOpenDetail(d) {
     d.appendChild(el("div", "detail-title", "打开方式"));
-    d.appendChild(el("div", "detail-desc", "在首页 feed 点视频卡片时如何打开"));
+    d.appendChild(el("div", "detail-desc", "全站（首页 / 搜索 / 收藏 / 历史 / 空间…）点视频时如何打开"));
     const fields = el("div", "fields");
     const modeRow = el("div", "field");
     modeRow.appendChild(el("span", "flabel", "视频打开方式"));
@@ -2443,7 +2443,7 @@
       set("feed.openMode", modeSel.value);
       syncImm();
     });
-    fields.appendChild(callout("<b>抽屉</b>：视频从底部滑出、就地内嵌整页播放，弹幕评论都在，顶部下拉即关。<br><b>抽屉 · 网页全屏</b>：同样的抽屉，但播放器自动铺满、只看视频，更沉浸（需装 BiliKit Core）。<br><b>新标签页 / 当前页</b>：跳转到视频页打开。"));
+    fields.appendChild(callout("全站生效（搜索 / 收藏 / 历史 / 空间等页面点视频，就地开抽屉、不丢当前列表）。<br><b>抽屉</b>：视频从底部滑出、内嵌整页播放，弹幕评论都在，点缝 / 关闭键 / Esc 关闭。<br><b>抽屉 · 网页全屏</b>：同样的抽屉，但播放器自动铺满、只看视频，更沉浸。<br><b>新标签页 / 当前页</b>：跳转到视频页打开（当前页=不拦、走原生）。"));
     d.appendChild(fields);
   }
   function renderPreviewDetail(d) {
@@ -3533,6 +3533,213 @@
     runAt: "start",
     init
   };
+  const NS = "bk";
+  const NEWTAB_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>';
+  const CLOSE_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+  const MARK = "#bk-drawer";
+  const MARK_WEB = "#bk-drawer-web";
+  const CSS = `
+.${NS}-dctrls button{ width:40px; height:40px; border-radius:50%; padding:0; display:flex; align-items:center; justify-content:center; border:1px solid var(--line_regular,#e3e5e7); background:var(--bg1,#fff); color:var(--text2,#61666d); cursor:pointer; box-shadow:0 2px 10px rgba(0,0,0,.12); transition:color .16s ease, transform .16s ease, box-shadow .16s ease, opacity .18s ease; }
+.${NS}-dctrls button:hover{ color:var(--brand_blue,#00aeec); transform:translateY(-2px); box-shadow:0 5px 16px rgba(0,0,0,.2); }
+.${NS}-dctrls button:active{ transform:scale(.94); }
+@keyframes bk-dspin{ to{ transform:rotate(360deg); } }
+.${NS}-dmask{ position:fixed; inset:0; z-index:100000; background:rgba(0,0,0,.5); opacity:0; pointer-events:none; transition:opacity .3s ease; }
+.${NS}-dmask.on{ opacity:1; pointer-events:auto; }
+.${NS}-drawer{ position:fixed; left:0; right:0; bottom:0; height:calc(100% - 64px); z-index:100001; display:flex; flex-direction:column; background:var(--bg1,#fff); border-radius:14px 14px 0 0; box-shadow:0 -8px 40px rgba(0,0,0,.35); transform:translateY(100%); transition:transform .32s cubic-bezier(.32,.72,0,1); overflow:hidden; }
+.${NS}-drawer.on{ transform:translateY(0); }
+.${NS}-dframe{ flex:1; width:100%; border:0; display:block; }
+.${NS}-dload{ position:absolute; inset:0; z-index:1; display:flex; align-items:center; justify-content:center; background:#18191c; opacity:0; pointer-events:none; transition:opacity .3s ease; }
+.${NS}-drawer.loading .${NS}-dload{ opacity:1; }
+.${NS}-dload-cover{ position:absolute; inset:0; background-size:cover; background-position:center; filter:blur(24px) brightness(.6); transform:scale(1.1); }
+.${NS}-dspin{ position:relative; width:42px; height:42px; border:3px solid rgba(255,255,255,.2); border-top-color:var(--brand_blue,#00aeec); border-radius:50%; animation:bk-dspin .8s linear infinite; }
+@media (prefers-color-scheme: light){ .${NS}-dload{ background:#f4f4f5; } .${NS}-dspin{ border-color:rgba(0,0,0,.12); border-top-color:var(--brand_blue,#00aeec); } }
+.${NS}-dctrls{ position:fixed; top:14px; right:18px; z-index:100002; display:flex; gap:10px; opacity:0; pointer-events:none; transition:opacity .3s ease; }
+.${NS}-dctrls.on{ opacity:1; pointer-events:auto; }
+`;
+  let styled = false;
+  let mask = null;
+  let panel = null;
+  let frame = null;
+  let ctrls = null;
+  let loadCover = null;
+  let closeTimer = null;
+  let loadTimer = null;
+  let curUrl = "";
+  let curWebFull = false;
+  let curImmersive = false;
+  let gotReady = false;
+  let gotWebfull = false;
+  function tryReveal() {
+    if (!gotReady) return;
+    if (curWebFull && curImmersive && !gotWebfull) return;
+    setLoading(false);
+  }
+  function frameWin() {
+    try {
+      return (frame == null ? void 0 : frame.contentWindow) || null;
+    } catch {
+      return null;
+    }
+  }
+  function setLoading(on) {
+    panel == null ? void 0 : panel.classList.toggle("loading", on);
+    if (loadTimer) {
+      clearTimeout(loadTimer);
+      loadTimer = null;
+    }
+    if (on) loadTimer = setTimeout(() => setLoading(false), 6e3);
+  }
+  function ensureDom() {
+    if (mask) return;
+    if (!styled) {
+      styled = true;
+      const s = document.createElement("style");
+      s.textContent = CSS;
+      (document.head || document.documentElement).appendChild(s);
+    }
+    mask = document.createElement("div");
+    mask.className = `${NS}-dmask`;
+    panel = document.createElement("div");
+    panel.className = `${NS}-drawer`;
+    frame = document.createElement("iframe");
+    frame.className = `${NS}-dframe`;
+    frame.allow = "autoplay; fullscreen; picture-in-picture; encrypted-media; clipboard-write";
+    frame.allowFullscreen = true;
+    frame.setAttribute("sandbox", "allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-presentation allow-modals allow-downloads");
+    window.addEventListener("message", (e) => {
+      if (e.source !== frameWin()) return;
+      if (e.data === "bk-drawer-ready") {
+        gotReady = true;
+        tryReveal();
+      } else if (e.data === "bk-drawer-webfull") {
+        gotWebfull = true;
+        tryReveal();
+      }
+    });
+    panel.appendChild(frame);
+    const load2 = document.createElement("div");
+    load2.className = `${NS}-dload`;
+    loadCover = document.createElement("div");
+    loadCover.className = `${NS}-dload-cover`;
+    const spinner = document.createElement("div");
+    spinner.className = `${NS}-dspin`;
+    load2.append(loadCover, spinner);
+    panel.appendChild(load2);
+    ctrls = document.createElement("div");
+    ctrls.className = `${NS}-dctrls`;
+    ctrls.innerHTML = `<button class="bk-newtab" title="在新标签页打开" aria-label="在新标签页打开">${NEWTAB_SVG}</button><button class="bk-close" title="关闭" aria-label="关闭">${CLOSE_SVG}</button>`;
+    ctrls.querySelector(".bk-newtab").addEventListener("click", () => {
+      if (curUrl) window.open(curUrl, "_blank", "noopener");
+      closeDrawer();
+    });
+    ctrls.querySelector(".bk-close").addEventListener("click", closeDrawer);
+    mask.addEventListener("click", closeDrawer);
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && (panel == null ? void 0 : panel.classList.contains("on"))) closeDrawer();
+    });
+    document.body.append(mask, panel, ctrls);
+  }
+  function openDrawer(url, cover = "", webFull = false, immersive = false) {
+    ensureDom();
+    if (closeTimer) {
+      clearTimeout(closeTimer);
+      closeTimer = null;
+    }
+    curUrl = url;
+    curWebFull = webFull;
+    curImmersive = immersive;
+    const marked = url.split("#")[0] + (webFull ? MARK_WEB : MARK);
+    if (frame.src !== marked) {
+      gotReady = false;
+      gotWebfull = false;
+      if (loadCover) loadCover.style.backgroundImage = cover ? `url("${cover}")` : "";
+      setLoading(true);
+      frame.src = marked;
+    } else {
+      setLoading(false);
+    }
+    document.documentElement.style.overflow = "hidden";
+    requestAnimationFrame(() => {
+      mask.classList.add("on");
+      panel.classList.add("on");
+      ctrls.classList.add("on");
+    });
+  }
+  function closeDrawer() {
+    if (!panel || !mask || !ctrls) return;
+    mask.classList.remove("on");
+    panel.classList.remove("on");
+    ctrls.classList.remove("on");
+    setLoading(false);
+    document.documentElement.style.overflow = "";
+    closeTimer = setTimeout(() => {
+      if (frame && !(panel == null ? void 0 : panel.classList.contains("on"))) frame.src = "about:blank";
+    }, 340);
+  }
+  const PC_HOSTS = ["https://api.bilibili.com", "https://s1.hdslb.com", "https://i0.hdslb.com", "https://i1.hdslb.com", "https://i2.hdslb.com"];
+  const PC_WINDOW = 12e3;
+  let lastPc = -Infinity;
+  let pcLinks = [];
+  function preconnect() {
+    const now = performance.now();
+    if (now - lastPc < PC_WINDOW) return;
+    lastPc = now;
+    pcLinks.forEach((l) => l.remove());
+    pcLinks = PC_HOSTS.map((href) => {
+      const l = document.createElement("link");
+      l.rel = "preconnect";
+      l.href = href;
+      document.head.appendChild(l);
+      return l;
+    });
+  }
+  function isVideoUrl(u) {
+    try {
+      const url = new URL(u, location.href);
+      if (!/(^|\.)bilibili\.com$/.test(url.hostname)) return false;
+      return /^\/video\/(BV[0-9A-Za-z]+|av\d+)/i.test(url.pathname) || /^\/bangumi\/play\/(ep|ss)\d+/i.test(url.pathname);
+    } catch {
+      return false;
+    }
+  }
+  function resolve(target) {
+    const pick = (root2, url) => {
+      const img = root2.querySelector("img");
+      return { url, cover: img && (img.currentSrc || img.src) || "" };
+    };
+    const a = target.closest("a[href]");
+    if (a && isVideoUrl(a.href)) return pick(a, a.href.split("#")[0]);
+    const card = target.closest("[data-bvid]");
+    if (card && card.dataset.bvid && !target.closest(".bk-feed-face, .bk-feed-up")) {
+      return pick(card, `https://www.bilibili.com/video/${card.dataset.bvid}`);
+    }
+    return null;
+  }
+  function installSiteDrawer() {
+    if (window.__BILIKIT_SITE_DRAWER__) return;
+    if (window.top !== window.self) return;
+    window.__BILIKIT_SITE_DRAWER__ = true;
+    document.addEventListener("click", (e) => {
+      const mode = get("feed.openMode", "drawer");
+      if (mode === "current") return;
+      if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+      const hit = resolve(e.target);
+      if (!hit) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      if (mode === "newtab") {
+        window.open(hit.url, "_blank", "noopener");
+        return;
+      }
+      const web = mode === "drawer-web";
+      openDrawer(hit.url, hit.cover, web, web && get("feed.drawerImmersive", true));
+    }, true);
+    document.addEventListener("mouseover", (e) => {
+      const mode = get("feed.openMode", "drawer");
+      if (mode !== "drawer" && mode !== "drawer-web") return;
+      if (resolve(e.target)) preconnect();
+    }, true);
+  }
   syncSharedSettings();
   try {
     localStorage.setItem("bilikit:alive.core", String(Date.now()));
@@ -3551,7 +3758,7 @@
     const wantWeb = location.hash.includes("bk-drawer-web");
     const post = (m) => {
       try {
-        window.parent.postMessage(m, location.origin);
+        window.parent.postMessage(m, "*");
       } catch {
       }
     };
@@ -3603,6 +3810,7 @@
     // 注册在 cdn-pick 之后：其 fetch/XHR 与 __playinfo__ hook 需叠在最外层（改请求；cdn-pick 改响应 host）
   );
   runAll();
+  installSiteDrawer();
   mountPanel();
 
 })();
