@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BiliKit Core
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.4.2
+// @version      0.4.3
 // @author       shiinayane
 // @description  B 站体验增强核心，一装到位：CDN 优选（救海外卡顿）· 埋点/广告拦截（省流量降开销）· 主题跟随系统深浅 · 评论显 IP 属地 · 播放不息屏——统一设置面板集中开关。Safari 友好、无需扩展、零外部依赖。
 // @license      MIT
@@ -2380,17 +2380,29 @@
     const modeRow = el("div", "field");
     modeRow.appendChild(el("span", "flabel", "视频打开方式"));
     const modeSel = document.createElement("select");
-    for (const [val, label] of [["drawer", "抽屉（底部弹出）"], ["newtab", "新标签页"], ["current", "当前页"]]) {
+    for (const [val, label] of [["drawer", "抽屉"], ["drawer-web", "抽屉 · 网页全屏"], ["newtab", "新标签页"], ["current", "当前页"]]) {
       const o = document.createElement("option");
       o.value = val;
       o.textContent = label;
       modeSel.appendChild(o);
     }
     modeSel.value = get("feed.openMode", "drawer");
-    modeSel.addEventListener("change", () => set("feed.openMode", modeSel.value));
     modeRow.appendChild(modeSel);
     fields.appendChild(modeRow);
-    fields.appendChild(callout("抽屉：同源内嵌播放、顶部留缝放关闭/新标签按钮，隐藏站内顶栏；在顶部继续下拉可关闭。"));
+    const immRow = el("div", "field");
+    const immHead = el("div", "toggle-head");
+    immHead.append(el("span", "flabel", "隐藏切换过程"), switchEl(get("feed.drawerImmersive", true), (on) => set("feed.drawerImmersive", on)));
+    immRow.append(immHead, el("div", "hint", "开：等播放器铺满后再显示，看不到从普通页切到全屏的过程（加载稍久一点）。关：先显示、再当场铺满，会瞥见这下切换。"));
+    fields.appendChild(immRow);
+    const syncImm = () => {
+      immRow.style.display = modeSel.value === "drawer-web" ? "" : "none";
+    };
+    syncImm();
+    modeSel.addEventListener("change", () => {
+      set("feed.openMode", modeSel.value);
+      syncImm();
+    });
+    fields.appendChild(callout("<b>抽屉</b>：视频从底部滑出、就地内嵌整页播放，弹幕评论都在，顶部下拉即关。<br><b>抽屉 · 网页全屏</b>：同样的抽屉，但播放器自动铺满、只看视频，更沉浸（需装 BiliKit Core）。<br><b>新标签页 / 当前页</b>：跳转到视频页打开。"));
     d.appendChild(fields);
   }
   function renderPreviewDetail(d) {
@@ -2400,7 +2412,7 @@
     const row = el("div", "field");
     row.appendChild(el("span", "flabel", "预览方式"));
     const sel = document.createElement("select");
-    for (const [val, label] of [["video", "真视频（低清静音自动播）"], ["sprite", "雪碧图（缩略帧轮播）"], ["off", "关闭"]]) {
+    for (const [val, label] of [["video", "真视频"], ["sprite", "雪碧图"], ["off", "关闭"]]) {
       const o = document.createElement("option");
       o.value = val;
       o.textContent = label;
@@ -2413,7 +2425,7 @@
     });
     row.appendChild(sel);
     fields.appendChild(row);
-    fields.appendChild(callout("真视频拉低清 dash 纯视频轨、静音自动播，最接近手机 App 的秒开体验（比雪碧图更吃带宽）。雪碧图只拉缩略帧、更省流量。"));
+    fields.appendChild(callout("<b>真视频</b>：悬停即拉低清视频、静音自动播，最接近手机 App 的秒开（比雪碧图费流量）。<br><b>雪碧图</b>：只拉缩略帧轮播，省流量、更轻。<br><b>关闭</b>：悬停不预览。"));
     d.appendChild(fields);
   }
   function renderDetail() {
@@ -3129,6 +3141,53 @@
     (document.head || document.documentElement).appendChild(s);
   }
   hideDrawerChrome();
+  function setupDrawerReveal() {
+    if (window.top === window.self || !location.hash.includes("bk-drawer")) return;
+    const wantWeb = location.hash.includes("bk-drawer-web");
+    const post = (m) => {
+      try {
+        window.parent.postMessage(m, location.origin);
+      } catch {
+      }
+    };
+    let readyDone = false;
+    let webDone = !wantWeb;
+    let bound = false;
+    let clicked = false;
+    let tries = 0;
+    const onReady = () => {
+      if (readyDone) return;
+      readyDone = true;
+      post("bk-drawer-ready");
+    };
+    const timer = setInterval(() => {
+      if (!readyDone) {
+        const v = document.querySelector("video");
+        if (v) {
+          if (v.readyState >= 2) onReady();
+          else if (!bound) {
+            bound = true;
+            v.addEventListener("loadeddata", onReady, { once: true });
+            v.addEventListener("canplay", onReady, { once: true });
+          }
+        }
+      }
+      if (!webDone) {
+        if (document.querySelector('.bpx-player-container[data-screen="web"]')) {
+          webDone = true;
+          post("bk-drawer-webfull");
+        } else if (!clicked) {
+          const btn = document.querySelector(".bpx-player-ctrl-web");
+          if (btn) {
+            btn.click();
+            clicked = true;
+          }
+        }
+      }
+      if (readyDone && webDone || ++tries > 60) clearInterval(timer);
+    }, 150);
+  }
+  setupDrawerReveal();
   register(
     cdnPick,
     noTrack,

@@ -60,7 +60,12 @@ export function makeCard(c: FeedCard): HTMLElement {
     // 打开方式：面板设置 feed.openMode（默认新标签页）。抽屉仅对可 iframe 的视频页用。
     const mode = readSetting<string>('feed.openMode', 'drawer')
     if (mode === 'current') location.href = url
-    else if (mode === 'drawer' && c.bvid) openDrawer(url, coverUrl(c.cover)) // 封面作加载遮罩的模糊铺底
+    // drawer-web：同抽屉，但让 iframe 内的播放器自动进「网页全屏」，铺满抽屉、隐评论/推荐（沉浸）
+    // feed.drawerImmersive（默认开）：网页全屏时是否延迟揭幕（遮罩留到铺满再撤，藏过渡）
+    else if ((mode === 'drawer' || mode === 'drawer-web') && c.bvid) {
+      const web = mode === 'drawer-web'
+      openDrawer(url, coverUrl(c.cover), web, web && readSetting<boolean>('feed.drawerImmersive', true)) // 封面作加载遮罩的模糊铺底
+    }
     else window.open(url, '_blank', 'noopener')
   })
   return el // 注意：observe 要等插入 DOM 后再做（Safari 下观察未连接元素不可靠）

@@ -23,6 +23,40 @@ function hideDrawerChrome(): void {
 }
 hideDrawerChrome()
 
+// 抽屉内（父页打 #bk-drawer / #bk-drawer-web）：单个轮询循环同时干两件揭幕相关的事，跑完即停：
+//   ① 首帧就绪 → postMessage('bk-drawer-ready')：Feed 据此撤加载遮罩。以 readyState≥2(HAVE_CURRENT_DATA)
+//      或 loadeddata/canplay 为准——比等真正开播(currentTime>0)更早，抢在出声前揭幕、声音不先于画面。
+//   ② 仅 -web 模式：点一次原生「网页全屏」按钮让播放器铺满抽屉，铺满(data-screen=web)后 postMessage('bk-drawer-webfull')。
+//      网页全屏是纯页面布局(非 OS 全屏)，无需用户手势。**只点一次**：点了不停手，靠后续 tick 确认 data-screen=web，
+//      绝不再点——否则再点一次会把网页全屏切回去、来回横跳。
+// 合成一个 interval（而非两个并发）省掉重复 querySelector；ready 与 web 都完成或超时即 clearInterval，不留常驻定时器。
+function setupDrawerReveal(): void {
+  if (window.top === window.self || !location.hash.includes('bk-drawer')) return
+  const wantWeb = location.hash.includes('bk-drawer-web')
+  const post = (m: string): void => { try { window.parent.postMessage(m, location.origin) } catch { /* 忽略 */ } }
+  let readyDone = false
+  let webDone = !wantWeb // 普通抽屉无需铺满，直接算完成
+  let bound = false
+  let clicked = false
+  let tries = 0
+  const onReady = (): void => { if (readyDone) return; readyDone = true; post('bk-drawer-ready') }
+  const timer = setInterval(() => {
+    if (!readyDone) {
+      const v = document.querySelector('video') as HTMLVideoElement | null
+      if (v) {
+        if (v.readyState >= 2) onReady() // 首帧已就绪 → 立刻揭幕
+        else if (!bound) { bound = true; v.addEventListener('loadeddata', onReady, { once: true }); v.addEventListener('canplay', onReady, { once: true }) } // 首帧一解出即揭，比轮询更即时
+      }
+    }
+    if (!webDone) {
+      if (document.querySelector('.bpx-player-container[data-screen="web"]')) { webDone = true; post('bk-drawer-webfull') } // 已铺满
+      else if (!clicked) { const btn = document.querySelector('.bpx-player-ctrl-web') as HTMLElement | null; if (btn) { btn.click(); clicked = true } } // 只点一次
+    }
+    if ((readyDone && webDone) || ++tries > 60) clearInterval(timer) // 都完成或 ~9s 兜底（父页遮罩超时另有保底）
+  }, 150)
+}
+setupDrawerReveal()
+
 // 注册所有 Core（页面世界，@grant none）模块。
 // cdn-pick / theme-sync 先跑（runAt='start'，需在页面用 fetch / 首帧换肤前挂钩）。
 // 暂缓：float / way-back（与将来的 App 推荐 feed 有交互冲突，待 feed 定后再迁）；

@@ -9,6 +9,7 @@ import { NS } from './shared'
 const NEWTAB_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>'
 const CLOSE_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>'
 const MARK = '#bk-drawer' // iframe 标记：Core 识别后隐顶栏+去广告
+const MARK_WEB = '#bk-drawer-web' // 同上 + Core 再点一次「网页全屏」，播放器铺满抽屉（沉浸模式）
 
 let mask: HTMLElement | null = null
 let panel: HTMLElement | null = null
@@ -19,6 +20,18 @@ let dhint: HTMLElement | null = null
 let closeTimer: ReturnType<typeof setTimeout> | null = null
 let loadTimer: ReturnType<typeof setTimeout> | null = null
 let curUrl = ''
+let curWebFull = false // 本次打开是否网页全屏模式
+let curImmersive = false // 网页全屏 + 沉浸：遮罩留到「铺满 且 已开播」才撤（藏过渡）
+let gotReady = false // Core 报「视频首帧已就绪」（早于真正开播/出声）
+let gotWebfull = false // Core 报「网页全屏已铺满」
+
+// 揭幕（撤加载遮罩）时机：普通抽屉/非沉浸 → 首帧一就绪就揭（早于出声，揭幕即见首帧、声音不先出）；
+// 网页全屏 + 沉浸 → 还要等「已铺满」，避免看到「普通页→切满」过渡。信号均由 iframe 内 Core postMessage。
+function tryReveal(): void {
+  if (!gotReady) return
+  if (curWebFull && curImmersive && !gotWebfull) return
+  setLoading(false)
+}
 
 // 滚动关闭手势：仅当「本次滚动手势一开始就已在顶部」时武装——继续上滚（两指下滑/滚轮上滚）→ 抽屉下移，
 // 滚动停(松手)过阈值即关、否则回弹。关键：从评论快速滚回顶的手势起始不在顶部，其动量过冲不算数，杜绝误触。
@@ -86,9 +99,16 @@ function ensureDom(): void {
   // 其余能力齐全，播放器/登录/同源请求照常。sandbox 须在设 src 前就位。
   frame.setAttribute('sandbox', 'allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-presentation allow-modals allow-downloads')
   frame.addEventListener('load', () => {
-    setLoading(false) // 加载完（含内部跳转）撤遮罩
+    // 揭幕不再挂在 load（那时播放器往往还没开播）：改由 Core 报「已开播」(+沉浸时「已铺满」)触发，见 tryReveal。
+    // setLoading 自带超时兜底：万一信号没来（老播放器/自动播放被拦）也不会卡在 spinner。
     // 视频区上的滚动落在 iframe 上，把关闭手势的 wheel 监听挂到同源 contentWindow 才抓得到
     try { frame!.contentWindow?.addEventListener('wheel', onWheel, { passive: true }) } catch { /* 取不到子窗口就算了 */ }
+  })
+  // Core 在抽屉 iframe 内的两个揭幕信号：视频首帧就绪 / 网页全屏已铺满。集齐所需信号后 tryReveal 撤遮罩。
+  window.addEventListener('message', (e) => {
+    if (e.source !== frameWin()) return
+    if (e.data === 'bk-drawer-ready') { gotReady = true; tryReveal() }
+    else if (e.data === 'bk-drawer-webfull') { gotWebfull = true; tryReveal() }
   })
   panel.appendChild(frame)
   // 加载遮罩：封面模糊铺底 + spinner，盖住打开瞬间黑→白闪
@@ -121,13 +141,17 @@ function ensureDom(): void {
   document.body.append(mask, panel, ctrls, dhint)
 }
 
-export function openDrawer(url: string, cover = ''): void {
+export function openDrawer(url: string, cover = '', webFull = false, immersive = false): void {
   ensureDom()
   if (closeTimer) { clearTimeout(closeTimer); closeTimer = null }
   curUrl = url // 新标签按钮用干净 URL
+  curWebFull = webFull
+  curImmersive = immersive
+  gotReady = false
+  gotWebfull = false
   if (loadCover) loadCover.style.backgroundImage = cover ? `url("${cover}")` : ''
   setLoading(true) // 显示加载遮罩，iframe load 后自动撤下
-  const marked = url.includes('#') ? url : url + MARK
+  const marked = url.includes('#') ? url : url + (webFull ? MARK_WEB : MARK)
   if (frame!.src !== marked) frame!.src = marked
   document.documentElement.style.overflow = 'hidden' // 锁底层滚动
   requestAnimationFrame(() => { mask!.classList.add('on'); panel!.classList.add('on'); ctrls!.classList.add('on') })

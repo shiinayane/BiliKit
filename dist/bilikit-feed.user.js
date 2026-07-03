@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BiliKit Feed
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.3.0
+// @version      0.3.1
 // @author       shiinayane
 // @description  B 站首页换成手机 App 的个性化推荐流。零框架纯原生实现（无 React/Vue、gzip 仅 ~22KB）+ 窗口化虚拟化，DOM 数量恒定、长时间刷不涨内存。点卡片在底部抽屉内播放、封面悬停「真视频」秒开预览（MSE，接近原生 App）。需配合 BiliKit Core（登录 / 设置）。
 // @license      MIT
@@ -1197,6 +1197,7 @@
   const NEWTAB_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>';
   const CLOSE_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
   const MARK = "#bk-drawer";
+  const MARK_WEB = "#bk-drawer-web";
   let mask = null;
   let panel = null;
   let frame = null;
@@ -1206,6 +1207,15 @@
   let closeTimer = null;
   let loadTimer = null;
   let curUrl = "";
+  let curWebFull = false;
+  let curImmersive = false;
+  let gotReady = false;
+  let gotWebfull = false;
+  function tryReveal() {
+    if (!gotReady) return;
+    if (curWebFull && curImmersive && !gotWebfull) return;
+    setLoading(false);
+  }
   const GESTURE_GAP = 200;
   const DEAD = 20;
   const DAMP = 0.5;
@@ -1281,10 +1291,19 @@
     frame.setAttribute("sandbox", "allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-presentation allow-modals allow-downloads");
     frame.addEventListener("load", () => {
       var _a;
-      setLoading(false);
       try {
         (_a = frame.contentWindow) == null ? void 0 : _a.addEventListener("wheel", onWheel, { passive: true });
       } catch {
+      }
+    });
+    window.addEventListener("message", (e) => {
+      if (e.source !== frameWin()) return;
+      if (e.data === "bk-drawer-ready") {
+        gotReady = true;
+        tryReveal();
+      } else if (e.data === "bk-drawer-webfull") {
+        gotWebfull = true;
+        tryReveal();
       }
     });
     panel.appendChild(frame);
@@ -1314,16 +1333,20 @@
     });
     document.body.append(mask, panel, ctrls, dhint);
   }
-  function openDrawer(url, cover = "") {
+  function openDrawer(url, cover = "", webFull = false, immersive = false) {
     ensureDom();
     if (closeTimer) {
       clearTimeout(closeTimer);
       closeTimer = null;
     }
     curUrl = url;
+    curWebFull = webFull;
+    curImmersive = immersive;
+    gotReady = false;
+    gotWebfull = false;
     if (loadCover) loadCover.style.backgroundImage = cover ? `url("${cover}")` : "";
     setLoading(true);
-    const marked = url.includes("#") ? url : url + MARK;
+    const marked = url.includes("#") ? url : url + (webFull ? MARK_WEB : MARK);
     if (frame.src !== marked) frame.src = marked;
     document.documentElement.style.overflow = "hidden";
     requestAnimationFrame(() => {
@@ -1403,8 +1426,10 @@
       if (!url || !/^https?:\/\//i.test(url)) return;
       const mode = readSetting("feed.openMode", "drawer");
       if (mode === "current") location.href = url;
-      else if (mode === "drawer" && c.bvid) openDrawer(url, coverUrl(c.cover));
-      else window.open(url, "_blank", "noopener");
+      else if ((mode === "drawer" || mode === "drawer-web") && c.bvid) {
+        const web = mode === "drawer-web";
+        openDrawer(url, coverUrl(c.cover), web, web && readSetting("feed.drawerImmersive", true));
+      } else window.open(url, "_blank", "noopener");
     });
     return el;
   }
