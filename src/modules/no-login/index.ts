@@ -13,6 +13,19 @@ import { signQuery, warmKeys } from './wbi-core'
  * 侵入性 → 默认关，用户显式开启。仅「未登录」时生效：检测到已登录立即整体不启用，绝不干扰真登录。
  * 纯只读观看：任何要真鉴权的动作（发评论/点赞/投币/历史同步）都会失败；1080p 上限为 try_look（大会员专享清晰度拿不到）。
  */
+// 需要「真登录」的个人数据页：伪造登录会让它们拿假身份取不到数据、前后端状态打架 → 反复重刷。
+// 这些页免登录一律不碰（收藏/历史/稍后看/清单/消息/账号/会员中心等）。
+const AUTH_HOSTS = ['message.bilibili.com', 'account.bilibili.com', 'member.bilibili.com', 'pay.bilibili.com', 'big.bilibili.com']
+const AUTH_PATHS = ['/history', '/watchlater', '/favlist', '/medialist', '/account', '/pincenter']
+function needsRealLogin(): boolean {
+  if (AUTH_HOSTS.includes(location.hostname)) return true
+  return AUTH_PATHS.some((p) => location.pathname.includes(p))
+}
+// 清掉本模块之前在别处（视频/首页）种下的假 DedeUserID（此时必无真登录 ckMd5，故任何 DedeUserID 都是假的）
+function clearFakeUid(): void {
+  try { if (/DedeUserID=/.test(document.cookie)) document.cookie = 'DedeUserID=; path=/; domain=.bilibili.com; max-age=0' } catch { /* ignore */ }
+}
+
 function init(_cfg: Cfg): void {
   if ((window as any).__BILIKIT_NO_LOGIN__) return
   // 顶层窗口总是生效；iframe 仅限我们自己的抽屉（bk-drawer 标记）——好让 Feed 抽屉里看视频也享免登录 1080p/评论。
@@ -20,6 +33,8 @@ function init(_cfg: Cfg): void {
   if (window.top !== window.self && !location.hash.includes('bk-drawer')) return
   if (location.hostname === 'passport.bilibili.com') return // 登录页不碰
   if (/DedeUserID__ckMd5=/.test(document.cookie)) return // 已登录 → 整体不启用
+  // 个人数据页：不伪造，并清掉别处种下的假 cookie，让页面按未登录干净处理（跳登录/空列表），不重刷
+  if (needsRealLogin()) { clearFakeUid(); return }
   ;(window as any).__BILIKIT_NO_LOGIN__ = true
 
   // 1) 伪造 DedeUserID cookie → 页面按登录态渲染（评论区/动态/播放器）

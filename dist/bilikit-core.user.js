@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BiliKit Core
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.4.5
+// @version      0.4.6
 // @author       shiinayane
 // @description  B 站体验增强核心，一装到位：CDN 优选（救海外卡顿）· 埋点/广告拦截（省流量降开销）· 免登录看评论/动态/1080p · 主题跟随系统深浅 · 评论显 IP 属地 · 播放不息屏——统一设置面板集中开关。Safari 友好、无需扩展、零外部依赖。
 // @license      MIT
@@ -3405,11 +3405,27 @@
     const query = Object.keys(q).sort().map((k) => `${encodeURIComponent(k)}=${encodeURIComponent(String(q[k]).replace(/[!'()*]/g, ""))}`).join("&");
     return `${query}&w_rid=${md5(query + mk)}`;
   }
+  const AUTH_HOSTS = ["message.bilibili.com", "account.bilibili.com", "member.bilibili.com", "pay.bilibili.com", "big.bilibili.com"];
+  const AUTH_PATHS = ["/history", "/watchlater", "/favlist", "/medialist", "/account", "/pincenter"];
+  function needsRealLogin() {
+    if (AUTH_HOSTS.includes(location.hostname)) return true;
+    return AUTH_PATHS.some((p) => location.pathname.includes(p));
+  }
+  function clearFakeUid() {
+    try {
+      if (/DedeUserID=/.test(document.cookie)) document.cookie = "DedeUserID=; path=/; domain=.bilibili.com; max-age=0";
+    } catch {
+    }
+  }
   function init(_cfg) {
     if (window.__BILIKIT_NO_LOGIN__) return;
     if (window.top !== window.self && !location.hash.includes("bk-drawer")) return;
     if (location.hostname === "passport.bilibili.com") return;
     if (/DedeUserID__ckMd5=/.test(document.cookie)) return;
+    if (needsRealLogin()) {
+      clearFakeUid();
+      return;
+    }
     window.__BILIKIT_NO_LOGIN__ = true;
     if (!/DedeUserID=/.test(document.cookie)) {
       try {
