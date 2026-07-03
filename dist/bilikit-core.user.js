@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BiliKit Core
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.4.0
+// @version      0.4.1
 // @author       shiinayane
 // @description  B 站体验增强核心，一装到位：CDN 优选（救海外卡顿）· 埋点/广告拦截（省流量降开销）· 主题跟随系统深浅 · 评论显 IP 属地 · 播放不息屏——统一设置面板集中开关。Safari 友好、无需扩展、零外部依赖。
 // @license      MIT
@@ -2070,6 +2070,9 @@
 .field { display: flex; flex-direction: column; gap: 8px; }
 .field.row { flex-direction: row; align-items: center; justify-content: space-between; gap: 14px; }
 .field.row .flabel { flex: 1; }
+/* 开关行：标签+开关一行（space-between），hint 由 .field 的列布局落到下一行，避免三者挤成一排 */
+.field .toggle-head { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.field .toggle-head .flabel { flex: 1; }
 .field .flabel { font-size: 14px; color: rgba(255,255,255,.8); line-height: 1.4; }
 .field .hint { font-size: 13px; color: rgba(255,255,255,.4); line-height: 1.45; }
 .field input[type=text], .field textarea, .field select {
@@ -2187,13 +2190,15 @@
     const wrap = el("div");
     const cur = getField(m, f.key);
     if (f.type === "toggle") {
-      wrap.className = "field row";
+      wrap.className = "field";
+      const head = el("div", "toggle-head");
       const lab = el("span", "flabel", f.label);
       const sw = switchEl(!!cur, (on) => {
         setField(m.id, f.key, on);
         markDirty();
       });
-      wrap.append(lab, sw);
+      head.append(lab, sw);
+      wrap.append(head);
     } else if (f.type === "select") {
       wrap.className = "field";
       wrap.appendChild(el("span", "flabel", f.label));
