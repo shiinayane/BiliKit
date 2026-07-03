@@ -22,6 +22,8 @@ let loading = false
 let exhausted = false // 匿名固定池刷完（连续多页无新内容）→ 停止并提示
 let cardIo: IntersectionObserver | null = null
 let sentinelIo: IntersectionObserver | null = null
+let gridRo: ResizeObserver | null = null // 监视 grid 宽变（列数/行高随宽变），仅宽变才作废布局缓存
+let lastGridW = 0
 let feedGen = 0 // 代际令牌：每次重新接管/刷新自增；在途 loadMore 察觉代际变化即作废，避免竞态写入新 grid
 // 虚拟化地基（P1）：items 为全量数据真源，nodes 为「下标 → 已渲染卡片节点」。
 // P1 阶段 render() 仍全量渲染（等价现状）；P2 起改为只渲染可视窗口。
@@ -88,6 +90,12 @@ function invalidateLayout(): void {
   lastStart = -1; lastEnd = -1; lastTotalRows = -1
 }
 
+// 卡片被移除前：拆掉其真视频预览（停 MSE 补拉、撤源、释放 objectURL），杜绝滚走后 zombie 补拉/泄漏。
+function teardownCard(el: HTMLElement): void {
+  const cover = el.querySelector(`.${NS}-cover`) as HTMLElement | null
+  ;(cover as any)?.__bkTeardown?.()
+}
+
 // 窗口化渲染：只保留「可视 ±1.5 屏」范围内的卡片节点，范围外移除；上下占位撑起未渲染区高度。
 // 按 item 下标 key、只在窗口边缘增删（绝不中途拿一个节点换内容）→ 无封面重载/闪烁。
 function render(): void {
@@ -115,7 +123,7 @@ function render(): void {
 
   // 1) 移除窗口外节点（连同 observer/监听器/闭包一起 GC）
   for (const [i, el] of nodes) {
-    if (i < startIdx || i >= endIdx) { cardIo?.unobserve(el); el.remove(); nodes.delete(i) }
+    if (i < startIdx || i >= endIdx) { cardIo?.unobserve(el); teardownCard(el); el.remove(); nodes.delete(i) }
   }
   // 2) 占位高度 = 未渲染行数 × 行高
   topSpacer.style.height = firstRow * rowH + 'px'
@@ -148,7 +156,7 @@ function scheduleRender(): void {
 // 清空全部已渲染卡片与数据（刷新/重新接管时用）
 function clearAll(): void {
   if (cardIo) cardIo.disconnect() // 解除对旧卡的观察，避免 observer 持有已删除节点（泄漏）
-  for (const el of nodes.values()) el.remove()
+  for (const el of nodes.values()) { teardownCard(el); el.remove() }
   nodes.clear()
   items.length = 0
   if (topSpacer) topSpacer.style.height = '0px'
@@ -282,6 +290,7 @@ function takeover(): boolean {
   if (!native || !native.parentElement) return false
 
   // 重新接管前清理上一次的残留（SPA 重入首页）
+  if (gridRo) { gridRo.disconnect(); gridRo = null }
   if (cardIo) cardIo.disconnect()
   if (sentinelIo) sentinelIo.disconnect()
   document.querySelectorAll(`.${NS}`).forEach((g) => g.remove()) // 移除旧/孤儿 grid，防止重复网格
@@ -329,6 +338,17 @@ function takeover(): boolean {
 
   sentinelIo = new IntersectionObserver((es) => { if (es.some((e) => e.isIntersecting)) loadMore() }, { rootMargin: '1000px 0px' })
   sentinelIo.observe(sentinel)
+
+  // grid 宽变（窗口 resize、侧栏收放、缩放）→ 列数/行高会变 → 作废布局缓存重量。
+  // 只认「宽」变：grid 高度会随占位/卡片每帧变，若也响应会与 render 自身的高度改动形成反馈、令缓存失效。
+  lastGridW = 0
+  if ('ResizeObserver' in window) {
+    gridRo = new ResizeObserver((es) => {
+      const w = es[0].contentRect.width
+      if (w && w !== lastGridW) { lastGridW = w; invalidateLayout(); scheduleRender() }
+    })
+    gridRo.observe(grid)
+  }
 
   mountControls((btn) => refreshFeed(btn)) // 右下角：刷新内容 + 返回顶部
   renderSkeletons(12) // 数据到达前先铺骨架占位，避免空白

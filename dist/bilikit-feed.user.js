@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         BiliKit Feed
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.2.2
+// @version      0.3.0
 // @author       shiinayane
-// @description  B 站首页换成手机 App 的个性化推荐流。零框架纯原生实现（无 React/Vue、gzip 仅 ~16KB）+ 窗口化虚拟化，DOM 数量恒定、长时间刷不涨内存。点卡片在底部抽屉内播放、封面悬停秒预览。需配合 BiliKit Core（登录 / 设置）。
+// @description  B 站首页换成手机 App 的个性化推荐流。零框架纯原生实现（无 React/Vue、gzip 仅 ~22KB）+ 窗口化虚拟化，DOM 数量恒定、长时间刷不涨内存。点卡片在底部抽屉内播放、封面悬停「真视频」秒开预览（MSE，接近原生 App）。需配合 BiliKit Core（登录 / 设置）。
 // @license      MIT
 // @match        *://www.bilibili.com/
 // @match        *://www.bilibili.com/?*
@@ -141,8 +141,39 @@
     return `${sorted}&sign=${md5(sorted + APPSEC)}`;
   }
   const redactKey = (u) => (u || "").replace(/(access_key=)[^&]*/i, "$1<redacted>");
+  function gmXhr() {
+    return typeof GM !== "undefined" && GM && GM.xmlHttpRequest ? GM.xmlHttpRequest.bind(GM) : typeof GM_xmlhttpRequest !== "undefined" ? GM_xmlhttpRequest : null;
+  }
+  function gmRequestBinary(url, range) {
+    const xhr = gmXhr();
+    if (!xhr) return Promise.reject(new Error("GM.xmlHttpRequest 不可用"));
+    const headers = { Referer: "https://www.bilibili.com/" };
+    if (range) headers.Range = `bytes=${range.start}-${range.end}`;
+    return new Promise((resolve, reject) => {
+      xhr({
+        method: "GET",
+        url,
+        headers,
+        responseType: "arraybuffer",
+        timeout: 15e3,
+        onload: (r) => {
+          const okStatus = range ? r.status === 206 : r.status >= 200 && r.status < 300;
+          if (!okStatus) {
+            reject(new Error("HTTP " + r.status));
+            return;
+          }
+          const buf = r.response;
+          if (buf instanceof ArrayBuffer && buf.byteLength) resolve(buf);
+          else reject(new Error("空/非二进制响应 status=" + r.status));
+        },
+        onerror: (r) => reject(new Error("网络错误 " + (r && r.status))),
+        ontimeout: () => reject(new Error("超时")),
+        onabort: () => reject(new Error("中止"))
+      });
+    });
+  }
   function gmRequest(opts) {
-    const xhr = typeof GM !== "undefined" && GM && GM.xmlHttpRequest ? GM.xmlHttpRequest.bind(GM) : typeof GM_xmlhttpRequest !== "undefined" ? GM_xmlhttpRequest : null;
+    const xhr = gmXhr();
     if (!xhr) return Promise.reject(new Error("GM.xmlHttpRequest 不可用（Feed 需 @grant GM.xmlHttpRequest）"));
     return new Promise((resolve, reject) => {
       xhr({
@@ -198,6 +229,8 @@
       uri: item.uri || "",
       bvid: item.bvid || pa.bvid || "",
       aid: String(args.aid || pa.aid || item.param || ""),
+      cid: String(pa.cid || args.cid || item.cid || ""),
+      // player_args.cid 常有；无则预览时 pagelist 兜底
       duration: item.cover_left_text_1 || "",
       // 时长（实测在 text_1，如 13:02）
       play: item.cover_left_text_2 || "",
@@ -260,6 +293,13 @@
     /* hover 雪碧图预览：盖在封面上，鼠标横向刮帧；在遮罩(z-index:2)之下、图片之上 */
     .${NS}-preview{ position:absolute; inset:0; z-index:1; background-repeat:no-repeat; opacity:0; transition:opacity .15s ease; pointer-events:none; }
     .${NS}-preview.on{ opacity:1; }
+    /* hover 真视频预览：低清 dash 静音自动播，盖在封面上（同雪碧图层级 z-index:1，遮罩之下、图片之上） */
+    .${NS}-vpreview{ position:absolute; inset:0; z-index:1; width:100%; height:100%; object-fit:cover; display:block; opacity:0; transition:opacity .2s ease; pointer-events:none; background:#000; }
+    .${NS}-vpreview.on{ opacity:1; }
+    /* 预览播放时：隐藏播放/弹幕数遮罩；右下角时长转「当前 / 总时长」，去渐变、加阴影保可读 */
+    .${NS}-cover.previewing .${NS}-mstat{ display:none; }
+    .${NS}-cover.previewing .${NS}-mask{ background:none; justify-content:flex-end; }
+    .${NS}-cover.previewing .${NS}-mask span{ text-shadow:0 1px 4px rgba(0,0,0,.95); font-variant-numeric:tabular-nums; }
     /* 预览进度条：底部细条，随播放推进（scaleX → 合成层）。z-index:3 压在遮罩之上，短视频也看得清进度 */
     .${NS}-pbar{ position:absolute; left:0; right:0; bottom:0; z-index:3; height:3px; background:rgba(0,0,0,.28); opacity:0; transition:opacity .15s ease; pointer-events:none; }
     .${NS}-pbar.on{ opacity:1; }
@@ -483,6 +523,677 @@
     });
     cover.addEventListener("mouseleave", stop);
   }
+  const MIXIN_TAB = [
+    46,
+    47,
+    18,
+    2,
+    53,
+    8,
+    23,
+    32,
+    15,
+    50,
+    10,
+    31,
+    58,
+    3,
+    45,
+    35,
+    27,
+    43,
+    5,
+    49,
+    33,
+    9,
+    42,
+    19,
+    29,
+    28,
+    14,
+    39,
+    12,
+    38,
+    41,
+    13,
+    37,
+    48,
+    7,
+    16,
+    24,
+    55,
+    40,
+    61,
+    26,
+    17,
+    0,
+    1,
+    60,
+    51,
+    30,
+    4,
+    22,
+    25,
+    54,
+    21,
+    56,
+    59,
+    6,
+    63,
+    57,
+    62,
+    11,
+    36,
+    20,
+    34,
+    44,
+    52
+  ];
+  const mixinKey = (orig) => MIXIN_TAB.map((n) => orig[n]).join("").slice(0, 32);
+  const REF = { Referer: "https://www.bilibili.com/" };
+  const LS_KEY = "bilikit:wbi";
+  let keysPromise = null;
+  function todayStamp() {
+    return Math.floor(Date.now() / 864e5);
+  }
+  async function fetchKeys() {
+    var _a, _b;
+    try {
+      const c = JSON.parse(localStorage.getItem(LS_KEY) || "null");
+      if (c && c.day === todayStamp() && c.img && c.sub) return { img: c.img, sub: c.sub };
+    } catch {
+    }
+    try {
+      const t = await gmRequest({ method: "GET", url: "https://api.bilibili.com/x/web-interface/nav", headers: REF });
+      const w = (_b = (_a = JSON.parse(t)) == null ? void 0 : _a.data) == null ? void 0 : _b.wbi_img;
+      const base = (u) => (u || "").split("/").pop().split(".")[0];
+      const img = base(w == null ? void 0 : w.img_url), sub = base(w == null ? void 0 : w.sub_url);
+      if (!img || !sub) return null;
+      try {
+        localStorage.setItem(LS_KEY, JSON.stringify({ img, sub, day: todayStamp() }));
+      } catch {
+      }
+      return { img, sub };
+    } catch {
+      return null;
+    }
+  }
+  function getKeys() {
+    if (!keysPromise) {
+      keysPromise = fetchKeys().catch(() => null).then((k) => {
+        if (!k) keysPromise = null;
+        return k;
+      });
+    }
+    return keysPromise;
+  }
+  async function signWbi(params) {
+    const keys = await getKeys();
+    if (!keys) return null;
+    const mk = mixinKey(keys.img + keys.sub);
+    const wts = Math.floor(Date.now() / 1e3);
+    const q = { ...params, wts };
+    const query = Object.keys(q).sort().map((k) => {
+      const v = String(q[k]).replace(/[!'()*]/g, "");
+      return `${encodeURIComponent(k)}=${encodeURIComponent(v)}`;
+    }).join("&");
+    return `${query}&w_rid=${md5(query + mk)}`;
+  }
+  const WBI_REF = REF;
+  function targetMirror() {
+    return readSetting("module.cdn-pick.cfg.targetHost", "upos-sz-mirrorhwb.bilivideo.com");
+  }
+  const EXTRA_MIRROR = "upos-sz-mirrorcoso1.bilivideo.com";
+  const hostOf = (u) => {
+    try {
+      return new URL(u).hostname;
+    } catch {
+      return "";
+    }
+  };
+  const pathOf = (u) => {
+    try {
+      return new URL(u).pathname;
+    } catch {
+      return "";
+    }
+  };
+  function isPcdn(u) {
+    const h = hostOf(u);
+    return /\.mcdn\.bilivideo\.(cn|com)$/i.test(h) || h.includes("mcdn") || /(^|\.)szbdyd\.com$/i.test(h) || /\.biliapi\.net$/i.test(h) || pathOf(u).startsWith("/v1/resource/");
+  }
+  const isUpos = (u) => /^upos-[^.]*\.bilivideo\.com$/i.test(hostOf(u));
+  function swapTo(u, host) {
+    try {
+      const x = new URL(u);
+      x.protocol = "https:";
+      x.host = host;
+      return x.href;
+    } catch {
+      return u;
+    }
+  }
+  const xyUsource = (u) => {
+    try {
+      return new URL(u).searchParams.get("xy_usource") || "";
+    } catch {
+      return "";
+    }
+  };
+  function prefer(urls) {
+    const mirror = targetMirror();
+    const uniq = [...new Set(urls.filter(Boolean))];
+    const out = [];
+    const push = (v) => {
+      if (v && !out.includes(v)) out.push(v);
+    };
+    for (const u of uniq) if (!isPcdn(u) && isUpos(u)) push(swapTo(u, mirror));
+    for (const u of uniq) if (isPcdn(u)) {
+      const xy = xyUsource(u);
+      if (xy) push(swapTo(u, xy));
+      push(swapTo(u, mirror));
+      push(swapTo(u, EXTRA_MIRROR));
+    }
+    for (const u of uniq) push(u);
+    return out;
+  }
+  async function getCid(bvid, known) {
+    var _a, _b, _c;
+    if (known) return known;
+    const t = await gmRequest({ method: "GET", url: `https://api.bilibili.com/x/player/pagelist?bvid=${bvid}`, headers: WBI_REF });
+    return String(((_c = (_b = (_a = JSON.parse(t)) == null ? void 0 : _a.data) == null ? void 0 : _b[0]) == null ? void 0 : _c.cid) || "");
+  }
+  async function requestPlayurl(bvid, cid, fnval, qn) {
+    const query = await signWbi({ bvid, cid, qn, fnval, fnver: 0, fourk: 0 });
+    if (!query) throw new Error("no wbi keys");
+    const t = await gmRequest({ method: "GET", url: `https://api.bilibili.com/x/player/wbi/playurl?${query}`, headers: WBI_REF });
+    return JSON.parse(t);
+  }
+  function parseSeg(v) {
+    const sb = v.segment_base || v.SegmentBase || {};
+    const init = sb.initialization || sb.Initialization || sb.range || "";
+    const idx = sb.index_range || sb.indexRange || "";
+    const [, initEndS] = init.split("-");
+    const [idxStartS, idxEndS] = idx.split("-");
+    const initEnd = Number(initEndS), indexStart = Number(idxStartS), indexEnd = Number(idxEndS);
+    if (!Number.isFinite(initEnd) || !Number.isFinite(indexStart) || !Number.isFinite(indexEnd)) return null;
+    return { initEnd, indexStart, indexEnd };
+  }
+  const dashCache = /* @__PURE__ */ new Map();
+  const durlCache = /* @__PURE__ */ new Map();
+  const lru = (m) => {
+    if (m.size > 150) m.delete(m.keys().next().value);
+  };
+  async function getDashPreview(bvid, cid0) {
+    var _a, _b;
+    if (dashCache.has(bvid)) return dashCache.get(bvid);
+    let out = null;
+    let errored = false;
+    try {
+      const cid = await getCid(bvid, cid0);
+      if (!cid) throw new Error("no cid");
+      const j = await requestPlayurl(bvid, cid, 16, 32);
+      const avc = (((_b = (_a = j == null ? void 0 : j.data) == null ? void 0 : _a.dash) == null ? void 0 : _b.video) || []).filter((v) => v.codecid === 7);
+      if (avc.length) {
+        const low = avc.sort((a, b) => (a.id || 0) - (b.id || 0))[0];
+        const seg = parseSeg(low);
+        if (seg && low.codecs) {
+          out = { codecs: low.codecs, urls: prefer([low.baseUrl || low.base_url, ...low.backupUrl || low.backup_url || []]), ...seg };
+        }
+      }
+    } catch (e) {
+      errored = true;
+      console.warn("[BiliKit Feed] dash 取流失败：", (e == null ? void 0 : e.message) || e);
+    }
+    if (!errored) {
+      dashCache.set(bvid, out);
+      lru(dashCache);
+    }
+    return out;
+  }
+  async function getDurlSources(bvid, cid0) {
+    var _a;
+    if (durlCache.has(bvid)) return durlCache.get(bvid);
+    let sources = null;
+    let errored = false;
+    try {
+      const cid = await getCid(bvid, cid0);
+      if (!cid) throw new Error("no cid");
+      const j = await requestPlayurl(bvid, cid, 1, 16);
+      const durl = (_a = j == null ? void 0 : j.data) == null ? void 0 : _a.durl;
+      if (Array.isArray(durl) && durl.length) sources = prefer(durl.flatMap((x) => [x.url, ...x.backup_url || []]));
+      else console.warn("[BiliKit Feed] durl 为空 code=", j == null ? void 0 : j.code, j == null ? void 0 : j.message);
+    } catch (e) {
+      errored = true;
+      console.warn("[BiliKit Feed] durl 取流失败：", (e == null ? void 0 : e.message) || e);
+    }
+    if (!errored) {
+      durlCache.set(bvid, sources);
+      lru(durlCache);
+    }
+    return sources;
+  }
+  const PLAY_WATCH = 1600;
+  const OPEN_GUARD = 3e3;
+  const HIGH_WATER = 15;
+  const LOW_WATER = 8;
+  const BATCH_BYTES = 5e5;
+  const MAX_MEDIA_BYTES = 8e6;
+  const MS_CTOR = () => window.ManagedMediaSource || window.MediaSource || null;
+  const isMMS = () => !!window.ManagedMediaSource;
+  async function fetchRange(urls, start, end) {
+    const range = `bytes=${start}-${end}`;
+    let last;
+    for (const u of urls) {
+      try {
+        const r = await fetch(u, { headers: { Range: range }, credentials: "omit", cache: "no-store" });
+        if (r.status === 206) return await r.arrayBuffer();
+        last = new Error("fetch HTTP " + r.status);
+      } catch (e) {
+        last = e;
+      }
+    }
+    for (const u of urls) {
+      try {
+        return await gmRequestBinary(u, { start, end });
+      } catch (e) {
+        last = e;
+      }
+    }
+    throw last || new Error("all urls failed");
+  }
+  function parseSidx(sidxBuf) {
+    try {
+      const dv = new DataView(sidxBuf);
+      const N = dv.byteLength;
+      const u8 = (p2) => p2 + 1 <= N ? dv.getUint8(p2) : 0;
+      const u16 = (p2) => p2 + 2 <= N ? dv.getUint16(p2) : 0;
+      const u32 = (p2) => p2 + 4 <= N ? dv.getUint32(p2) : 0;
+      const typeAt = (p2) => String.fromCharCode(u8(p2 + 4), u8(p2 + 5), u8(p2 + 6), u8(p2 + 7));
+      let pos = 0;
+      if (typeAt(0) !== "sidx") {
+        let p2 = 0, g = 0;
+        while (p2 + 8 <= N && g++ < 32) {
+          if (typeAt(p2) === "sidx") break;
+          const s = u32(p2);
+          if (s <= 0) return null;
+          p2 += s;
+        }
+        if (p2 + 8 > N || typeAt(p2) !== "sidx") return null;
+        pos = p2;
+      }
+      const version = u8(pos + 8);
+      let p = pos + 12 + 4;
+      p += 4;
+      p += version === 0 ? 8 : 16;
+      p += 2;
+      const refCount = u16(p);
+      p += 2;
+      const sizes = [];
+      for (let i = 0; i < refCount && p + 12 <= N; i++) {
+        sizes.push(u32(p) & 2147483647);
+        p += 12;
+      }
+      return sizes.length ? sizes : null;
+    } catch {
+      return null;
+    }
+  }
+  function appendWait(sb, buf) {
+    return new Promise((res, rej) => {
+      const ok = () => {
+        sb.removeEventListener("updateend", ok);
+        sb.removeEventListener("error", er);
+        res();
+      };
+      const er = () => {
+        sb.removeEventListener("updateend", ok);
+        sb.removeEventListener("error", er);
+        rej(new Error("append error"));
+      };
+      sb.addEventListener("updateend", ok);
+      sb.addEventListener("error", er);
+      try {
+        sb.appendBuffer(buf);
+      } catch (e) {
+        sb.removeEventListener("updateend", ok);
+        sb.removeEventListener("error", er);
+        rej(e);
+      }
+    });
+  }
+  function attachMse(video, dash) {
+    const MS = MS_CTOR();
+    if (!MS) {
+      console.debug("[BiliKit Feed] MSE 不可用：无 MediaSource");
+      return Promise.resolve(false);
+    }
+    return new Promise((resolve) => {
+      let settled = false, dead = false, objUrl = "";
+      let ms = null, sb = null;
+      let openGuard = setTimeout(() => finish(false), OPEN_GUARD);
+      let playWatch = null;
+      const pumpListeners = [];
+      const onPlaying = () => finish(true);
+      const onVidErr = () => console.debug("[BiliKit Feed] MSE video error code=", video.error && video.error.code);
+      video.addEventListener("playing", onPlaying);
+      video.addEventListener("error", onVidErr, { once: true });
+      const safeEnd = () => {
+        try {
+          if (ms && ms.readyState === "open" && sb && !sb.updating) ms.endOfStream();
+        } catch {
+        }
+      };
+      function dispose() {
+        dead = true;
+        if (openGuard) {
+          clearTimeout(openGuard);
+          openGuard = null;
+        }
+        if (playWatch) {
+          clearTimeout(playWatch);
+          playWatch = null;
+        }
+        for (const [ev, h] of pumpListeners) video.removeEventListener(ev, h);
+        pumpListeners.length = 0;
+        video.removeEventListener("playing", onPlaying);
+        video.removeEventListener("error", onVidErr);
+        try {
+          video.pause();
+        } catch {
+        }
+        try {
+          video.removeAttribute("src");
+          video.load();
+        } catch {
+        }
+        try {
+          if (objUrl) URL.revokeObjectURL(objUrl);
+        } catch {
+        }
+        objUrl = "";
+      }
+      video.__mseCleanup = dispose;
+      function finish(ok) {
+        if (settled) return;
+        settled = true;
+        if (openGuard) {
+          clearTimeout(openGuard);
+          openGuard = null;
+        }
+        if (playWatch) {
+          clearTimeout(playWatch);
+          playWatch = null;
+        }
+        video.removeEventListener("playing", onPlaying);
+        video.removeEventListener("error", onVidErr);
+        if (!ok) dispose();
+        resolve(ok);
+      }
+      try {
+        if (isMMS()) video.disableRemotePlayback = true;
+        ms = new MS();
+        objUrl = URL.createObjectURL(ms);
+        video.src = objUrl;
+        ms.addEventListener("error", () => finish(false));
+        ms.addEventListener("sourceopen", async () => {
+          if (openGuard) {
+            clearTimeout(openGuard);
+            openGuard = null;
+          }
+          try {
+            const header = await fetchRange(dash.urls, 0, dash.indexEnd);
+            if (dead) return;
+            const sizes = parseSidx(header.slice(dash.indexStart, dash.indexEnd + 1));
+            sb = ms.addSourceBuffer(`video/mp4; codecs="${dash.codecs}"`);
+            await appendWait(sb, header.slice(0, dash.initEnd + 1));
+            if (dead) return;
+            const mediaBase = dash.indexEnd + 1;
+            if (!sizes) {
+              const media = await fetchRange(dash.urls, mediaBase, mediaBase + 6e5);
+              if (dead) return;
+              await appendWait(sb, media);
+              safeEnd();
+            } else {
+              const offsets = [0];
+              for (let i = 0; i < sizes.length; i++) offsets.push(offsets[i] + sizes[i]);
+              let fi = 0, ended = false, pumping = false, fetched = 0;
+              const ahead = () => {
+                try {
+                  const b = video.buffered;
+                  return b.length ? b.end(b.length - 1) - video.currentTime : 0;
+                } catch {
+                  return 0;
+                }
+              };
+              const doneAll = () => fi >= sizes.length || fetched >= MAX_MEDIA_BYTES;
+              const pump = async () => {
+                if (dead || pumping || !sb || sb.updating) return;
+                if (doneAll()) {
+                  if (!ended) {
+                    ended = true;
+                    safeEnd();
+                  }
+                  return;
+                }
+                if (ahead() > HIGH_WATER) return;
+                pumping = true;
+                try {
+                  let n = 0, bytes = 0;
+                  while (fi + n < sizes.length && bytes < BATCH_BYTES) {
+                    bytes += sizes[fi + n];
+                    n++;
+                  }
+                  const data = await fetchRange(dash.urls, mediaBase + offsets[fi], mediaBase + offsets[fi] + bytes - 1);
+                  if (dead) return;
+                  await appendWait(sb, data);
+                  fi += n;
+                  fetched += data.byteLength;
+                } catch (e) {
+                  console.debug("[BiliKit Feed] MSE 补拉失败：", e == null ? void 0 : e.message);
+                  ended = true;
+                  safeEnd();
+                } finally {
+                  pumping = false;
+                }
+                if (!dead && !doneAll() && ahead() < LOW_WATER) void pump();
+              };
+              const onTU = () => void pump();
+              const onWait = () => {
+                try {
+                  const b = video.buffered;
+                  if (b.length && video.currentTime < b.start(0)) video.currentTime = b.start(0);
+                } catch {
+                }
+                void pump();
+              };
+              video.addEventListener("timeupdate", onTU);
+              pumpListeners.push(["timeupdate", onTU]);
+              video.addEventListener("waiting", onWait);
+              pumpListeners.push(["waiting", onWait]);
+              await pump();
+            }
+            if (dead) return;
+            video.play().catch((e) => console.debug("[BiliKit Feed] MSE play() rej", e == null ? void 0 : e.name));
+            playWatch = setTimeout(() => {
+              console.debug("[BiliKit Feed] MSE 起播看门狗超时 rs=", video.readyState);
+              finish(false);
+            }, PLAY_WATCH);
+          } catch (e) {
+            console.debug("[BiliKit Feed] MSE 装载失败：", (e == null ? void 0 : e.message) || e);
+            finish(false);
+          }
+        }, { once: true });
+      } catch (e) {
+        console.debug("[BiliKit Feed] MSE 初始化失败：", (e == null ? void 0 : e.message) || e);
+        finish(false);
+      }
+    });
+  }
+  const DELAY = 500;
+  const FADE = 220;
+  const fmt = (s) => {
+    if (!isFinite(s) || s < 0) s = 0;
+    const m = Math.floor(s / 60), ss = Math.floor(s % 60);
+    return `${m}:${ss < 10 ? "0" : ""}${ss}`;
+  };
+  function setupVideoPreview(cover, bvid, cid) {
+    let hovering = false;
+    let enterTimer = null;
+    let hideTimer = null;
+    let video = null;
+    let cands = [];
+    let ci = 0;
+    let t0 = 0;
+    let mode = "";
+    let attemptOk = false;
+    const durEl = cover.querySelector(`.${NS}-mask > span`);
+    const origDur = durEl ? durEl.textContent || "" : "";
+    const ensureEls = () => {
+      if (video) return;
+      video = document.createElement("video");
+      video.className = `${NS}-vpreview`;
+      video.muted = true;
+      video.loop = true;
+      video.preload = "auto";
+      video.setAttribute("playsinline", "");
+      video.addEventListener("timeupdate", () => {
+        if (video && video.duration && isFinite(video.duration) && cover.classList.contains("previewing")) {
+          if (durEl) durEl.textContent = `${fmt(video.currentTime)} / ${fmt(video.duration)}`;
+        }
+      });
+      video.addEventListener("error", () => {
+        if (mode === "durl" && ci + 1 < cands.length) {
+          console.warn(`[BiliKit Feed] durl 源#${ci} 失败，换下一个`);
+          playDurl(ci + 1);
+        } else if (mode === "durl") attemptOk = false;
+      });
+      cover.appendChild(video);
+    };
+    const playDurl = (i) => {
+      if (!video || i >= cands.length) return;
+      ci = i;
+      mode = "durl";
+      video.src = cands[i];
+      video.load();
+      video.play().catch(() => {
+      });
+    };
+    const restoreCover = () => {
+      cover.classList.remove("previewing");
+      if (durEl) durEl.textContent = origDur;
+    };
+    const show = () => {
+      if (!video) return;
+      if (hideTimer) {
+        clearTimeout(hideTimer);
+        hideTimer = null;
+      }
+      attemptOk = true;
+      cover.classList.add("previewing");
+      video.classList.add("on");
+    };
+    const stop = () => {
+      hovering = false;
+      if (enterTimer) {
+        clearTimeout(enterTimer);
+        enterTimer = null;
+      }
+      if (!video || !video.classList.contains("on")) {
+        restoreCover();
+        return;
+      }
+      video.classList.remove("on");
+      if (hideTimer) clearTimeout(hideTimer);
+      hideTimer = setTimeout(() => {
+        hideTimer = null;
+        if (hovering) return;
+        restoreCover();
+        try {
+          video == null ? void 0 : video.pause();
+        } catch {
+        }
+      }, FADE);
+    };
+    const teardown = () => {
+      var _a;
+      hovering = false;
+      if (enterTimer) {
+        clearTimeout(enterTimer);
+        enterTimer = null;
+      }
+      if (hideTimer) {
+        clearTimeout(hideTimer);
+        hideTimer = null;
+      }
+      restoreCover();
+      attemptOk = false;
+      if (video) {
+        try {
+          (_a = video.__mseCleanup) == null ? void 0 : _a.call(video);
+        } catch {
+        }
+        try {
+          video.removeAttribute("src");
+          video.load();
+        } catch {
+        }
+        try {
+          video.remove();
+        } catch {
+        }
+        video = null;
+      }
+    };
+    cover.__bkTeardown = teardown;
+    cover.addEventListener("mouseenter", () => {
+      if (hovering) return;
+      hovering = true;
+      if (attemptOk && video && video.readyState >= 2 && !video.error) {
+        video.play().catch(() => {
+        });
+        show();
+        return;
+      }
+      t0 = performance.now();
+      const dashP = getDashPreview(bvid, cid);
+      enterTimer = setTimeout(async () => {
+        enterTimer = null;
+        if (!hovering || !cover.isConnected) return;
+        ensureEls();
+        const dash = await dashP;
+        if (!hovering || !cover.isConnected) {
+          stop();
+          return;
+        }
+        let ok = false;
+        if (dash && video) {
+          mode = "mse";
+          ok = await attachMse(video, dash);
+          if (!hovering || !cover.isConnected) {
+            stop();
+            return;
+          }
+          if (ok) console.debug(`[BiliKit Feed] MSE 起播 ${performance.now() - t0 | 0}ms ${bvid}`);
+        }
+        if (!ok) {
+          const srcs = await getDurlSources(bvid, cid);
+          if (!srcs || !srcs.length || !hovering || !cover.isConnected) {
+            stop();
+            return;
+          }
+          cands = srcs;
+          playDurl(0);
+        }
+        if (!hovering || !cover.isConnected) {
+          stop();
+          return;
+        }
+        show();
+      }, DELAY);
+    });
+    cover.addEventListener("mouseleave", stop);
+  }
   const NEWTAB_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>';
   const CLOSE_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
   const MARK = "#bk-drawer";
@@ -677,7 +1388,11 @@
     imgEl.addEventListener("error", () => {
       if (!imgEl.src.startsWith("data:")) coverEl.classList.add("failed");
     });
-    if (c.bvid) setupHoverPreview(coverEl, c.bvid);
+    if (c.bvid) {
+      const pm = readSetting("feed.previewMode", "video");
+      if (pm === "sprite") setupHoverPreview(coverEl, c.bvid);
+      else if (pm !== "off") setupVideoPreview(coverEl, c.bvid, c.cid);
+    }
     el.addEventListener("mouseenter", preconnect);
     el.addEventListener("click", (e) => {
       if (c.mid && e.target.closest(`.${NS}-face, .${NS}-up`)) {
@@ -736,6 +1451,8 @@
   let exhausted = false;
   let cardIo = null;
   let sentinelIo = null;
+  let gridRo = null;
+  let lastGridW = 0;
   let feedGen = 0;
   const items = [];
   const nodes = /* @__PURE__ */ new Map();
@@ -794,6 +1511,11 @@
     lastEnd = -1;
     lastTotalRows = -1;
   }
+  function teardownCard(el) {
+    var _a;
+    const cover = el.querySelector(`.${NS}-cover`);
+    (_a = cover == null ? void 0 : cover.__bkTeardown) == null ? void 0 : _a.call(cover);
+  }
   function render() {
     if (!grid || !sentinel || !topSpacer || !bottomSpacer) return;
     if (!items.length) {
@@ -820,6 +1542,7 @@
     for (const [i, el] of nodes) {
       if (i < startIdx || i >= endIdx) {
         cardIo == null ? void 0 : cardIo.unobserve(el);
+        teardownCard(el);
         el.remove();
         nodes.delete(i);
       }
@@ -862,7 +1585,10 @@
   }
   function clearAll() {
     if (cardIo) cardIo.disconnect();
-    for (const el of nodes.values()) el.remove();
+    for (const el of nodes.values()) {
+      teardownCard(el);
+      el.remove();
+    }
     nodes.clear();
     items.length = 0;
     if (topSpacer) topSpacer.style.height = "0px";
@@ -978,6 +1704,10 @@
     if (grid && grid.isConnected) return true;
     const native = findNativeFeed();
     if (!native || !native.parentElement) return false;
+    if (gridRo) {
+      gridRo.disconnect();
+      gridRo = null;
+    }
     if (cardIo) cardIo.disconnect();
     if (sentinelIo) sentinelIo.disconnect();
     document.querySelectorAll(`.${NS}`).forEach((g) => g.remove());
@@ -1024,6 +1754,18 @@
       if (es.some((e) => e.isIntersecting)) loadMore();
     }, { rootMargin: "1000px 0px" });
     sentinelIo.observe(sentinel);
+    lastGridW = 0;
+    if ("ResizeObserver" in window) {
+      gridRo = new ResizeObserver((es) => {
+        const w = es[0].contentRect.width;
+        if (w && w !== lastGridW) {
+          lastGridW = w;
+          invalidateLayout();
+          scheduleRender();
+        }
+      });
+      gridRo.observe(grid);
+    }
     mountControls((btn) => refreshFeed(btn));
     renderSkeletons(12);
     loadMore();

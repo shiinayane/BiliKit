@@ -11,6 +11,7 @@ import { startTvLogin } from './tv-login'
 const PANEL_ID = 'bilikit-panel-root'
 const FEED_ID = '__feed__'
 const OPEN_ID = '__open__' // 「打开方式」独立成项，与 Feed 登录分开
+const PREVIEW_ID = '__preview__' // 「封面预览」方式（真视频 / 雪碧图 / 关闭）
 const FEED_CAT = '推荐'
 let dirty = false
 let selected = ''
@@ -341,6 +342,7 @@ function renderNav(): void {
     if (c === FEED_CAT) {
       navEl.appendChild(navItemSpecial(FEED_ID, 'App 推荐 Feed'))
       navEl.appendChild(navItemSpecial(OPEN_ID, '打开方式')) // 独立于 Feed 登录
+      navEl.appendChild(navItemSpecial(PREVIEW_ID, '封面预览'))
     }
   }
 }
@@ -407,11 +409,34 @@ function renderOpenDetail(d: HTMLElement): void {
   d.appendChild(fields)
 }
 
+// 封面预览方式：真视频（低清 dash 静音自动播）/ 雪碧图 / 关闭。Feed 建卡时读取，改后刷新页面生效。
+function renderPreviewDetail(d: HTMLElement): void {
+  d.appendChild(el('div', 'detail-title', '封面预览'))
+  d.appendChild(el('div', 'detail-desc', '鼠标悬停封面时的预览方式'))
+  const fields = el('div', 'fields')
+  const row = el('div', 'field')
+  row.appendChild(el('span', 'flabel', '预览方式'))
+  const sel = document.createElement('select')
+  for (const [val, label] of [['video', '真视频（低清静音自动播）'], ['sprite', '雪碧图（缩略帧轮播）'], ['off', '关闭']]) {
+    const o = document.createElement('option')
+    o.value = val
+    o.textContent = label
+    sel.appendChild(o)
+  }
+  sel.value = get<string>('feed.previewMode', 'video')
+  sel.addEventListener('change', () => { set('feed.previewMode', sel.value); markDirty() })
+  row.appendChild(sel)
+  fields.appendChild(row)
+  fields.appendChild(callout('真视频拉低清 dash 纯视频轨、静音自动播，最接近手机 App 的秒开体验（比雪碧图更吃带宽）。雪碧图只拉缩略帧、更省流量。'))
+  d.appendChild(fields)
+}
+
 function renderDetail(): void {
   if (!detailEl) return
   detailEl.textContent = ''
   if (selected === FEED_ID) { renderFeedDetail(detailEl); return }
   if (selected === OPEN_ID) { renderOpenDetail(detailEl); return }
+  if (selected === PREVIEW_ID) { renderPreviewDetail(detailEl); return }
   const m = getModules().find((x) => x.id === selected)
   if (!m) { detailEl.appendChild(emptyState('选择左侧一项')); return }
   detailEl.appendChild(el('div', 'detail-title', m.name))
@@ -480,7 +505,7 @@ export function mountPanel(): void {
   overlay.appendChild(card)
 
   const open = () => {
-    if (!selected || (selected !== FEED_ID && selected !== OPEN_ID && !getModules().some((m) => m.id === selected))) selected = firstNavId()
+    if (!selected || (selected !== FEED_ID && selected !== OPEN_ID && selected !== PREVIEW_ID && !getModules().some((m) => m.id === selected))) selected = firstNavId()
     renderNav()
     renderDetail()
     overlay.classList.add('open')

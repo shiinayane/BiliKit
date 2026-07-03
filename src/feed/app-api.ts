@@ -10,13 +10,45 @@ declare const GM_xmlhttpRequest: any
 // 日志脱敏：抹掉 URL 里的 access_key，避免账号 token 进 console
 const redactKey = (u: string) => (u || '').replace(/(access_key=)[^&]*/i, '$1<redacted>')
 
-/** GM 跨域请求（GET/POST）。GM.xmlHttpRequest / GM_xmlhttpRequest 都是 onload 回调式，统一包成 Promise。 */
-export function gmRequest(opts: { method: string; url: string; data?: string; headers?: Record<string, string>; anonymous?: boolean }): Promise<string> {
-  const xhr = typeof GM !== 'undefined' && GM && GM.xmlHttpRequest
+function gmXhr(): any {
+  return typeof GM !== 'undefined' && GM && GM.xmlHttpRequest
     ? GM.xmlHttpRequest.bind(GM)
     : typeof GM_xmlhttpRequest !== 'undefined'
       ? GM_xmlhttpRequest
       : null
+}
+
+/**
+ * GM 抓二进制字节（带 Range）。MSE 预览用：upos 流无 CORS，fetch() 会被拦，只能走 GM 特权跨域拿 arraybuffer。
+ * range 传 [start,end]（含端点，对应 HTTP `bytes=start-end`）。
+ */
+export function gmRequestBinary(url: string, range?: { start: number; end: number }): Promise<ArrayBuffer> {
+  const xhr = gmXhr()
+  if (!xhr) return Promise.reject(new Error('GM.xmlHttpRequest 不可用'))
+  const headers: Record<string, string> = { Referer: 'https://www.bilibili.com/' }
+  if (range) headers.Range = `bytes=${range.start}-${range.end}`
+  return new Promise((resolve, reject) => {
+    xhr({
+      method: 'GET', url, headers, responseType: 'arraybuffer', timeout: 15000,
+      onload: (r: any) => {
+        // Range 请求成功必须是 206 Partial Content；镜像 403/错误页会是 200/403 + 小 body，
+        // 若不判 status 就会把 282 字节的错误页当有效数据 append 进去 → 花屏/不播。判 206 → 逐个换候选主机。
+        const okStatus = range ? r.status === 206 : (r.status >= 200 && r.status < 300)
+        if (!okStatus) { reject(new Error('HTTP ' + r.status)); return }
+        const buf = r.response
+        if (buf instanceof ArrayBuffer && buf.byteLength) resolve(buf)
+        else reject(new Error('空/非二进制响应 status=' + r.status))
+      },
+      onerror: (r: any) => reject(new Error('网络错误 ' + (r && r.status))),
+      ontimeout: () => reject(new Error('超时')),
+      onabort: () => reject(new Error('中止')),
+    })
+  })
+}
+
+/** GM 跨域请求（GET/POST）。GM.xmlHttpRequest / GM_xmlhttpRequest 都是 onload 回调式，统一包成 Promise。 */
+export function gmRequest(opts: { method: string; url: string; data?: string; headers?: Record<string, string>; anonymous?: boolean }): Promise<string> {
+  const xhr = gmXhr()
   if (!xhr) return Promise.reject(new Error('GM.xmlHttpRequest 不可用（Feed 需 @grant GM.xmlHttpRequest）'))
   return new Promise((resolve, reject) => {
     xhr({
@@ -54,6 +86,7 @@ export interface FeedCard {
   uri: string
   bvid: string
   aid: string
+  cid: string // 分 P cid，playurl 必需；App feed 的 player_args 常带，缺则预览时用 pagelist 兜底
   duration: string
   play: string
   danmaku: string // 弹幕数（cover_left_text_3）
@@ -82,6 +115,7 @@ function normalize(item: any): FeedCard | null {
     uri: item.uri || '',
     bvid: item.bvid || pa.bvid || '',
     aid: String(args.aid || pa.aid || item.param || ''),
+    cid: String(pa.cid || args.cid || item.cid || ''), // player_args.cid 常有；无则预览时 pagelist 兜底
     duration: item.cover_left_text_1 || '', // 时长（实测在 text_1，如 13:02）
     play: item.cover_left_text_2 || '', // 观看数（实测在 text_2，如 25.4万观看）
     danmaku: item.cover_left_text_3 || '', // 弹幕数（如 13弹幕）

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BiliKit Core
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.4.1
+// @version      0.4.2
 // @author       shiinayane
 // @description  B 站体验增强核心，一装到位：CDN 优选（救海外卡顿）· 埋点/广告拦截（省流量降开销）· 主题跟随系统深浅 · 评论显 IP 属地 · 播放不息屏——统一设置面板集中开关。Safari 友好、无需扩展、零外部依赖。
 // @license      MIT
@@ -2003,6 +2003,7 @@
   const PANEL_ID = "bilikit-panel-root";
   const FEED_ID = "__feed__";
   const OPEN_ID = "__open__";
+  const PREVIEW_ID = "__preview__";
   const FEED_CAT = "推荐";
   let selected = "";
   let navEl = null;
@@ -2333,6 +2334,7 @@
       if (c === FEED_CAT) {
         navEl.appendChild(navItemSpecial(FEED_ID, "App 推荐 Feed"));
         navEl.appendChild(navItemSpecial(OPEN_ID, "打开方式"));
+        navEl.appendChild(navItemSpecial(PREVIEW_ID, "封面预览"));
       }
     }
   }
@@ -2391,6 +2393,29 @@
     fields.appendChild(callout("抽屉：同源内嵌播放、顶部留缝放关闭/新标签按钮，隐藏站内顶栏；在顶部继续下拉可关闭。"));
     d.appendChild(fields);
   }
+  function renderPreviewDetail(d) {
+    d.appendChild(el("div", "detail-title", "封面预览"));
+    d.appendChild(el("div", "detail-desc", "鼠标悬停封面时的预览方式"));
+    const fields = el("div", "fields");
+    const row = el("div", "field");
+    row.appendChild(el("span", "flabel", "预览方式"));
+    const sel = document.createElement("select");
+    for (const [val, label] of [["video", "真视频（低清静音自动播）"], ["sprite", "雪碧图（缩略帧轮播）"], ["off", "关闭"]]) {
+      const o = document.createElement("option");
+      o.value = val;
+      o.textContent = label;
+      sel.appendChild(o);
+    }
+    sel.value = get("feed.previewMode", "video");
+    sel.addEventListener("change", () => {
+      set("feed.previewMode", sel.value);
+      markDirty();
+    });
+    row.appendChild(sel);
+    fields.appendChild(row);
+    fields.appendChild(callout("真视频拉低清 dash 纯视频轨、静音自动播，最接近手机 App 的秒开体验（比雪碧图更吃带宽）。雪碧图只拉缩略帧、更省流量。"));
+    d.appendChild(fields);
+  }
   function renderDetail() {
     if (!detailEl) return;
     detailEl.textContent = "";
@@ -2400,6 +2425,10 @@
     }
     if (selected === OPEN_ID) {
       renderOpenDetail(detailEl);
+      return;
+    }
+    if (selected === PREVIEW_ID) {
+      renderPreviewDetail(detailEl);
       return;
     }
     const m = getModules().find((x) => x.id === selected);
@@ -2462,7 +2491,7 @@
     card.append(head, main, footEl);
     overlay.appendChild(card);
     const open = () => {
-      if (!selected || selected !== FEED_ID && selected !== OPEN_ID && !getModules().some((m) => m.id === selected)) selected = firstNavId();
+      if (!selected || selected !== FEED_ID && selected !== OPEN_ID && selected !== PREVIEW_ID && !getModules().some((m) => m.id === selected)) selected = firstNavId();
       renderNav();
       renderDetail();
       overlay.classList.add("open");
@@ -2647,7 +2676,6 @@
     const TELEMETRY = [
       "data.bilibili.com",
       "api.bilibili.com/x/click-interface/click",
-      "api.bilibili.com/x/web-goblin",
       "mcbas.",
       "webase"
     ];

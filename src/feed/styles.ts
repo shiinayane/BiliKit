@@ -18,6 +18,13 @@ export function injectStyle(): void {
     /* hover 雪碧图预览：盖在封面上，鼠标横向刮帧；在遮罩(z-index:2)之下、图片之上 */
     .${NS}-preview{ position:absolute; inset:0; z-index:1; background-repeat:no-repeat; opacity:0; transition:opacity .15s ease; pointer-events:none; }
     .${NS}-preview.on{ opacity:1; }
+    /* hover 真视频预览：低清 dash 静音自动播，盖在封面上（同雪碧图层级 z-index:1，遮罩之下、图片之上） */
+    .${NS}-vpreview{ position:absolute; inset:0; z-index:1; width:100%; height:100%; object-fit:cover; display:block; opacity:0; transition:opacity .2s ease; pointer-events:none; background:#000; }
+    .${NS}-vpreview.on{ opacity:1; }
+    /* 预览播放时：隐藏播放/弹幕数遮罩；右下角时长转「当前 / 总时长」，去渐变、加阴影保可读 */
+    .${NS}-cover.previewing .${NS}-mstat{ display:none; }
+    .${NS}-cover.previewing .${NS}-mask{ background:none; justify-content:flex-end; }
+    .${NS}-cover.previewing .${NS}-mask span{ text-shadow:0 1px 4px rgba(0,0,0,.95); font-variant-numeric:tabular-nums; }
     /* 预览进度条：底部细条，随播放推进（scaleX → 合成层）。z-index:3 压在遮罩之上，短视频也看得清进度 */
     .${NS}-pbar{ position:absolute; left:0; right:0; bottom:0; z-index:3; height:3px; background:rgba(0,0,0,.28); opacity:0; transition:opacity .15s ease; pointer-events:none; }
     .${NS}-pbar.on{ opacity:1; }

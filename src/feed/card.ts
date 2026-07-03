@@ -1,5 +1,6 @@
 import { NS, esc, coverUrl, readSetting } from './shared'
 import { setupHoverPreview } from './hover-preview'
+import { setupVideoPreview } from './video-preview'
 import { openDrawer, preconnect } from './drawer'
 import type { FeedCard } from './app-api'
 
@@ -41,7 +42,12 @@ export function makeCard(c: FeedCard): HTMLElement {
   })
   // 封面 404/解码失败：标 .failed 停微光、露灰底，避免那张卡无限转骨架
   imgEl.addEventListener('error', () => { if (!imgEl.src.startsWith('data:')) coverEl.classList.add('failed') })
-  if (c.bvid) setupHoverPreview(coverEl, c.bvid) // hover 雪碧图预览
+  // 封面 hover 预览：真视频（默认，低清 dash 静音自动播）/ 雪碧图 / 关闭——面板 feed.previewMode 可切
+  if (c.bvid) {
+    const pm = readSetting<string>('feed.previewMode', 'video')
+    if (pm === 'sprite') setupHoverPreview(coverEl, c.bvid)
+    else if (pm !== 'off') setupVideoPreview(coverEl, c.bvid, c.cid)
+  }
   el.addEventListener('mouseenter', preconnect) // 悬停预连接 B站主机（内部 12s 节流），点开更快
   el.addEventListener('click', (e) => {
     // 点头像或 UP 名 → 进 UP 空间（始终新标签，不进抽屉）
