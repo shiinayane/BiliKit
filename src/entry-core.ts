@@ -1,4 +1,5 @@
 import { register, runAll } from './core/module'
+import { syncSharedSettings } from './core/settings'
 import { mountPanel } from './core/panel'
 import { cdnPick } from './modules/cdn-pick'
 import { noTrack } from './modules/no-track'
@@ -6,6 +7,10 @@ import { themeSync } from './modules/theme-sync'
 import { commentLocation } from './modules/comment-location'
 import { wakeLock } from './modules/wake-lock'
 import { noLogin } from './modules/no-login'
+
+// 跨子域对齐设置：把 .bilibili.com cookie 里的共享设置并回本域 localStorage（www/search/space 用同一份），
+// 老用户则反向种一次 cookie。必须在任何模块读设置（runAll）之前。
+syncSharedSettings()
 
 // 心跳：与 Feed 同源共享 localStorage，写入本次运行时间戳，供 Feed 判断 Core 是否已安装并在跑。
 try { localStorage.setItem('bilikit:alive.core', String(Date.now())) } catch { /* 隐私模式忽略 */ }

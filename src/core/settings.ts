@@ -1,29 +1,71 @@
 import type { BiliKitModule, Cfg } from './module'
 
 /**
- * 设置存储：localStorage（同源共享 → 将来 BiliKit Feed 那个隔离世界脚本能读到同一份，
- * 达成「两个 .user.js、一套设置」的统一体验）。不使用 GM_setValue，以保住 @grant none。
+ * 设置存储：
+ *  - **localStorage**（本域全量，含敏感键）：同源的 Feed（隔离世界，仅读）读同一份。不用 GM_setValue，保住 @grant none。
+ *  - **`.bilibili.com` cookie**（非敏感设置的跨子域镜像）：localStorage 按子域隔离，www 配好在
+ *    search / space 读不到；@grant none 下唯一的跨子域共享手段就是 domain=.bilibili.com 的 cookie。
+ *    **敏感键（如 feed.accessKey 登录凭证）绝不进 cookie**——否则会随每个 *.bilibili.com 请求外发。
  */
 const KEY = 'bilikit:settings'
+const CK = 'bilikit_settings' // cookie 名（避免冒号）
+const SENSITIVE = /accessKey|token|secret|passwd|password/i // 不进跨子域 cookie 的键
 // 本 Tab 内设置变更通知（同 Tab 的 storage 事件不触发）：模块可监听它即时响应面板改动
 export const SETTINGS_EVENT = 'bilikit:settings-changed'
 type Store = Record<string, unknown>
 
-function load(): Store {
+function readLocal(): Store {
+  try { return (JSON.parse(localStorage.getItem(KEY) || '{}') as Store) ?? {} } catch { return {} }
+}
+function readCookie(): Store | null {
   try {
-    return (JSON.parse(localStorage.getItem(KEY) || '{}') as Store) ?? {}
-  } catch {
-    return {}
-  }
+    const m = document.cookie.match(/(?:^|;\s*)bilikit_settings=([^;]*)/)
+    if (!m || !m[1]) return null
+    return JSON.parse(decodeURIComponent(m[1])) as Store
+  } catch { return null }
+}
+// 只把非敏感键写进 cookie
+function toCookieStore(s: Store): Store {
+  const out: Store = {}
+  for (const k in s) if (!SENSITIVE.test(k)) out[k] = s[k]
+  return out
+}
+function writeCookie(s: Store): void {
+  try {
+    const v = encodeURIComponent(JSON.stringify(toCookieStore(s)))
+    document.cookie = `${CK}=${v}; path=/; domain=.bilibili.com; max-age=31536000; SameSite=Lax`
+  } catch { /* ignore */ }
+}
+
+function load(): Store {
+  // 跨子域 cookie（非敏感）覆盖本域，同时保留本域独有的敏感键（如 feed.accessKey）
+  const local = readLocal()
+  const c = readCookie()
+  return c ? { ...local, ...c } : local
 }
 
 function save(s: Store): boolean {
+  writeCookie(s) // 非敏感 → 跨子域共享
   try {
-    localStorage.setItem(KEY, JSON.stringify(s))
+    localStorage.setItem(KEY, JSON.stringify(s)) // 本域全量（含敏感键，供 Feed 读）
     try { window.dispatchEvent(new Event(SETTINGS_EVENT)) } catch { /* 无 window/事件不可用时忽略 */ }
     return true
   } catch {
     return false // 隐私模式/超限：持久化失败，交由调用方决定是否提示
+  }
+}
+
+/**
+ * 启动时对齐两处存储：把跨子域 cookie 的设置并回本域 localStorage（供仅读 localStorage 的 Feed 读到同一份）；
+ * 老用户若 cookie 尚空但本域已有设置，则反向种一次 cookie，让其它子域立刻拿到。仅顶层窗口调用一次即可。
+ */
+export function syncSharedSettings(): void {
+  const c = readCookie()
+  const local = readLocal()
+  if (c) {
+    try { localStorage.setItem(KEY, JSON.stringify({ ...local, ...c })) } catch { /* ignore */ }
+  } else if (Object.keys(local).length) {
+    writeCookie(local)
   }
 }
 

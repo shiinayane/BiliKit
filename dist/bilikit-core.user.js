@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BiliKit Core
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.4.4
+// @version      0.4.5
 // @author       shiinayane
 // @description  B 站体验增强核心，一装到位：CDN 优选（救海外卡顿）· 埋点/广告拦截（省流量降开销）· 免登录看评论/动态/1080p · 主题跟随系统深浅 · 评论显 IP 属地 · 播放不息屏——统一设置面板集中开关。Safari 友好、无需扩展、零外部依赖。
 // @license      MIT
@@ -14,15 +14,44 @@
   'use strict';
 
   const KEY = "bilikit:settings";
+  const CK = "bilikit_settings";
+  const SENSITIVE = /accessKey|token|secret|passwd|password/i;
   const SETTINGS_EVENT = "bilikit:settings-changed";
-  function load() {
+  function readLocal() {
     try {
       return JSON.parse(localStorage.getItem(KEY) || "{}") ?? {};
     } catch {
       return {};
     }
   }
+  function readCookie() {
+    try {
+      const m = document.cookie.match(/(?:^|;\s*)bilikit_settings=([^;]*)/);
+      if (!m || !m[1]) return null;
+      return JSON.parse(decodeURIComponent(m[1]));
+    } catch {
+      return null;
+    }
+  }
+  function toCookieStore(s) {
+    const out = {};
+    for (const k in s) if (!SENSITIVE.test(k)) out[k] = s[k];
+    return out;
+  }
+  function writeCookie(s) {
+    try {
+      const v = encodeURIComponent(JSON.stringify(toCookieStore(s)));
+      document.cookie = `${CK}=${v}; path=/; domain=.bilibili.com; max-age=31536000; SameSite=Lax`;
+    } catch {
+    }
+  }
+  function load() {
+    const local = readLocal();
+    const c = readCookie();
+    return c ? { ...local, ...c } : local;
+  }
   function save(s) {
+    writeCookie(s);
     try {
       localStorage.setItem(KEY, JSON.stringify(s));
       try {
@@ -32,6 +61,18 @@
       return true;
     } catch {
       return false;
+    }
+  }
+  function syncSharedSettings() {
+    const c = readCookie();
+    const local = readLocal();
+    if (c) {
+      try {
+        localStorage.setItem(KEY, JSON.stringify({ ...local, ...c }));
+      } catch {
+      }
+    } else if (Object.keys(local).length) {
+      writeCookie(local);
     }
   }
   function get(key, fallback) {
@@ -2688,7 +2729,7 @@
     if (window.__BILIKIT_NO_TRACK__) return;
     window.__BILIKIT_NO_TRACK__ = true;
     const TELEMETRY = [
-      "data.bilibili.com",
+      "data.bilibili.com/log",
       "api.bilibili.com/x/click-interface/click",
       "mcbas.",
       "webase"
@@ -2813,12 +2854,12 @@
       if (mode === "light") return false;
       return systemDark();
     };
-    function readCookie(name) {
+    function readCookie2(name) {
       const m = document.cookie.match(new RegExp("(?:^|;\\s*)" + name + "=([^;]*)"));
       return m ? m[1] : null;
     }
     function setCookie(name, value) {
-      if (readCookie(name) === value) return;
+      if (readCookie2(name) === value) return;
       document.cookie = `${name}=${value}; path=/; domain=${COOKIE_DOMAIN}; max-age=31536000; SameSite=Lax`;
     }
     function swapThemeStylesheet(doc, dark) {
@@ -3470,6 +3511,7 @@
     runAt: "start",
     init
   };
+  syncSharedSettings();
   try {
     localStorage.setItem("bilikit:alive.core", String(Date.now()));
   } catch {

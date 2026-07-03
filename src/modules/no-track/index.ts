@@ -19,11 +19,13 @@ function init(cfg: Cfg): void {
 
   const DEBUG = false
 
-  // 纯遥测/行为日志：整个 data.bilibili.com 就是 B 站的数据采集域；click-interface 是点击追踪；
+  // 纯遥测/行为日志：data.bilibili.com/log 是行为日志通道（占大头）；click-interface 是点击追踪；
   // mcbas/webase 是老埋点通道。这些拦掉对功能零影响。
-  // 注意：不拦 x/web-goblin —— 那是 B 站反爬/反广告校验，拦掉会让首页陷入重载循环（实测）。想拦可自行加自定义。
+  // 注意：① 不拦 x/web-goblin —— 那是 B 站反爬/反广告校验，拦掉会让首页陷入重载循环（实测）。
+  //       ② 收窄到 data.bilibili.com/log、不再整域拦 —— 免登录伪造登录后 B 站会走 data.bilibili.com 上的
+  //          校验路径，整域拦会把它一起 204 掉、致「免登录 + 埋点拦截」同开时页面反复重刷。想更狠可自加自定义。
   const TELEMETRY = [
-    'data.bilibili.com',
+    'data.bilibili.com/log',
     'api.bilibili.com/x/click-interface/click',
     'mcbas.',
     'webase',
