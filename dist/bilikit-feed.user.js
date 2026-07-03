@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BiliKit Feed
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.2.1
+// @version      0.2.2
 // @author       shiinayane
 // @description  B 站首页换成手机 App 的个性化推荐流。零框架纯原生实现（无 React/Vue、gzip 仅 ~16KB）+ 窗口化虚拟化，DOM 数量恒定、长时间刷不涨内存。点卡片在底部抽屉内播放、封面悬停秒预览。需配合 BiliKit Core（登录 / 设置）。
 // @license      MIT
@@ -641,7 +641,7 @@
       if (frame && !(panel == null ? void 0 : panel.classList.contains("on"))) frame.src = "about:blank";
     }, 340);
   }
-  const PC_HOSTS = ["https://api.bilibili.com", "https://s1.hdslb.com", "https://i0.hdslb.com", "https://i1.hdslb.com", "https://i2.hdslb.com", "https://data.bilibili.com"];
+  const PC_HOSTS = ["https://api.bilibili.com", "https://s1.hdslb.com", "https://i0.hdslb.com", "https://i1.hdslb.com", "https://i2.hdslb.com"];
   const PC_WINDOW = 12e3;
   let lastPc = -Infinity;
   let pcLinks = [];
@@ -740,6 +740,10 @@
   const items = [];
   const nodes = /* @__PURE__ */ new Map();
   let cachedCols = 1;
+  let cachedRowH = 0;
+  let cachedGridTop = 0;
+  let metricsDirty = true;
+  let lastStart = -1, lastEnd = -1, lastTotalRows = -1;
   let renderRaf = 0;
   let suppressScroll = false;
   let cooldownUntil = 0;
@@ -762,26 +766,44 @@
     return 0.299 * +m[0] + 0.587 * +m[1] + 0.114 * +m[2] < 128;
   }
   function metrics() {
+    if (!metricsDirty && cachedRowH > 0) return { cols: cachedCols, rowH: cachedRowH, gridTop: cachedGridTop };
     const cs = getComputedStyle(grid);
     const parts = cs.gridTemplateColumns.split(" ").filter(Boolean);
     const cols = parts.length && parts.every((p) => p.endsWith("px")) ? parts.length : cachedCols;
     cachedCols = cols;
     let cardH = 330;
+    let measured = false;
     const first = nodes.size ? nodes.values().next().value : null;
-    if (first && first.offsetHeight > 50) cardH = first.offsetHeight;
+    if (first && first.offsetHeight > 50) {
+      cardH = first.offsetHeight;
+      measured = true;
+    }
     const rowGap = parseFloat(cs.rowGap) || 22;
-    return { cols, rowH: cardH + rowGap };
+    const rowH = cardH + rowGap;
+    const gridTop = topSpacer ? topSpacer.getBoundingClientRect().top + window.scrollY : 0;
+    if (measured) {
+      cachedRowH = rowH;
+      cachedGridTop = gridTop;
+      metricsDirty = false;
+    }
+    return { cols, rowH, gridTop };
+  }
+  function invalidateLayout() {
+    metricsDirty = true;
+    lastStart = -1;
+    lastEnd = -1;
+    lastTotalRows = -1;
   }
   function render() {
     if (!grid || !sentinel || !topSpacer || !bottomSpacer) return;
     if (!items.length) {
       topSpacer.style.height = "0px";
       bottomSpacer.style.height = "0px";
+      lastStart = lastEnd = lastTotalRows = -1;
       return;
     }
-    const { cols, rowH } = metrics();
+    const { cols, rowH, gridTop } = metrics();
     const totalRows = Math.ceil(items.length / cols);
-    const gridTop = grid.getBoundingClientRect().top + window.scrollY;
     const into = window.scrollY - gridTop;
     const vh = window.innerHeight;
     const BUF = vh * 1.5;
@@ -789,6 +811,10 @@
     const lastRow = Math.min(totalRows - 1, Math.max(0, Math.ceil((into + vh + BUF) / rowH)));
     const startIdx = firstRow * cols;
     const endIdx = Math.min(items.length, (lastRow + 1) * cols);
+    if (startIdx === lastStart && endIdx === lastEnd && totalRows === lastTotalRows) return;
+    lastStart = startIdx;
+    lastEnd = endIdx;
+    lastTotalRows = totalRows;
     const anchor = firstRow > 0 ? nodes.get(Math.max(0, Math.floor(into / rowH)) * cols) || null : null;
     const anchorTop = anchor ? anchor.getBoundingClientRect().top : 0;
     for (const [i, el] of nodes) {
@@ -841,6 +867,7 @@
     items.length = 0;
     if (topSpacer) topSpacer.style.height = "0px";
     if (bottomSpacer) bottomSpacer.style.height = "0px";
+    invalidateLayout();
   }
   function renderSkeletons(n) {
     if (!grid || !bottomSpacer) return;
@@ -961,6 +988,7 @@
     seen.clear();
     exhausted = false;
     cooldownUntil = 0;
+    invalidateLayout();
     injectStyle();
     native.style.setProperty("display", "none", "important");
     cardIo = new IntersectionObserver(
@@ -1016,6 +1044,7 @@
       bar.remove();
     });
     grid.insertBefore(bar, topSpacer);
+    invalidateLayout();
   }
   function checkCore() {
     const alive = Number(localStorage.getItem("bilikit:alive.core") || 0);
@@ -1023,12 +1052,30 @@
   }
   function mountFeed() {
     if (window.top !== window.self) return;
+    const beat = () => {
+      try {
+        localStorage.setItem("bilikit:alive.feed", String(Date.now()));
+      } catch {
+      }
+    };
+    beat();
+    window.addEventListener("scroll", scheduleRender, { passive: true });
+    window.addEventListener("resize", () => {
+      invalidateLayout();
+      scheduleRender();
+    });
+    let themeRaf = 0;
+    const syncDark = () => {
+      if (themeRaf) return;
+      themeRaf = requestAnimationFrame(() => {
+        themeRaf = 0;
+        if (grid) grid.classList.toggle("bk-dark", pageIsDark());
+      });
+    };
     try {
-      localStorage.setItem("bilikit:alive.feed", String(Date.now()));
+      new MutationObserver(syncDark).observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
     } catch {
     }
-    window.addEventListener("scroll", scheduleRender, { passive: true });
-    window.addEventListener("resize", scheduleRender);
     const onHome = () => location.pathname === "/" || location.pathname === "/index.html";
     const tick = () => {
       if (onHome()) {
@@ -1043,13 +1090,9 @@
     let tries = 0;
     const t = setInterval(() => {
       if (!onHome()) return;
-      try {
-        localStorage.setItem("bilikit:alive.feed", String(Date.now()));
-      } catch {
-      }
+      if (tries % 5 === 0) beat();
       hideNativeChrome();
-      if (takeover()) ;
-      if (grid) grid.classList.toggle("bk-dark", pageIsDark());
+      takeover();
       if (++tries > 600) clearInterval(t);
     }, 1e3);
   }

@@ -28,6 +28,12 @@ let feedGen = 0 // 代际令牌：每次重新接管/刷新自增；在途 loadM
 const items: FeedCard[] = []
 const nodes = new Map<number, HTMLElement>()
 let cachedCols = 1 // 上次量到的有效列数（getComputedStyle 偶发返回未解析值时回落用）
+// 布局量缓存：纯滚动时列数/行高/grid 顶偏移都不变，缓存后免得每帧 getComputedStyle + offsetHeight + BCR。
+// resize / 重建 grid / 插提示条时经 invalidateLayout() 置脏重量。
+let cachedRowH = 0 // 行高（卡高+行距），量到真卡后缓存
+let cachedGridTop = 0 // grid 内容起点的文档偏移（从 topSpacer 量，天然排除顶部提示条高度）
+let metricsDirty = true
+let lastStart = -1, lastEnd = -1, lastTotalRows = -1 // 上次窗口；三者都没变则整帧早退（零 layout、零 DOM）
 let renderRaf = 0
 let suppressScroll = false // 补偿 scrollBy 会触发一次 scroll 事件，用它跳过、免得再引发一轮 render
 let cooldownUntil = 0 // 加载失败后的退避截止时刻（performance.now），期间不重试，避免疯狂打 API
@@ -54,28 +60,41 @@ function pageIsDark(): boolean {
   return 0.299 * +m[0] + 0.587 * +m[1] + 0.114 * +m[2] < 128
 }
 
-// 量当前列数与「行高」（卡片高 + 行间距）。列数从 grid 计算样式取——正常已解析成 px 列表，逐个数；
-// 偶发未解析(含 repeat/minmax 等非 px)则回落到上次有效值，防误判。行高量一张已渲染卡（卡等高，任取），无则回落。
-function metrics(): { cols: number; rowH: number } {
+// 量当前列数、「行高」（卡片高 + 行间距）与 grid 内容起点偏移。列数从 grid 计算样式取——正常已解析成
+// px 列表，逐个数；偶发未解析(含 repeat/minmax 等非 px)则回落到上次有效值。行高量一张已渲染卡（卡等高，任取）。
+// 缓存：量到「真卡」（offsetHeight>50）后才落缓存并清脏——否则会把无卡时的回落值 330 固化。
+// 缓存有效期内直接返回，纯滚动帧不再做 getComputedStyle / offsetHeight / BCR。
+function metrics(): { cols: number; rowH: number; gridTop: number } {
+  if (!metricsDirty && cachedRowH > 0) return { cols: cachedCols, rowH: cachedRowH, gridTop: cachedGridTop }
   const cs = getComputedStyle(grid!)
   const parts = cs.gridTemplateColumns.split(' ').filter(Boolean)
   const cols = parts.length && parts.every((p) => p.endsWith('px')) ? parts.length : cachedCols
   cachedCols = cols
   let cardH = 330 // 首次未量到时的回落估值
+  let measured = false
   const first = nodes.size ? (nodes.values().next().value as HTMLElement) : null
-  if (first && first.offsetHeight > 50) cardH = first.offsetHeight
+  if (first && first.offsetHeight > 50) { cardH = first.offsetHeight; measured = true }
   const rowGap = parseFloat(cs.rowGap) || 22
-  return { cols, rowH: cardH + rowGap }
+  const rowH = cardH + rowGap
+  // topSpacer 的文档顶偏移 = grid 内容起点（含滚动时其自身 top 恒定，只是高度撑开下方）
+  const gridTop = topSpacer ? topSpacer.getBoundingClientRect().top + window.scrollY : 0
+  if (measured) { cachedRowH = rowH; cachedGridTop = gridTop; metricsDirty = false }
+  return { cols, rowH, gridTop }
+}
+
+// resize / 重建 grid / 插提示条后：布局量与上次窗口全部作废，下帧强制重量、重渲染。
+function invalidateLayout(): void {
+  metricsDirty = true
+  lastStart = -1; lastEnd = -1; lastTotalRows = -1
 }
 
 // 窗口化渲染：只保留「可视 ±1.5 屏」范围内的卡片节点，范围外移除；上下占位撑起未渲染区高度。
 // 按 item 下标 key、只在窗口边缘增删（绝不中途拿一个节点换内容）→ 无封面重载/闪烁。
 function render(): void {
   if (!grid || !sentinel || !topSpacer || !bottomSpacer) return
-  if (!items.length) { topSpacer.style.height = '0px'; bottomSpacer.style.height = '0px'; return }
-  const { cols, rowH } = metrics()
+  if (!items.length) { topSpacer.style.height = '0px'; bottomSpacer.style.height = '0px'; lastStart = lastEnd = lastTotalRows = -1; return }
+  const { cols, rowH, gridTop } = metrics() // 缓存命中时零 layout；gridTop 从 topSpacer 量（排除提示条）
   const totalRows = Math.ceil(items.length / cols)
-  const gridTop = grid.getBoundingClientRect().top + window.scrollY // grid 在文档中的顶偏移
   const into = window.scrollY - gridTop // 已滚进 grid 的像素（负=grid 还在视口下方）
   const vh = window.innerHeight
   const BUF = vh * 1.5 // 视口上下各留 1.5 屏 buffer（封面提前加载，无 pop-in）
@@ -83,6 +102,10 @@ function render(): void {
   const lastRow = Math.min(totalRows - 1, Math.max(0, Math.ceil((into + vh + BUF) / rowH)))
   const startIdx = firstRow * cols
   const endIdx = Math.min(items.length, (lastRow + 1) * cols) // 独占上界
+  // 早退：可视窗口与总行数都没变 → 无需任何 DOM/占位改动。纯滚动的绝大多数帧走这里，全帧零成本。
+  // 必须带 totalRows：置顶不动时新页 loadMore 追加数据、窗口下标不变，但底部占位要跟着长高。
+  if (startIdx === lastStart && endIdx === lastEnd && totalRows === lastTotalRows) return
+  lastStart = startIdx; lastEnd = endIdx; lastTotalRows = totalRows
 
   // 锚点补偿：仅当「窗口上方有占位」(firstRow>0) 时需要——顶部(首屏/刷新)时 firstRow=0 不补偿，
   // 免得与 refreshFeed 的 scrollTo(top) 打架、也不会误落在非顶部。
@@ -130,6 +153,7 @@ function clearAll(): void {
   items.length = 0
   if (topSpacer) topSpacer.style.height = '0px'
   if (bottomSpacer) bottomSpacer.style.height = '0px'
+  invalidateLayout() // 卡片清空 → 上次窗口作废，下次填充从头重渲染
 }
 
 function renderSkeletons(n: number): void {
@@ -268,6 +292,7 @@ function takeover(): boolean {
   seen.clear()
   exhausted = false
   cooldownUntil = 0
+  invalidateLayout() // 新 grid：列数/行高/顶偏移都需重量
 
   injectStyle()
   native.style.setProperty('display', 'none', 'important')
@@ -328,6 +353,7 @@ function warnCoreMissing(): void {
     bar.remove()
   })
   grid.insertBefore(bar, topSpacer) // 置顶；窗口渲染只管两占位之间，不动它
+  invalidateLayout() // 提示条把 topSpacer 往下顶了 → gridTop 变，需重量（也修正锚点偏移）
 }
 
 // Core 心跳新鲜 = 已安装并在跑；否则提示安装
@@ -339,21 +365,30 @@ function checkCore(): void {
 /** 只在首页顶层窗口生效；SPA 出入首页后原生流可能重建，轮询补挂。 */
 export function mountFeed(): void {
   if (window.top !== window.self) return
-  try { localStorage.setItem('bilikit:alive.feed', String(Date.now())) } catch { /* 隐私模式忽略 */ } // 心跳，供 Core 探测
-  // 窗口化：滚动/改窗都重算可视范围（rAF 节流；render 内部有 grid 空判）
+  const beat = () => { try { localStorage.setItem('bilikit:alive.feed', String(Date.now())) } catch { /* 隐私模式忽略 */ } } // 心跳，供 Core 探测
+  beat()
+  // 窗口化：滚动/改窗都重算可视范围（rAF 节流；render 内部有 grid 空判）。resize 还要作废布局缓存。
   window.addEventListener('scroll', scheduleRender, { passive: true })
-  window.addEventListener('resize', scheduleRender)
+  window.addEventListener('resize', () => { invalidateLayout(); scheduleRender() })
+  // 主题深浅：改事件驱动——盯 <html> class（Core 换肤会 toggle bili_dark/night-mode），变了才重算，
+  // rAF 合并连发。取代原先每秒一次的 getComputedStyle 空转（首帧深浅由 takeover 内已 toggle 好）。
+  let themeRaf = 0
+  const syncDark = () => {
+    if (themeRaf) return
+    themeRaf = requestAnimationFrame(() => { themeRaf = 0; if (grid) grid.classList.toggle('bk-dark', pageIsDark()) })
+  }
+  try { new MutationObserver(syncDark).observe(document.documentElement, { attributes: true, attributeFilter: ['class'] }) } catch { /* ignore */ }
   const onHome = () => location.pathname === '/' || location.pathname === '/index.html'
   const tick = () => { if (onHome()) { hideNativeChrome(); takeover() } }
   tick()
   setTimeout(() => { if (onHome()) checkCore() }, 2500) // 延迟等 Core 心跳就位后再判断是否缺失
+  // 轮询只保留「SPA 重入补挂」这一必需项；心跳降到每 5s（Core 判定阈值 15s，足够），主题已移交 observer。
   let tries = 0
   const t = setInterval(() => {
     if (!onHome()) return
-    try { localStorage.setItem('bilikit:alive.feed', String(Date.now())) } catch { /* ignore */ } // 刷新心跳，供 Core 面板实时探测
+    if (tries % 5 === 0) beat() // 每 5s 一次心跳
     hideNativeChrome()
-    if (takeover()) { /* 挂上了；仍继续轮询以应对 SPA 重建 */ }
-    if (grid) grid.classList.toggle('bk-dark', pageIsDark()) // 跟随主题切换实时更新深浅
+    takeover() // 挂上了继续轮询以应对 SPA 重建
     if (++tries > 600) clearInterval(t) // ~10min 后停轮询兜底
   }, 1000)
 }

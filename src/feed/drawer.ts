@@ -154,7 +154,8 @@ export function closeDrawer(): void {
  * 悬停预连接：hover 视频卡时预连 B站静态/接口主机，点开省去握手延迟。12s 节流（连接空闲约此量级被回收）。
  * 任意时刻最多一批 preconnect 节点，避免 <head> 累积。
  */
-const PC_HOSTS = ['https://api.bilibili.com', 'https://s1.hdslb.com', 'https://i0.hdslb.com', 'https://i1.hdslb.com', 'https://i2.hdslb.com', 'https://data.bilibili.com']
+// 不含 data.bilibili.com：那是埋点域，Core 的埋点拦截会短路所有到它的请求，预连纯属浪费。
+const PC_HOSTS = ['https://api.bilibili.com', 'https://s1.hdslb.com', 'https://i0.hdslb.com', 'https://i1.hdslb.com', 'https://i2.hdslb.com']
 const PC_WINDOW = 12000
 let lastPc = -Infinity
 let pcLinks: HTMLElement[] = []
