@@ -32,6 +32,8 @@ export interface BiliKitModule {
   name: string
   /** 设置面板副标题 */
   description?: string
+  /** 模块页顶部说明/取舍（callout，支持简单 HTML）；可选 */
+  note?: string
   /** 左栏分组类别（如「播放」「界面」）；缺省归入「其它」 */
   category?: string
   /** 默认是否启用，缺省 true */

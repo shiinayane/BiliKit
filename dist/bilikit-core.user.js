@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         BiliKit Core
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.4.3
+// @version      0.4.4
 // @author       shiinayane
-// @description  B 站体验增强核心，一装到位：CDN 优选（救海外卡顿）· 埋点/广告拦截（省流量降开销）· 主题跟随系统深浅 · 评论显 IP 属地 · 播放不息屏——统一设置面板集中开关。Safari 友好、无需扩展、零外部依赖。
+// @description  B 站体验增强核心，一装到位：CDN 优选（救海外卡顿）· 埋点/广告拦截（省流量降开销）· 免登录看评论/动态/1080p · 主题跟随系统深浅 · 评论显 IP 属地 · 播放不息屏——统一设置面板集中开关。Safari 友好、无需扩展、零外部依赖。
 // @license      MIT
 // @match        *://*.bilibili.com/*
 // @grant        none
@@ -2450,9 +2450,11 @@
     }
     detailEl.appendChild(el("div", "detail-title", m.name));
     if (m.description) detailEl.appendChild(el("div", "detail-desc", m.description));
-    if (m.settings && m.settings.length) {
+    const hasSettings = !!(m.settings && m.settings.length);
+    if (hasSettings || m.note) {
       const fields = el("div", "fields");
-      for (const f of m.settings) fields.appendChild(renderField(m, f));
+      if (m.note) fields.appendChild(callout(m.note));
+      if (m.settings) for (const f of m.settings) fields.appendChild(renderField(m, f));
       detailEl.appendChild(fields);
     } else {
       detailEl.appendChild(emptyState("此模块无额外配置", "开关在左侧列表"));
@@ -2520,7 +2522,7 @@
     sr.append(gear, overlay);
     document.body.appendChild(root2);
   }
-  function init$4(cfg) {
+  function init$5(cfg) {
     if (window.__BILIKIT_CDN_PICK__) return;
     window.__BILIKIT_CDN_PICK__ = true;
     const TARGET_HOST = cfg.get("targetHost");
@@ -2680,9 +2682,9 @@
         hint: "把视频分片钉到该大陆镜像，绕开慢节点；选「自定义…」可手填镜像主机（须 upos 系 .bilivideo.com，否则会 403）"
       }
     ],
-    init: init$4
+    init: init$5
   };
-  function init$3(cfg) {
+  function init$4(cfg) {
     if (window.__BILIKIT_NO_TRACK__) return;
     window.__BILIKIT_NO_TRACK__ = true;
     const TELEMETRY = [
@@ -2794,9 +2796,9 @@
         hint: "请求 URL 含其中任一片段即拦；留空不额外拦"
       }
     ],
-    init: init$3
+    init: init$4
   };
-  function init$2(cfg) {
+  function init$3(cfg) {
     if (window.top !== window.self && !location.hash.includes("bk-drawer")) return;
     if (window.__BILIKIT_THEME_SYNC__) return;
     window.__BILIKIT_THEME_SYNC__ = true;
@@ -2888,9 +2890,9 @@
         hint: "跟随系统深浅，或强制固定一种"
       }
     ],
-    init: init$2
+    init: init$3
   };
-  function init$1(cfg) {
+  function init$2(cfg) {
     if (window.__BILIKIT_COMMENT_LOC__) return;
     window.__BILIKIT_COMMENT_LOC__ = true;
     const PIN = cfg.get("pin") || "";
@@ -3022,9 +3024,9 @@
     settings: [
       { key: "pin", type: "text", label: "地名前缀符", default: "", placeholder: "如 📍 ", hint: "显示在属地前，默认无；想加自己填" }
     ],
-    init: init$1
+    init: init$2
   };
-  function init() {
+  function init$1() {
     const nav = navigator;
     if (!("wakeLock" in navigator)) return;
     if (window.__BILIKIT_WAKE_LOCK__) return;
@@ -3127,6 +3129,345 @@
     description: "播放视频时阻止 Safari 休眠 / 屏保",
     category: "播放",
     runAt: "idle",
+    init: init$1
+  };
+  const urlOf = (input) => {
+    if (typeof input === "string") return input;
+    if (input && typeof input.url === "string") return input.url;
+    try {
+      return String(input);
+    } catch {
+      return "";
+    }
+  };
+  function requestToInit(req) {
+    const headers = {};
+    try {
+      req.headers.forEach((v, k) => {
+        headers[k] = v;
+      });
+    } catch {
+    }
+    return { method: req.method, headers, credentials: req.credentials, referrer: req.referrer, signal: req.signal };
+  }
+  function installNetHook(rules) {
+    if (window.__BILIKIT_NET_HOOK__) return;
+    window.__BILIKIT_NET_HOOK__ = true;
+    const origFetch = window.fetch;
+    if (origFetch) {
+      window.fetch = async function(input, init2) {
+        var _a;
+        const url = urlOf(input);
+        const rule = rules.find((r) => r.match(url));
+        if (!rule) return origFetch.apply(this, arguments);
+        let realInput = input;
+        let realInit = init2;
+        const rw = (_a = rule.rewriteRequest) == null ? void 0 : _a.call(rule, url);
+        if (rw && (rw.url || rw.credentials)) {
+          if (input instanceof Request && !rw.url) {
+            realInput = new Request(input, rw.credentials ? { credentials: rw.credentials } : {});
+            realInit = init2;
+          } else {
+            const base = input instanceof Request ? requestToInit(input) : init2 || {};
+            realInput = rw.url || url;
+            realInit = { ...base, ...rw.credentials ? { credentials: rw.credentials } : {} };
+          }
+        }
+        const resp = await origFetch.call(this, realInput, realInit);
+        if (!rule.rewriteResponse) return resp;
+        try {
+          const text = await resp.clone().text();
+          const out = rule.rewriteResponse(JSON.parse(text), url);
+          const headers = new Headers(resp.headers);
+          headers.delete("content-length");
+          headers.delete("content-encoding");
+          return new Response(JSON.stringify(out), { status: resp.status, statusText: resp.statusText, headers });
+        } catch {
+          return resp;
+        }
+      };
+    }
+    const OX = window.XMLHttpRequest;
+    if (OX) {
+      class X extends OX {
+        constructor() {
+          super(...arguments);
+          this.__nlUrl = "";
+        }
+        open(method, url, ...rest) {
+          var _a, _b, _c;
+          this.__nlUrl = String(url);
+          this.__nlRule = rules.find((r) => r.match(this.__nlUrl));
+          this.__nlRw = (_b = (_a = this.__nlRule) == null ? void 0 : _a.rewriteRequest) == null ? void 0 : _b.call(_a, this.__nlUrl);
+          return super.open(method, ((_c = this.__nlRw) == null ? void 0 : _c.url) || url, ...rest);
+        }
+        send(body) {
+          var _a;
+          const c = (_a = this.__nlRw) == null ? void 0 : _a.credentials;
+          if (c === "omit") this.withCredentials = false;
+          else if (c) this.withCredentials = true;
+          return super.send(body);
+        }
+        get responseText() {
+          var _a;
+          const rt = this.responseType;
+          if (rt !== "" && rt !== "text") return super.responseText;
+          const raw = super.responseText;
+          if (this.readyState === 4 && ((_a = this.__nlRule) == null ? void 0 : _a.rewriteResponse) && typeof raw === "string") {
+            try {
+              return JSON.stringify(this.__nlRule.rewriteResponse(JSON.parse(raw), this.__nlUrl));
+            } catch {
+              return raw;
+            }
+          }
+          return raw;
+        }
+        get response() {
+          var _a;
+          const raw = super.response;
+          if (this.readyState === 4 && ((_a = this.__nlRule) == null ? void 0 : _a.rewriteResponse)) {
+            if (typeof raw === "string") {
+              try {
+                return JSON.stringify(this.__nlRule.rewriteResponse(JSON.parse(raw), this.__nlUrl));
+              } catch {
+                return raw;
+              }
+            }
+            if (raw && typeof raw === "object") {
+              try {
+                return this.__nlRule.rewriteResponse(raw, this.__nlUrl);
+              } catch {
+                return raw;
+              }
+            }
+          }
+          return raw;
+        }
+      }
+      window.XMLHttpRequest = X;
+    }
+  }
+  const MIXIN_TAB = [
+    46,
+    47,
+    18,
+    2,
+    53,
+    8,
+    23,
+    32,
+    15,
+    50,
+    10,
+    31,
+    58,
+    3,
+    45,
+    35,
+    27,
+    43,
+    5,
+    49,
+    33,
+    9,
+    42,
+    19,
+    29,
+    28,
+    14,
+    39,
+    12,
+    38,
+    41,
+    13,
+    37,
+    48,
+    7,
+    16,
+    24,
+    55,
+    40,
+    61,
+    26,
+    17,
+    0,
+    1,
+    60,
+    51,
+    30,
+    4,
+    22,
+    25,
+    54,
+    21,
+    56,
+    59,
+    6,
+    63,
+    57,
+    62,
+    11,
+    36,
+    20,
+    34,
+    44,
+    52
+  ];
+  const mixinKey = (orig) => MIXIN_TAB.map((n) => orig[n]).join("").slice(0, 32);
+  const keyFromUrl = (u) => u ? u.slice(u.lastIndexOf("/") + 1, u.lastIndexOf(".")) : "";
+  const LS = "bilikit:wbi-core";
+  const today = () => Math.floor(Date.now() / 864e5);
+  let cache = null;
+  function readKeys() {
+    try {
+      const img = keyFromUrl(localStorage.getItem("wbi_img_url") || "");
+      const sub = keyFromUrl(localStorage.getItem("wbi_sub_url") || "");
+      if (img && sub) return { img, sub };
+    } catch {
+    }
+    if (cache && cache.day === today()) return { img: cache.img, sub: cache.sub };
+    try {
+      const c = JSON.parse(localStorage.getItem(LS) || "null");
+      if (c && c.day === today() && c.img && c.sub) {
+        cache = c;
+        return { img: c.img, sub: c.sub };
+      }
+    } catch {
+    }
+    return null;
+  }
+  function warmKeys(pureFetch) {
+    if (readKeys()) return;
+    try {
+      pureFetch("https://api.bilibili.com/x/web-interface/nav", { credentials: "omit" }).then((r) => r.json()).then((j) => {
+        var _a;
+        const w = (_a = j == null ? void 0 : j.data) == null ? void 0 : _a.wbi_img;
+        const img = keyFromUrl((w == null ? void 0 : w.img_url) || ""), sub = keyFromUrl((w == null ? void 0 : w.sub_url) || "");
+        if (img && sub) {
+          cache = { img, sub, day: today() };
+          try {
+            localStorage.setItem(LS, JSON.stringify(cache));
+          } catch {
+          }
+        }
+      }).catch(() => {
+      });
+    } catch {
+    }
+  }
+  function signQuery(params) {
+    const keys = readKeys();
+    if (!keys) return null;
+    const mk = mixinKey(keys.img + keys.sub);
+    const wts = Math.floor(Date.now() / 1e3);
+    const q = { ...params, wts };
+    const query = Object.keys(q).sort().map((k) => `${encodeURIComponent(k)}=${encodeURIComponent(String(q[k]).replace(/[!'()*]/g, ""))}`).join("&");
+    return `${query}&w_rid=${md5(query + mk)}`;
+  }
+  function init(_cfg) {
+    if (window.__BILIKIT_NO_LOGIN__) return;
+    if (window.top !== window.self && !location.hash.includes("bk-drawer")) return;
+    if (location.hostname === "passport.bilibili.com") return;
+    if (/DedeUserID__ckMd5=/.test(document.cookie)) return;
+    window.__BILIKIT_NO_LOGIN__ = true;
+    if (!/DedeUserID=/.test(document.cookie)) {
+      try {
+        document.cookie = `DedeUserID=${Math.floor(Math.random() * 2 ** 50)}; path=/; domain=.bilibili.com`;
+      } catch {
+      }
+    }
+    try {
+      Object.defineProperty(window, "__playinfo__", { configurable: true, get: () => null, set: () => {
+      } });
+    } catch {
+    }
+    const pureFetch = window.fetch.bind(window);
+    warmKeys(pureFetch);
+    const MID = Math.floor(Math.random() * 1e15);
+    const MOCK_USER = {
+      isLogin: true,
+      is_login: true,
+      mid: MID,
+      uname: "bilibili",
+      face: "https://i0.hdslb.com/bfs/face/member/noface.jpg",
+      email_verified: 1,
+      mobile_verified: 1,
+      money: 0,
+      moral: 70,
+      level_info: { current_level: 6, current_min: 28800, current_exp: 29050, next_exp: "--" },
+      official: { role: 0, title: "", desc: "", type: -1 },
+      officialVerify: { type: -1, desc: "" },
+      vipStatus: 0,
+      vipType: 0
+    };
+    const rules = [
+      // nav：合并成「已登录」，保留 wbi_img 等原字段（→ 登录态 UI + 动态可见）
+      {
+        match: (u) => u.includes("/x/web-interface/nav"),
+        rewriteResponse: (j) => {
+          var _a;
+          try {
+            if ((_a = j == null ? void 0 : j.data) == null ? void 0 : _a.isLogin) return j;
+            j.code = 0;
+            j.message = "0";
+            j.data = Object.assign({}, j.data, MOCK_USER);
+          } catch {
+          }
+          return j;
+        }
+      },
+      // reply：匿名请求（假 cookie 会被拒，去掉反而正常返公开评论）→ 视频/动态下方评论
+      {
+        match: (u) => u.includes("/x/v2/reply/wbi/main") || u.includes("/x/v2/reply/reply"),
+        rewriteRequest: () => ({ credentials: "omit" })
+      },
+      // player/wbi/v2：改 login_mid / 等级 / 字幕字段 → 播放器 UI 认账（清晰度、字幕可选）
+      {
+        match: (u) => u.includes("/x/player/wbi/v2"),
+        rewriteResponse: (j) => {
+          try {
+            const d = j == null ? void 0 : j.data;
+            if (d) {
+              d.login_mid = MID;
+              d.need_login_subtitle = false;
+              if (d.level_info) d.level_info.current_level = 6;
+            }
+          } catch {
+          }
+          return j;
+        }
+      },
+      // playurl：塞 qn=80(1080p) + try_look=1(试看)、去掉旧签名重签 wbi → 1080p 取流
+      {
+        match: (u) => u.includes("/x/player/wbi/playurl"),
+        rewriteRequest: (u) => {
+          try {
+            const [base, qs = ""] = u.split("?");
+            const params = Object.fromEntries(new URLSearchParams(qs));
+            delete params.w_rid;
+            delete params.wts;
+            params.qn = "80";
+            params.try_look = "1";
+            const signed = signQuery(params);
+            if (!signed) return;
+            return { url: `${base}?${signed}` };
+          } catch {
+            return;
+          }
+        }
+      }
+    ];
+    installNetHook(rules);
+  }
+  const noLogin = {
+    id: "no-login",
+    name: "免登录",
+    description: "未登录也能看评论 / 他人动态 / 1080p（装它即可替代 beefreely，避免脚本冲突）",
+    note: "开启后未登录也能：看视频/动态下方<b>评论</b>、看他人<b>动态</b>、看 <b>1080p</b> 视频。装了它就能卸载 beefreely 等免登录脚本，避免多个脚本抢改请求导致的时好时坏。<br><b>取舍（务必知悉）</b>：① 纯<b>只读</b>——页面「以为」你已登录（显示假账号），但发评论/点赞/投币/收藏/历史同步等需真鉴权的操作都会失败；② <b>看不到评论 IP 属地</b>——评论走匿名请求，B 站服务端只对真登录返回属地字段，免登录下拿不到（与「评论属地」模块不可兼得）；③ 1080p 上限为官方<b>试看</b>，4K/HDR/大会员专享清晰度仍拿不到；④ 仅<b>未登录</b>时生效，检测到已登录会自动让路、不干扰真账号。",
+    category: "增强",
+    defaultEnabled: false,
+    // 侵入性功能，默认关
+    runAt: "start",
     init
   };
   try {
@@ -3193,7 +3534,9 @@
     noTrack,
     themeSync,
     commentLocation,
-    wakeLock
+    wakeLock,
+    noLogin
+    // 注册在 cdn-pick 之后：其 fetch/XHR 与 __playinfo__ hook 需叠在最外层（改请求；cdn-pick 改响应 host）
   );
   runAll();
   mountPanel();

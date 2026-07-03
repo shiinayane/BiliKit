@@ -451,9 +451,11 @@ function renderDetail(): void {
   if (!m) { detailEl.appendChild(emptyState('选择左侧一项')); return }
   detailEl.appendChild(el('div', 'detail-title', m.name))
   if (m.description) detailEl.appendChild(el('div', 'detail-desc', m.description))
-  if (m.settings && m.settings.length) {
+  const hasSettings = !!(m.settings && m.settings.length)
+  if (hasSettings || m.note) {
     const fields = el('div', 'fields')
-    for (const f of m.settings) fields.appendChild(renderField(m, f))
+    if (m.note) fields.appendChild(callout(m.note)) // 模块说明/取舍
+    if (m.settings) for (const f of m.settings) fields.appendChild(renderField(m, f))
     detailEl.appendChild(fields)
   } else {
     detailEl.appendChild(emptyState('此模块无额外配置', '开关在左侧列表'))

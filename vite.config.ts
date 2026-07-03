@@ -12,8 +12,8 @@ export default defineConfig({
       userscript: {
         name: 'BiliKit Core',
         namespace: 'https://github.com/shiinayane/BiliKit',
-        version: '0.4.3',
-        description: 'B 站体验增强核心，一装到位：CDN 优选（救海外卡顿）· 埋点/广告拦截（省流量降开销）· 主题跟随系统深浅 · 评论显 IP 属地 · 播放不息屏——统一设置面板集中开关。Safari 友好、无需扩展、零外部依赖。',
+        version: '0.4.4',
+        description: 'B 站体验增强核心，一装到位：CDN 优选（救海外卡顿）· 埋点/广告拦截（省流量降开销）· 免登录看评论/动态/1080p · 主题跟随系统深浅 · 评论显 IP 属地 · 播放不息屏——统一设置面板集中开关。Safari 友好、无需扩展、零外部依赖。',
         author: 'shiinayane',
         license: 'MIT',
         // 全站匹配：theme-sync 本就全站换肤，cdn-pick 需覆盖 player.bilibili.com；

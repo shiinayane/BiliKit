@@ -5,6 +5,7 @@ import { noTrack } from './modules/no-track'
 import { themeSync } from './modules/theme-sync'
 import { commentLocation } from './modules/comment-location'
 import { wakeLock } from './modules/wake-lock'
+import { noLogin } from './modules/no-login'
 
 // 心跳：与 Feed 同源共享 localStorage，写入本次运行时间戳，供 Feed 判断 Core 是否已安装并在跑。
 try { localStorage.setItem('bilikit:alive.core', String(Date.now())) } catch { /* 隐私模式忽略 */ }
@@ -67,6 +68,7 @@ register(
   themeSync,
   commentLocation,
   wakeLock,
+  noLogin, // 注册在 cdn-pick 之后：其 fetch/XHR 与 __playinfo__ hook 需叠在最外层（改请求；cdn-pick 改响应 host）
 )
 
 runAll()
