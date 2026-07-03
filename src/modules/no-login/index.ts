@@ -42,6 +42,15 @@ function init(_cfg: Cfg): void {
     try { document.cookie = `DedeUserID=${Math.floor(Math.random() * 2 ** 50)}; path=/; domain=.bilibili.com` } catch { /* ignore */ }
   }
 
+  // 1.5) 收拾伪造登录的副作用：个别带假 cookie 的请求被服务端判 -101 → 打开视频瞬间闪一个红色
+  //      「账号未登录」toast（Vant 的 .van-message-error，一闪即逝）。CSS 藏掉，眼不见。
+  //      仅在免登录开启时注入，不影响真登录/未启用免登录的用户的正常错误提示。
+  try {
+    const st = document.createElement('style')
+    st.textContent = '.van-message.van-message-error{display:none!important}'
+    ;(document.head || document.documentElement).appendChild(st)
+  } catch { /* ignore */ }
+
   // 2) 置空页面预埋的低清 __playinfo__（吞掉 SSR 赋值）→ 逼播放器重新请求 playurl，好让下面升到 1080p。
   //    注册在 cdn-pick 之后 → 本定义覆盖 cdn-pick 的 __playinfo__ setter（其 SSR 首帧换 host 那条随之失效）；
   //    但播放器**重新请求**的 playurl 仍会过 cdn-pick 的 fetch/XHR hook 换 host，故 CDN 优选对真正的取流不丢。
