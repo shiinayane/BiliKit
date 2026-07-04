@@ -418,7 +418,7 @@ function renderOpenDetail(d: HTMLElement): void {
   syncImm()
   modeSel.addEventListener('change', () => { set('feed.openMode', modeSel.value); syncImm() })
 
-  fields.appendChild(callout('全站生效（搜索 / 收藏 / 历史 / 空间等页面点视频，就地开抽屉、不丢当前列表）。<br><b>抽屉</b>：视频从底部滑出、内嵌整页播放，弹幕评论都在，点缝 / 关闭键 / Esc 关闭。<br><b>抽屉 · 网页全屏</b>：同样的抽屉，但播放器自动铺满、只看视频，更沉浸。<br><b>新标签页 / 当前页</b>：跳转到视频页打开（当前页=不拦、走原生）。'))
+  fields.appendChild(callout('作用于「浏览 / 列表」页（首页 / 搜索 / 收藏 / 历史 / 空间 / 动态…）点视频，就地打开、不丢当前列表。<br><b>抽屉</b>：视频从底部滑出、内嵌整页播放，弹幕评论都在，点缝 / 关闭键 / Esc 关闭。<br><b>抽屉 · 网页全屏</b>：同样的抽屉，但播放器自动铺满、只看视频，更沉浸。<br><b>新标签页 / 当前页</b>：跳转到视频页打开（当前页=不拦、走原生）。<br><b>视频播放页内</b>点相关视频始终走原生跳转，配合左下角「回程」胶囊一键跳回。'))
   d.appendChild(fields)
 }
 

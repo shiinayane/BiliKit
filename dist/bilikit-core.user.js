@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BiliKit Core
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.5.5
+// @version      0.5.6
 // @author       shiinayane
 // @description  B 站体验增强核心，一装到位：CDN 优选（救海外卡顿）· 免登录看评论/动态/1080p · 主题跟随系统深浅 · 评论显 IP 属地 · 播放不息屏——统一设置面板集中开关。Safari 友好、无需扩展、零外部依赖。
 // @license      MIT
@@ -2445,7 +2445,7 @@
       set("feed.openMode", modeSel.value);
       syncImm();
     });
-    fields.appendChild(callout("全站生效（搜索 / 收藏 / 历史 / 空间等页面点视频，就地开抽屉、不丢当前列表）。<br><b>抽屉</b>：视频从底部滑出、内嵌整页播放，弹幕评论都在，点缝 / 关闭键 / Esc 关闭。<br><b>抽屉 · 网页全屏</b>：同样的抽屉，但播放器自动铺满、只看视频，更沉浸。<br><b>新标签页 / 当前页</b>：跳转到视频页打开（当前页=不拦、走原生）。"));
+    fields.appendChild(callout("作用于「浏览 / 列表」页（首页 / 搜索 / 收藏 / 历史 / 空间 / 动态…）点视频，就地打开、不丢当前列表。<br><b>抽屉</b>：视频从底部滑出、内嵌整页播放，弹幕评论都在，点缝 / 关闭键 / Esc 关闭。<br><b>抽屉 · 网页全屏</b>：同样的抽屉，但播放器自动铺满、只看视频，更沉浸。<br><b>新标签页 / 当前页</b>：跳转到视频页打开（当前页=不拦、走原生）。<br><b>视频播放页内</b>点相关视频始终走原生跳转，配合左下角「回程」胶囊一键跳回。"));
     d.appendChild(fields);
   }
   function renderPreviewDetail(d) {
@@ -3563,11 +3563,14 @@
     runAt: "start",
     init: init$1
   };
+  function isPlayPage(pathname = location.pathname) {
+    return /^\/(video\/|bangumi\/play\/|cheese\/play\/|list\/|festival\/)/.test(pathname);
+  }
   const STACK_KEY = "bilikit-wayback-stack";
   const STACK_MAX = 20;
   const NS$1 = "bwb";
   function init(cfg) {
-    if (!/^\/(video\/|bangumi\/play\/|cheese\/play\/|list\/|festival\/)/.test(location.pathname)) return;
+    if (!isPlayPage()) return;
     if (window.top !== window.self && !location.hash.includes("bk-drawer")) return;
     if (window.__BILIKIT_WAY_BACK__) return;
     window.__BILIKIT_WAY_BACK__ = true;
@@ -4102,6 +4105,7 @@
     if (window.top !== window.self) return;
     window.__BILIKIT_SITE_DRAWER__ = true;
     document.addEventListener("click", (e) => {
+      if (isPlayPage()) return;
       const mode = get("feed.openMode", "drawer");
       if (mode === "current") return;
       if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
@@ -4117,6 +4121,7 @@
       openDrawer(hit.url, hit.cover, web, web && get("feed.drawerImmersive", true));
     }, true);
     document.addEventListener("mouseover", (e) => {
+      if (isPlayPage()) return;
       const mode = get("feed.openMode", "drawer");
       if (mode !== "drawer" && mode !== "drawer-web") return;
       if (resolve(e.target)) preconnect();

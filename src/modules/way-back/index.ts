@@ -1,4 +1,5 @@
 import type { BiliKitModule, Cfg } from '../../core/module'
+import { isPlayPage } from '../../core/pages'
 
 /**
  * 回程：视频页左下角「回退栈」胶囊——记住站内连续跳视频的「来时路」，点一下跳回上一个并续播。
@@ -12,8 +13,8 @@ const STACK_MAX = 20
 const NS = 'bwb'
 
 function init(cfg: Cfg): void {
-  // 仅视频类页面跑（否则首页/搜索也会冒出胶囊、与设置齿轮撞位）
-  if (!/^\/(video\/|bangumi\/play\/|cheese\/play\/|list\/|festival\/)/.test(location.pathname)) return
+  // 仅视频类页面跑（否则首页/搜索也会冒出胶囊、与设置齿轮撞位）。与 site-drawer 站下的边界同源。
+  if (!isPlayPage()) return
   // 顶层窗口 或 我们的抽屉 iframe（其它嵌入 iframe 不跑）
   if (window.top !== window.self && !location.hash.includes('bk-drawer')) return
   if ((window as any).__BILIKIT_WAY_BACK__) return

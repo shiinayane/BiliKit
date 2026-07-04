@@ -1,11 +1,14 @@
 import { openDrawer, preconnect } from '../../core/drawer'
 import { get } from '../../core/settings'
+import { isPlayPage } from '../../core/pages'
 
 /**
  * 全站抽屉：在任意 B 站页面（首页 / 搜索 / 收藏 / 历史 / 稍后看 / 别人空间 / 动态…）点视频，
  * 按「打开方式」(feed.openMode) 打开——抽屉 / 网页全屏抽屉 / 新标签 / 当前页(不拦)。不跳走、不丢当前列表。
  * 做法：document 上捕获阶段委托点击 → 命中视频链接就接管（复用 Core 抽屉）；非视频/修饰键点击一律放行。
  * 无独立开关，直接由「打开方式」驱动（当前页=不拦）；首页 Feed 卡片也走这里（卡片带 data-bvid）。
+ * 例外：**视频播放页内不接管**（见 isPlayPage）——那里点相关视频走原生 SPA，喂给「回程」建栈、且不叠抽屉。
+ * 只作用于「浏览/列表」语境（首页/搜索/空间/收藏/历史/动态…），播放页本就不该被抓进来。
  */
 function isVideoUrl(u: string): boolean {
   try {
@@ -40,6 +43,9 @@ export function installSiteDrawer(): void {
   ;(window as any).__BILIKIT_SITE_DRAWER__ = true
 
   document.addEventListener('click', (e) => {
+    // 播放页内点视频（相关推荐 / 播放列表下一个）一律放行走原生 SPA：既喂给「回程」建栈，又避免抽屉叠抽屉。
+    // 按点击时的 pathname 现判——B 站 SPA 跳转会改 location 不重载，install 时定死会错。与回程站上的边界同源。
+    if (isPlayPage()) return
     const mode = get<string>('feed.openMode', 'drawer')
     if (mode === 'current') return // 当前页 = 原生行为，不拦
     // 修饰键 / 中键 / 已被处理 → 放行（用户想要新标签 / 站点已接管）
@@ -55,6 +61,7 @@ export function installSiteDrawer(): void {
 
   // 悬停视频链接预连接（省点开握手）：drawer 内部 12s 节流
   document.addEventListener('mouseover', (e) => {
+    if (isPlayPage()) return // 播放页不接管 → 预连接纯属浪费
     const mode = get<string>('feed.openMode', 'drawer')
     if (mode !== 'drawer' && mode !== 'drawer-web') return
     if (resolve(e.target as HTMLElement)) preconnect()
