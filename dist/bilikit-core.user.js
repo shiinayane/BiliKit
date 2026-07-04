@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BiliKit Core
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.5.6
+// @version      0.5.7
 // @author       shiinayane
 // @description  B 站体验增强核心，一装到位：CDN 优选（救海外卡顿）· 免登录看评论/动态/1080p · 主题跟随系统深浅 · 评论显 IP 属地 · 播放不息屏——统一设置面板集中开关。Safari 友好、无需扩展、零外部依赖。
 // @license      MIT
@@ -2055,19 +2055,19 @@
 * { box-sizing: border-box; font-family: -apple-system, "PingFang SC", sans-serif; }
 
 .gear {
-  position: fixed; left: 0; bottom: 26px; z-index: 99990; /* 低于抽屉遮罩(100000)：抽屉一开即被盖住，不再浮在其上 */
-  width: 38px; height: 38px; border-radius: 50%; cursor: pointer;
+  position: fixed; right: 24px; bottom: 32px; z-index: 99990; /* 与 Feed 右下悬浮按钮同位对齐；低于抽屉遮罩(100000)：抽屉一开即被盖住 */
+  width: 40px; height: 40px; border-radius: 50%; cursor: pointer;
   display: flex; align-items: center; justify-content: center;
   border: 1px solid rgba(255,255,255,.1); background: rgba(22,23,28,.9); color: #fff;
-  box-shadow: 0 3px 14px rgba(0,0,0,.3); opacity: .4;
-  transform: translateX(-42%); /* 默认吸附左边缘、半藏，只露一点，观感更清爽 */
-  transition: opacity .18s ease, transform .18s ease;
+  box-shadow: 0 3px 14px rgba(0,0,0,.3); opacity: .92;
+  transition: opacity .18s ease, transform .16s ease, box-shadow .16s ease;
   -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
 }
-.gear:hover { opacity: 1; transform: translateX(0); } /* hover 滑出、完整贴边 */
+.gear:hover { opacity: 1; transform: translateY(-2px); box-shadow: 0 5px 16px rgba(0,0,0,.2); }
 .gear:hover svg { transform: rotate(30deg); }
-.gear:active { transform: translateX(0) scale(.94); }
+.gear:active { transform: scale(.94); }
 .gear svg { width: 20px; height: 20px; display: block; transition: transform .16s ease; }
+.gear.hidden { display: none; } /* Feed 在场时并入其 FAB，隐藏这颗独立齿轮 */
 
 .overlay {
   position: fixed; inset: 0; z-index: 2147483501; background: rgba(0,0,0,.5);
@@ -2566,6 +2566,29 @@
     });
     sr.append(gear, overlay);
     document.body.appendChild(root2);
+    const FAB_GEAR = GEAR_SVG.replace("<svg ", '<svg width="20" height="20" ');
+    const syncFab = () => {
+      const fab = document.querySelector(".bk-feed-fab");
+      if (fab) {
+        if (!fab.querySelector(".bk-settings")) {
+          const b = document.createElement("button");
+          b.className = "bk-settings";
+          b.title = "BiliKit 设置";
+          b.setAttribute("aria-label", "BiliKit 设置");
+          b.innerHTML = FAB_GEAR;
+          b.addEventListener("click", open);
+          fab.insertBefore(b, fab.querySelector(".bk-refresh"));
+        }
+        gear.classList.add("hidden");
+      } else {
+        gear.classList.remove("hidden");
+      }
+    };
+    syncFab();
+    try {
+      new MutationObserver(syncFab).observe(document.body, { childList: true });
+    } catch {
+    }
   }
   function init$5(cfg) {
     if (window.__BILIKIT_CDN_PICK__) return;
