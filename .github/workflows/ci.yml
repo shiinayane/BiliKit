@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # onlyBuiltDependencies:[esbuild] 会在此把 esbuild 构建好；脚本一律用 npm run（pnpm run 会被 deps 预检卡）
+      - run: pnpm install --frozen-lockfile
+
+      - name: 类型检查
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: 单元测试（纯逻辑层）
+        run: npm run test
+
+      - name: 构建
+        run: npm run build
+
+      # dist/ 是提交进仓库的发布产物（GreasyFork 从 raw URL 拉），必须与源码同步。
+      # 若源码改了却没重建 dist，这里的 diff 非空 → 失败，提醒本地 npm run build 后再提交。
+      - name: 校验 dist 与源码同步
+        run: |
+          if ! git diff --exit-code -- dist/; then
+            echo "::error::dist/ 与源码不一致——本地跑 npm run build 后把 dist 一起提交"
+            exit 1
+          fi

@@ -13,7 +13,7 @@ export interface NetRule {
   /** URL 命中判定 */
   match: (url: string) => boolean
   /** 改请求：返回新 url / credentials（都可选，不返回则不改） */
-  rewriteRequest?: (url: string) => { url?: string; credentials?: RequestCredentials } | void
+  rewriteRequest?: (url: string) => { url?: string; credentials?: RequestCredentials } | undefined
   /** 改响应：拿到解析后的 JSON，返回变形后的对象（原地改或换新都行） */
   rewriteResponse?: (json: any, url: string) => any
 }
@@ -78,7 +78,7 @@ export function installNetHook(rules: NetRule[]): void {
     class X extends OX {
       private __nlUrl = ''
       private __nlRule: NetRule | undefined
-      private __nlRw: { url?: string; credentials?: RequestCredentials } | void
+      private __nlRw: { url?: string; credentials?: RequestCredentials } | undefined
       open(method: any, url: any, ...rest: any[]) {
         this.__nlUrl = String(url)
         this.__nlRule = rules.find((r) => r.match(this.__nlUrl))

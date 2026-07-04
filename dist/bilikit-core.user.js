@@ -2697,7 +2697,7 @@
     }
     const origFetch = window.fetch;
     if (origFetch) {
-      window.fetch = async function(input, init2) {
+      window.fetch = async function(input, _init) {
         const url = typeof input === "string" ? input : input && input.url || String(input || "");
         const resp = await origFetch.apply(this, arguments);
         if (!isPlayurl(url)) return resp;

@@ -47,7 +47,7 @@ function init(cfg: Cfg): void {
   // 二、换片/切档：fetch 与 XHR 的 playurl 响应（只 hook 主线程）
   const origFetch = window.fetch
   if (origFetch) {
-    window.fetch = async function (input: any, init?: any) {
+    window.fetch = async function (input: any, _init?: any) {
       const url = typeof input === 'string' ? input : (input && input.url) || String(input || '')
       const resp = await origFetch.apply(this, arguments as any)
       if (!isPlayurl(url)) return resp
