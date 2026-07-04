@@ -7,6 +7,7 @@ import { themeSync } from './modules/theme-sync'
 import { commentLocation } from './modules/comment-location'
 import { wakeLock } from './modules/wake-lock'
 import { noLogin } from './modules/no-login'
+import { wayBack } from './modules/way-back'
 import { installSiteDrawer } from './modules/site-drawer'
 
 // 跨子域对齐设置：把 .bilibili.com cookie 里的共享设置并回本域 localStorage（www/search/space 用同一份），
@@ -77,6 +78,7 @@ register(
   commentLocation,
   wakeLock,
   noLogin, // 注册在 cdn-pick 之后：其 fetch/XHR 与 __playinfo__ hook 需叠在最外层（改请求；cdn-pick 改响应 host）
+  wayBack, // 视频页回退栈胶囊（顶层 + 抽屉 iframe）
 )
 
 runAll()

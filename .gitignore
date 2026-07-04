@@ -10,8 +10,7 @@ node_modules/
 # raw.githubusercontent.com 定时拉取这里的 .user.js 自动发新版，故不再忽略。
 
 # 参考项目（外部仓库克隆，非 BiliKit 一部分，不纳入版本库）
-BewlyCat/
-Bilibili-Gate/
+references/
 urls.txt
 
 # 草稿 / 临时（第三方脚本、DOM dump 等，非 BiliKit 一部分）

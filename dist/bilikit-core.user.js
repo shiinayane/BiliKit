@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BiliKit Core
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.5.0
+// @version      0.5.1
 // @author       shiinayane
 // @description  B 站体验增强核心，一装到位：CDN 优选（救海外卡顿）· 埋点/广告拦截（省流量降开销）· 免登录看评论/动态/1080p · 主题跟随系统深浅 · 评论显 IP 属地 · 播放不息屏——统一设置面板集中开关。Safari 友好、无需扩展、零外部依赖。
 // @license      MIT
@@ -2055,17 +2055,19 @@
 * { box-sizing: border-box; font-family: -apple-system, "PingFang SC", sans-serif; }
 
 .gear {
-  position: fixed; left: 18px; bottom: 26px; z-index: 2147483500;
+  position: fixed; left: 0; bottom: 26px; z-index: 99990; /* 低于抽屉遮罩(100000)：抽屉一开即被盖住，不再浮在其上 */
   width: 38px; height: 38px; border-radius: 50%; cursor: pointer;
   display: flex; align-items: center; justify-content: center;
   border: 1px solid rgba(255,255,255,.1); background: rgba(22,23,28,.9); color: #fff;
-  box-shadow: 0 3px 14px rgba(0,0,0,.3); opacity: .45;
-  transition: opacity .16s ease, transform .16s ease;
+  box-shadow: 0 3px 14px rgba(0,0,0,.3); opacity: .4;
+  transform: translateX(-42%); /* 默认吸附左边缘、半藏，只露一点，观感更清爽 */
+  transition: opacity .18s ease, transform .18s ease;
   -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
 }
-.gear:hover { opacity: 1; transform: translateY(-1px) rotate(30deg); }
-.gear:active { transform: scale(.94); }
-.gear svg { width: 20px; height: 20px; display: block; }
+.gear:hover { opacity: 1; transform: translateX(0); } /* hover 滑出、完整贴边 */
+.gear:hover svg { transform: rotate(30deg); }
+.gear:active { transform: translateX(0) scale(.94); }
+.gear svg { width: 20px; height: 20px; display: block; transition: transform .16s ease; }
 
 .overlay {
   position: fixed; inset: 0; z-index: 2147483501; background: rgba(0,0,0,.5);
@@ -2512,6 +2514,8 @@
   }
   function mountPanel() {
     if (window.top !== window.self) return;
+    const home = (location.hostname === "www.bilibili.com" || location.hostname === "bilibili.com") && (location.pathname === "/" || location.pathname === "/index.html");
+    if (!home) return;
     if (!document.body) {
       document.addEventListener("DOMContentLoaded", mountPanel, { once: true });
       return;
@@ -2563,7 +2567,7 @@
     sr.append(gear, overlay);
     document.body.appendChild(root2);
   }
-  function init$5(cfg) {
+  function init$6(cfg) {
     if (window.__BILIKIT_CDN_PICK__) return;
     window.__BILIKIT_CDN_PICK__ = true;
     const TARGET_HOST = cfg.get("targetHost");
@@ -2723,9 +2727,9 @@
         hint: "把视频分片钉到该大陆镜像，绕开慢节点；选「自定义…」可手填镜像主机（须 upos 系 .bilivideo.com，否则会 403）"
       }
     ],
-    init: init$5
+    init: init$6
   };
-  function init$4(cfg) {
+  function init$5(cfg) {
     if (window.__BILIKIT_NO_TRACK__) return;
     window.__BILIKIT_NO_TRACK__ = true;
     const TELEMETRY = [
@@ -2837,9 +2841,9 @@
         hint: "请求 URL 含其中任一片段即拦；留空不额外拦"
       }
     ],
-    init: init$4
+    init: init$5
   };
-  function init$3(cfg) {
+  function init$4(cfg) {
     if (window.top !== window.self && !location.hash.includes("bk-drawer")) return;
     if (window.__BILIKIT_THEME_SYNC__) return;
     window.__BILIKIT_THEME_SYNC__ = true;
@@ -2931,9 +2935,9 @@
         hint: "跟随系统深浅，或强制固定一种"
       }
     ],
-    init: init$3
+    init: init$4
   };
-  function init$2(cfg) {
+  function init$3(cfg) {
     if (window.__BILIKIT_COMMENT_LOC__) return;
     window.__BILIKIT_COMMENT_LOC__ = true;
     const PIN = cfg.get("pin") || "";
@@ -3065,9 +3069,9 @@
     settings: [
       { key: "pin", type: "text", label: "地名前缀符", default: "", placeholder: "如 📍 ", hint: "显示在属地前，默认无；想加自己填" }
     ],
-    init: init$2
+    init: init$3
   };
-  function init$1() {
+  function init$2() {
     const nav = navigator;
     if (!("wakeLock" in navigator)) return;
     if (window.__BILIKIT_WAKE_LOCK__) return;
@@ -3170,7 +3174,7 @@
     description: "播放视频时阻止 Safari 休眠 / 屏保",
     category: "播放",
     runAt: "idle",
-    init: init$1
+    init: init$2
   };
   const urlOf = (input) => {
     if (typeof input === "string") return input;
@@ -3417,7 +3421,7 @@
     } catch {
     }
   }
-  function init(_cfg) {
+  function init$1(_cfg) {
     if (window.__BILIKIT_NO_LOGIN__) return;
     if (window.top !== window.self && !location.hash.includes("bk-drawer")) return;
     if (location.hostname === "passport.bilibili.com") return;
@@ -3531,6 +3535,358 @@
     defaultEnabled: false,
     // 侵入性功能，默认关
     runAt: "start",
+    init: init$1
+  };
+  const STACK_KEY = "bilikit-wayback-stack";
+  const STACK_MAX = 20;
+  const NS$1 = "bwb";
+  function init(cfg) {
+    if (!/^\/(video\/|bangumi\/play\/|cheese\/play\/|list\/|festival\/)/.test(location.pathname)) return;
+    if (window.top !== window.self && !location.hash.includes("bk-drawer")) return;
+    if (window.__BILIKIT_WAY_BACK__) return;
+    window.__BILIKIT_WAY_BACK__ = true;
+    const resumeTime = cfg.get("resumeTime") !== false;
+    const inDrawer = window.top !== window.self;
+    const drawerMark = (location.hash.match(/#bk-drawer(?:-web)?/) || [""])[0] || (inDrawer ? "#bk-drawer" : "");
+    const JUMP_FLAG = "bilikit-wb-jump";
+    if (inDrawer) {
+      try {
+        if (sessionStorage.getItem(JUMP_FLAG)) sessionStorage.removeItem(JUMP_FLAG);
+        else sessionStorage.removeItem(STACK_KEY);
+      } catch {
+      }
+    }
+    const videoIdOf = (href) => {
+      var _a, _b, _c, _d;
+      try {
+        const u = new URL(href, location.href);
+        const p = u.pathname;
+        return ((_b = (_a = p.match(/\/video\/(BV\w+|av\d+)/i)) == null ? void 0 : _a[1]) == null ? void 0 : _b.toLowerCase()) || ((_d = (_c = p.match(/\/(?:bangumi|cheese)\/play\/((ep|ss)\d+)/i)) == null ? void 0 : _c[1]) == null ? void 0 : _d.toLowerCase()) || (u.searchParams.get("bvid") || "").toLowerCase() || "";
+      } catch {
+        return "";
+      }
+    };
+    const readStack = () => {
+      try {
+        const a = JSON.parse(sessionStorage.getItem(STACK_KEY) || "[]");
+        return Array.isArray(a) ? a : [];
+      } catch {
+        return [];
+      }
+    };
+    const writeStack = (s) => {
+      try {
+        sessionStorage.setItem(STACK_KEY, JSON.stringify(s.slice(-STACK_MAX)));
+      } catch {
+      }
+    };
+    const cleanTitle = (raw) => (raw || "").replace(/[_-](哔哩哔哩|bilibili|番剧|动画|电影|电视剧|纪录片|综艺|国创|在线观看|全集)([_-]?(哔哩哔哩|bilibili|番剧|动画|电影|电视剧|纪录片|综艺|国创|在线观看|全集))*$/i, "").trim();
+    const titleById = /* @__PURE__ */ new Map();
+    const noteTitle = () => {
+      const id = videoIdOf(location.href);
+      const t = cleanTitle(document.title);
+      if (id && t) titleById.set(id, t);
+    };
+    let titleEl = null;
+    let headObserved = false;
+    const titleMo = new MutationObserver(() => {
+      if (titleEl && !titleEl.isConnected) {
+        titleEl = null;
+        headObserved = false;
+        titleMo.disconnect();
+        watchTitle();
+      }
+      noteTitle();
+      updateNowRow();
+    });
+    function watchTitle() {
+      if (document.head && !headObserved) {
+        headObserved = true;
+        titleMo.observe(document.head, { childList: true });
+      }
+      const el2 = document.querySelector("title");
+      if (el2 && el2 !== titleEl) {
+        titleEl = el2;
+        titleMo.observe(el2, { childList: true, characterData: true, subtree: true });
+        noteTitle();
+      }
+    }
+    watchTitle();
+    document.addEventListener("DOMContentLoaded", () => watchTitle());
+    let playerVideo = null;
+    const getVideo = () => playerVideo && playerVideo.isConnected ? playerVideo : document.querySelector("video");
+    const currentVideoTime = () => {
+      const v = getVideo();
+      return v && Number.isFinite(v.currentTime) ? v.currentTime : 0;
+    };
+    let lastPlayedT = 0;
+    document.addEventListener("timeupdate", (e) => {
+      const v = e.target;
+      if (!(v && v.tagName === "VIDEO" && Number.isFinite(v.currentTime))) return;
+      const inPlayer = !!v.closest("#bilibili-player, .bpx-player-container");
+      if (inPlayer) playerVideo = v;
+      if ((inPlayer || !playerVideo) && v.currentTime > 0) lastPlayedT = v.currentTime;
+    }, true);
+    const departureTime = () => {
+      const t = currentVideoTime();
+      return t > 0 ? t : lastPlayedT;
+    };
+    function recordEntry(prevHref, prevTitle, t, rerender = true) {
+      const id = videoIdOf(prevHref);
+      if (!id) return;
+      const stack = readStack();
+      if (stack.length && videoIdOf(stack[stack.length - 1].url) === id) return;
+      stack.push({ url: prevHref, title: titleById.get(id) || cleanTitle(prevTitle) || id, t: resumeTime && t > 0 ? Math.floor(t) : 0 });
+      const trimmed = stack.length > STACK_MAX ? stack.slice(-STACK_MAX) : stack;
+      writeStack(trimmed);
+      if (rerender) renderChip(trimmed);
+    }
+    const origPush = history.pushState.bind(history);
+    history.pushState = function(...args) {
+      try {
+        const url = args[2];
+        if (url != null) {
+          const prevId = videoIdOf(location.href);
+          const curId = videoIdOf(new URL(url, location.href).href);
+          if (prevId && curId && prevId !== curId && !(prevId.startsWith("ss") && curId.startsWith("ep"))) {
+            recordEntry(location.href, document.title, departureTime());
+            lastPlayedT = 0;
+          }
+        }
+      } catch {
+      }
+      return origPush.apply(this, args);
+    };
+    let leavingViaJump = false;
+    window.addEventListener("pagehide", () => {
+      if (!leavingViaJump) recordEntry(location.href, document.title, departureTime(), false);
+    });
+    function jumpTo(i) {
+      const stack = readStack();
+      if (i < 0) i = stack.length - 1;
+      const entry = stack[i];
+      if (!entry) return;
+      writeStack(stack.slice(0, i));
+      leavingViaJump = true;
+      let href = entry.url;
+      try {
+        const u = new URL(entry.url, location.href);
+        if (entry.t > 5) u.searchParams.set("t", String(entry.t));
+        href = u.href;
+      } catch {
+      }
+      if (drawerMark) {
+        if (!href.includes("#")) href += drawerMark;
+        try {
+          sessionStorage.setItem(JUMP_FLAG, "1");
+        } catch {
+        }
+      }
+      location.replace(href);
+    }
+    const jumpToUrl = (url) => {
+      const s = readStack();
+      for (let i = s.length - 1; i >= 0; i--) if (s[i].url === url) return jumpTo(i);
+    };
+    function dedupeOnArrival(backRestore = false) {
+      const curId = videoIdOf(location.href);
+      if (!curId) return;
+      let stack = readStack();
+      const before = stack.length;
+      if (backRestore) {
+        let i = stack.length - 1;
+        while (i >= 0 && videoIdOf(stack[i].url) !== curId) i--;
+        if (i >= 0) stack = stack.slice(0, i + 1);
+      }
+      let n = stack.length;
+      while (n && videoIdOf(stack[n - 1].url) === curId) n--;
+      if (n !== before) writeStack(stack.slice(0, n));
+    }
+    const BACK_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10H11"/></svg>';
+    const CSS2 = `
+.${NS$1}-root{ position:fixed; left:16px; bottom:24px; z-index:99990; font-family:-apple-system,"PingFang SC",sans-serif; }
+.${NS$1}-chip{ display:inline-flex; align-items:center; gap:6px; height:34px; padding:0 13px; border-radius:18px; cursor:pointer;
+  background:rgba(22,23,28,.9); border:1px solid rgba(255,255,255,.1); color:#e3e5e7; box-shadow:0 3px 14px rgba(0,0,0,.3);
+  font-size:13px; font-weight:500; opacity:.5; transition:opacity .18s ease, transform .16s ease;
+  -webkit-backdrop-filter:blur(6px); backdrop-filter:blur(6px); }
+.${NS$1}-root:hover .${NS$1}-chip{ opacity:1; }
+.${NS$1}-chip:active{ transform:scale(.96); }
+.${NS$1}-chip svg{ width:16px; height:16px; color:#fb7299; }
+.${NS$1}-empty .${NS$1}-chip{ opacity:.32; cursor:default; }
+.${NS$1}-empty .${NS$1}-chip svg{ color:rgba(255,255,255,.5); }
+.${NS$1}-list{ position:absolute; left:0; bottom:calc(100% + 8px); width:290px;
+  background:#1c1d22; border:1px solid rgba(255,255,255,.08); border-radius:12px; box-shadow:0 12px 40px rgba(0,0,0,.5);
+  opacity:0; visibility:hidden; transform:translateY(6px); pointer-events:none;
+  /* 离开延迟 .15s 再淡出：给指针跨间隙迁移留宽限，不丢 hover */
+  transition:opacity .16s ease .15s, transform .16s ease .15s, visibility 0s linear .31s; }
+.${NS$1}-root:hover .${NS$1}-list{ opacity:1; visibility:visible; transform:none; pointer-events:auto; transition-delay:0s; }
+/* 滚动收在内层，卡片自身不裁剪 → ::after 悬停桥才能伸出盒外（放 .list 上会被 overflow 裁掉=没有桥） */
+.${NS$1}-scroll{ overflow:hidden auto; max-height:60vh; min-height:0; border-radius:12px; }
+/* 胶囊与列表间隙的悬停桥：从卡片盒外伸出、指针穿过间隙仍算在列表上，hover 不断链 */
+.${NS$1}-list::after{ content:''; position:absolute; top:100%; left:0; right:0; height:12px; }
+.${NS$1}-head{ font-size:11px; color:rgba(255,255,255,.35); padding:9px 12px 5px; }
+.${NS$1}-item{ display:flex; align-items:center; gap:9px; padding:8px 12px; cursor:pointer; }
+.${NS$1}-item:hover{ background:rgba(251,114,153,.16); }
+.${NS$1}-item:hover .${NS$1}-num{ background:#fb7299; color:#fff; }
+.${NS$1}-item:hover .${NS$1}-title{ color:#fb7299; }
+.${NS$1}-num{ flex:0 0 auto; width:19px; height:19px; border-radius:50%; background:rgba(255,255,255,.08); color:rgba(255,255,255,.55);
+  font-size:11px; display:flex; align-items:center; justify-content:center; transition:background .14s ease, color .14s ease; }
+.${NS$1}-title{ flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px; color:rgba(255,255,255,.82); }
+.${NS$1}-time{ flex:0 0 auto; font-size:11px; color:rgba(255,255,255,.4); font-variant-numeric:tabular-nums; }
+/* 「正在播放」行（序号 0）：不可点、带动画声波条 */
+.${NS$1}-now{ cursor:default; border-top:1px solid rgba(255,255,255,.06); }
+.${NS$1}-now:hover{ background:none; }
+.${NS$1}-now .${NS$1}-num{ background:rgba(255,255,255,.06); }
+.${NS$1}-now:hover .${NS$1}-title{ color:rgba(255,255,255,.4); }
+.${NS$1}-now .${NS$1}-title{ color:rgba(255,255,255,.4); }
+.${NS$1}-bars{ flex:0 0 auto; display:flex; align-items:flex-end; gap:2px; height:12px; }
+.${NS$1}-bars i{ width:2.5px; height:4px; background:#fb7299; border-radius:1px; }
+.${NS$1}-playing .${NS$1}-bars i{ animation:${NS$1}-eq .9s ease-in-out infinite; }
+.${NS$1}-playing .${NS$1}-bars i:nth-child(2){ animation-delay:.3s; }
+.${NS$1}-playing .${NS$1}-bars i:nth-child(3){ animation-delay:.6s; }
+@keyframes ${NS$1}-eq{ 0%,100%{ height:4px; } 50%{ height:12px; } }
+@media (prefers-color-scheme: light){
+  .${NS$1}-chip{ background:rgba(255,255,255,.95); border-color:rgba(0,0,0,.08); color:#18191c; box-shadow:0 3px 14px rgba(0,0,0,.14); }
+  .${NS$1}-empty .${NS$1}-chip svg{ color:rgba(0,0,0,.35); }
+  .${NS$1}-list{ background:#fff; border-color:rgba(0,0,0,.08); box-shadow:0 12px 40px rgba(0,0,0,.18); }
+  .${NS$1}-head{ color:rgba(0,0,0,.4); }
+  .${NS$1}-num{ background:rgba(0,0,0,.06); color:rgba(0,0,0,.5); }
+  .${NS$1}-title{ color:rgba(0,0,0,.85); }
+  .${NS$1}-time{ color:rgba(0,0,0,.4); }
+  .${NS$1}-now{ border-top-color:rgba(0,0,0,.06); }
+  .${NS$1}-now .${NS$1}-title, .${NS$1}-now:hover .${NS$1}-title{ color:rgba(0,0,0,.4); }
+  .${NS$1}-now .${NS$1}-num{ background:rgba(0,0,0,.05); }
+}
+`;
+    let root2 = null;
+    let listEl = null;
+    let countEl = null;
+    let nowRow = null;
+    let nowTitleEl = null;
+    const fmtTime = (t) => {
+      const m = Math.floor(t / 60), s = Math.floor(t % 60);
+      return `${m}:${s < 10 ? "0" : ""}${s}`;
+    };
+    function ensureChip() {
+      if (root2 || !document.body) return;
+      const style = document.createElement("style");
+      style.textContent = CSS2;
+      root2 = document.createElement("div");
+      root2.className = `${NS$1}-root`;
+      const list = document.createElement("div");
+      list.className = `${NS$1}-list`;
+      const scroll = document.createElement("div");
+      scroll.className = `${NS$1}-scroll`;
+      list.appendChild(scroll);
+      listEl = scroll;
+      const chip = document.createElement("div");
+      chip.className = `${NS$1}-chip`;
+      chip.title = "回退上一个视频（悬停看来时路）";
+      chip.innerHTML = `${BACK_SVG}<span class="${NS$1}-count">0</span>`;
+      countEl = chip.querySelector(`.${NS$1}-count`);
+      chip.addEventListener("click", () => {
+        if (readStack().length) jumpTo(-1);
+      });
+      root2.append(style, list, chip);
+      root2.addEventListener("mouseleave", () => {
+        if (rebuildHeldByHover) rebuildList();
+      });
+      document.body.appendChild(root2);
+    }
+    function updateNowRow() {
+      if (!nowRow || !nowTitleEl) return;
+      nowTitleEl.textContent = titleById.get(videoIdOf(location.href)) || cleanTitle(document.title) || "正在播放";
+      const v = getVideo();
+      nowRow.classList.toggle(`${NS$1}-playing`, !!v && !v.paused);
+    }
+    let rebuildQueued = false;
+    let rebuildHeldByHover = false;
+    function renderChip(known) {
+      if (!document.body) return;
+      ensureChip();
+      if (!root2) return;
+      const stack = known || readStack();
+      root2.classList.toggle(`${NS$1}-empty`, !stack.length);
+      if (countEl) countEl.textContent = String(stack.length);
+      if (!rebuildQueued) {
+        rebuildQueued = true;
+        queueMicrotask(rebuildList);
+      }
+    }
+    function rebuildList() {
+      rebuildQueued = false;
+      if (!listEl || !root2) return;
+      if (root2.matches(":hover")) {
+        rebuildHeldByHover = true;
+        return;
+      }
+      rebuildHeldByHover = false;
+      const stack = readStack();
+      listEl.textContent = "";
+      const head = document.createElement("div");
+      head.className = `${NS$1}-head`;
+      head.textContent = stack.length ? `来时路 · ${stack.length} 层` : "还没有来时路 · 当前是起点";
+      listEl.appendChild(head);
+      stack.forEach((entry, i) => {
+        const item = document.createElement("div");
+        item.className = `${NS$1}-item`;
+        item.title = entry.title;
+        const num2 = document.createElement("span");
+        num2.className = `${NS$1}-num`;
+        num2.textContent = String(stack.length - i);
+        const title = document.createElement("span");
+        title.className = `${NS$1}-title`;
+        title.textContent = entry.title;
+        item.append(num2, title);
+        if (entry.t > 5) {
+          const tm = document.createElement("span");
+          tm.className = `${NS$1}-time`;
+          tm.textContent = fmtTime(entry.t);
+          item.appendChild(tm);
+        }
+        item.addEventListener("click", () => jumpToUrl(entry.url));
+        listEl.appendChild(item);
+      });
+      nowRow = document.createElement("div");
+      nowRow.className = `${NS$1}-item ${NS$1}-now`;
+      const num = document.createElement("span");
+      num.className = `${NS$1}-num`;
+      num.textContent = "0";
+      nowTitleEl = document.createElement("span");
+      nowTitleEl.className = `${NS$1}-title`;
+      const bars = document.createElement("span");
+      bars.className = `${NS$1}-bars`;
+      bars.append(document.createElement("i"), document.createElement("i"), document.createElement("i"));
+      nowRow.append(num, nowTitleEl, bars);
+      listEl.appendChild(nowRow);
+      updateNowRow();
+      listEl.scrollTop = listEl.scrollHeight;
+    }
+    document.addEventListener("play", updateNowRow, true);
+    document.addEventListener("pause", updateNowRow, true);
+    function onReady(backRestore = false) {
+      dedupeOnArrival(backRestore);
+      renderChip();
+    }
+    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", () => onReady());
+    else onReady();
+    window.addEventListener("pageshow", (e) => {
+      if (!e.persisted) return;
+      leavingViaJump = false;
+      onReady(true);
+    });
+  }
+  const wayBack = {
+    id: "way-back",
+    name: "回程",
+    description: "视频页左下角回退栈：记住来时路，点一下跳回上一个视频并续播（顶层与抽屉内都生效）",
+    category: "播放",
+    defaultEnabled: true,
+    runAt: "start",
+    // 需在 B 站用 pushState 跳视频之前包上
+    settings: [
+      { key: "resumeTime", type: "toggle", label: "跳回时续播", default: true, hint: "跳回上一个视频时带上离开时的播放进度（?t=），从原处接着看" }
+    ],
     init
   };
   const NS = "bk";
@@ -3806,8 +4162,10 @@
     themeSync,
     commentLocation,
     wakeLock,
-    noLogin
+    noLogin,
     // 注册在 cdn-pick 之后：其 fetch/XHR 与 __playinfo__ hook 需叠在最外层（改请求；cdn-pick 改响应 host）
+    wayBack
+    // 视频页回退栈胶囊（顶层 + 抽屉 iframe）
   );
   runAll();
   installSiteDrawer();

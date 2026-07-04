@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         BiliKit · 回程
-// @name:en      BiliKit · Way Back
+// @name         BiliKit · 回程（已废弃，请改用 BiliKit Core）
+// @name:en      BiliKit · Way Back (DEPRECATED — use BiliKit Core)
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.9.4
+// @version      0.9.5
 // @description    ⚠️【已停止单独维护，建议改用 BiliKit 套件 Core + Feed】视频标签页的来时路：站内跨视频跳转零刷新压扁（历史钉在 1，链接新开的标签左滑即原生关闭），左下角悬浮回退栈点击即跳回并续播。与 BiliKit·浮窗抽屉自动协同。
 // @description:en Flatten in-site cross-video SPA history with zero reloads (history pinned at 1, so Safari's native swipe closes link-opened tabs), and keep a floating back-stack you can click to jump back, resuming playback. Auto-coordinates with BiliKit Float.
 // @author       shiinayane

@@ -25,17 +25,19 @@ const STYLE = `
 * { box-sizing: border-box; font-family: -apple-system, "PingFang SC", sans-serif; }
 
 .gear {
-  position: fixed; left: 18px; bottom: 26px; z-index: 2147483500;
+  position: fixed; left: 0; bottom: 26px; z-index: 99990; /* 低于抽屉遮罩(100000)：抽屉一开即被盖住，不再浮在其上 */
   width: 38px; height: 38px; border-radius: 50%; cursor: pointer;
   display: flex; align-items: center; justify-content: center;
   border: 1px solid rgba(255,255,255,.1); background: rgba(22,23,28,.9); color: #fff;
-  box-shadow: 0 3px 14px rgba(0,0,0,.3); opacity: .45;
-  transition: opacity .16s ease, transform .16s ease;
+  box-shadow: 0 3px 14px rgba(0,0,0,.3); opacity: .4;
+  transform: translateX(-42%); /* 默认吸附左边缘、半藏，只露一点，观感更清爽 */
+  transition: opacity .18s ease, transform .18s ease;
   -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
 }
-.gear:hover { opacity: 1; transform: translateY(-1px) rotate(30deg); }
-.gear:active { transform: scale(.94); }
-.gear svg { width: 20px; height: 20px; display: block; }
+.gear:hover { opacity: 1; transform: translateX(0); } /* hover 滑出、完整贴边 */
+.gear:hover svg { transform: rotate(30deg); }
+.gear:active { transform: translateX(0) scale(.94); }
+.gear svg { width: 20px; height: 20px; display: block; transition: transform .16s ease; }
 
 .overlay {
   position: fixed; inset: 0; z-index: 2147483501; background: rgba(0,0,0,.5);
@@ -476,6 +478,9 @@ function select(id: string): void {
 
 export function mountPanel(): void {
   if (window.top !== window.self) return
+  // 设置齿轮只在首页显示，不打扰其它页面（设置已跨子域共享，首页配好全站生效）
+  const home = (location.hostname === 'www.bilibili.com' || location.hostname === 'bilibili.com') && (location.pathname === '/' || location.pathname === '/index.html')
+  if (!home) return
   if (!document.body) {
     document.addEventListener('DOMContentLoaded', mountPanel, { once: true })
     return
