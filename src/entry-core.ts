@@ -25,6 +25,10 @@ function hideDrawerChrome(): void {
   const s = document.createElement('style')
   s.textContent =
     `#biliMainHeader,.bili-header,.fixed-header,.international-header{display:none!important}` +
+    // 抽屉里向上橡皮筋回弹会露出根元素背景；B 站深色只给部分容器上色、html/body 根仍是白 → 露白。
+    // 让 html/body 跟随 B 站自己的主题 token --bg1（深色即深、浅色即浅），不依赖 theme-sync 是否开启。
+    // 用 var(--bg1) 无兜底：未定义时该声明失效、不强上色（避免浅色下闪深底），首帧另有加载遮罩盖住。
+    `html,body{background-color:var(--bg1)!important}` +
     ads.join(',') + `{display:none!important}`
   ;(document.head || document.documentElement).appendChild(s)
 }
