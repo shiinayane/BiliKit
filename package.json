@@ -3,6 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "packageManager": "pnpm@11.5.2",
   "description": "BiliKit · B 站增强套件（Safari 友好，页面世界注入）。构建产出统一的 BiliKit Core / Feed 用户脚本。",
   "scripts": {
     "dev": "vite",
@@ -28,10 +29,5 @@
   },
   "dependencies": {
     "qrcode-generator": "^2.0.4"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild"
-    ]
   }
 }

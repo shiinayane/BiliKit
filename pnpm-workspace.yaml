@@ -1,6 +1,7 @@
+# pnpm 11 起，构建脚本放行等设置从 package.json 的 "pnpm" 字段移到这里。
+# 放行 esbuild 的安装脚本（vite 依赖它）：值必须是 true——留占位符会致 ERR_PNPM_IGNORED_BUILDS，
+# pnpm install 退出非 0、CI 挂。allowBuilds 是本机 pnpm 11.5 认的键；onlyBuiltDependencies 兼容其它版本。
 allowBuilds:
-  esbuild: set this to true or false
-# pnpm 11 起，设置项从 package.json 的 "pnpm" 字段移到这里。
-# 放行 esbuild 的安装脚本（vite 依赖它）。
+  esbuild: true
 onlyBuiltDependencies:
   - esbuild
