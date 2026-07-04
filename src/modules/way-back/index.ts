@@ -1,5 +1,6 @@
 import type { BiliKitModule, Cfg } from '../../core/module'
 import { isPlayPage } from '../../core/pages'
+import { videoIdOf as videoIdOfBase, cleanTitle, dedupeArrival, type Entry } from './core'
 
 /**
  * 回程：视频页左下角「回退栈」胶囊——记住站内连续跳视频的「来时路」，点一下跳回上一个并续播。
@@ -38,19 +39,8 @@ function init(cfg: Cfg): void {
     } catch { /* ignore */ }
   }
 
-  type Entry = { url: string; title: string; t: number }
-
-  // 提取「同一个视频」标识：BV/av、番剧/课程 ep/ss、或 /list/ 播放页查询串里的 bvid
-  const videoIdOf = (href: string): string => {
-    try {
-      const u = new URL(href, location.href)
-      const p = u.pathname
-      return p.match(/\/video\/(BV\w+|av\d+)/i)?.[1]?.toLowerCase()
-        || p.match(/\/(?:bangumi|cheese)\/play\/((ep|ss)\d+)/i)?.[1]?.toLowerCase()
-        || (u.searchParams.get('bvid') || '').toLowerCase()
-        || ''
-    } catch { return '' }
-  }
+  // 纯逻辑在 ./core；这里绑定 base=location.href（相对 href 按当前页解析），下游调用点不变
+  const videoIdOf = (href: string): string => videoIdOfBase(href, location.href)
 
   const readStack = (): Entry[] => {
     try { const a = JSON.parse(sessionStorage.getItem(STACK_KEY) || '[]'); return Array.isArray(a) ? a : [] } catch { return [] }
@@ -58,10 +48,6 @@ function init(cfg: Cfg): void {
   const writeStack = (s: Entry[]): void => {
     try { sessionStorage.setItem(STACK_KEY, JSON.stringify(s.slice(-STACK_MAX))) } catch { /* 隐私模式/超限：放弃 */ }
   }
-
-  // 剥掉标题串尾的站点后缀段（SPA 后 B 站会把 title 改成「_哔哩哔哩bilibili」等）
-  const cleanTitle = (raw: string): string =>
-    (raw || '').replace(/[_-](哔哩哔哩|bilibili|番剧|动画|电影|电视剧|纪录片|综艺|国创|在线观看|全集)([_-]?(哔哩哔哩|bilibili|番剧|动画|电影|电视剧|纪录片|综艺|国创|在线观看|全集))*$/i, '').trim()
 
   // 标题随 SPA 异步更新：盯 <title> 维护「视频 id → 已确认标题」，记录/展示按 id 取，杜绝张冠李戴
   const titleById = new Map<string, string>()
@@ -145,16 +131,13 @@ function init(cfg: Cfg): void {
   }
   const jumpToUrl = (url: string): void => { const s = readStack(); for (let i = s.length - 1; i >= 0; i--) if (s[i].url === url) return jumpTo(i) }
 
-  // 加载去重：栈顶与当前视频相同（刷新/原生返回/分P的 pagehide 记录）→ 弹掉
+  // 加载去重：栈顶与当前视频相同（刷新/原生返回/分P的 pagehide 记录）→ 弹掉（纯逻辑在 core.dedupeArrival）
   function dedupeOnArrival(backRestore = false): void {
     const curId = videoIdOf(location.href)
     if (!curId) return
-    let stack = readStack()
-    const before = stack.length
-    if (backRestore) { let i = stack.length - 1; while (i >= 0 && videoIdOf(stack[i].url) !== curId) i--; if (i >= 0) stack = stack.slice(0, i + 1) }
-    let n = stack.length
-    while (n && videoIdOf(stack[n - 1].url) === curId) n--
-    if (n !== before) writeStack(stack.slice(0, n))
+    const stack = readStack()
+    const out = dedupeArrival(stack, curId, location.href, backRestore)
+    if (out.length !== stack.length) writeStack(out) // 只做尾部裁剪，长度变了即有改动
   }
 
   /* ---------------- 胶囊 UI（深浅色跟随系统） ---------------- */

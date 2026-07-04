@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BiliKit Core
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.5.9
+// @version      0.5.10
 // @author       shiinayane
 // @description  B 站体验增强核心，一装到位：CDN 优选（救海外卡顿）· 免登录看评论/动态/1080p · 主题跟随系统深浅 · 评论显 IP 属地 · 播放不息屏——统一设置面板集中开关。Safari 友好、无需扩展、零外部依赖。
 // @license      MIT
@@ -2041,7 +2041,7 @@
       }
     })();
   }
-  const VERSION = "0.5.9";
+  const VERSION = "0.5.10";
   const PANEL_ID = "bilikit-panel-root";
   const FEED_ID = "__feed__";
   const OPEN_ID = "__open__";
@@ -2623,6 +2623,43 @@
     } catch {
     }
   }
+  const UPOS_RE = /^(?:https?:)?\/\/[^/]*\.(?:bilivideo\.com|acgvideo\.(?:com|cn))\//;
+  const isUpos = (u) => typeof u === "string" && UPOS_RE.test(u);
+  const swapHost = (u, host) => u.replace(/^(?:https?:)?\/\/[^/]+\//, `https://${host}/`);
+  function fixEntry(e, targetHost, backupHosts) {
+    if (!e || typeof e !== "object") return false;
+    const cands = [];
+    for (const k of ["baseUrl", "base_url", "url"]) if (typeof e[k] === "string") cands.push(e[k]);
+    for (const k of ["backupUrl", "backup_url"]) if (Array.isArray(e[k])) cands.push(...e[k].filter((x) => typeof x === "string"));
+    const upos = cands.find(isUpos);
+    if (!upos) return false;
+    const primary = swapHost(upos, targetHost);
+    const backups = backupHosts.map((h) => swapHost(upos, h));
+    for (const k of ["baseUrl", "base_url", "url"]) if (typeof e[k] === "string") e[k] = primary;
+    if (Array.isArray(e.backupUrl)) e.backupUrl = [primary, ...backups];
+    if (Array.isArray(e.backup_url)) e.backup_url = [primary, ...backups];
+    return true;
+  }
+  function rewritePlayurl(root2, targetHost, backupHosts) {
+    if (!root2 || typeof root2 !== "object") return false;
+    if (root2.code !== void 0 && root2.code !== 0) return false;
+    const d = root2.data || root2.result || root2;
+    if (!d || typeof d !== "object") return false;
+    let hit = false;
+    const dash = d.dash;
+    if (dash) {
+      for (const list of [dash.video, dash.audio, dash.dolby && dash.dolby.audio]) {
+        if (Array.isArray(list)) list.forEach((e) => {
+          if (fixEntry(e, targetHost, backupHosts)) hit = true;
+        });
+      }
+      if (dash.flac && dash.flac.audio && fixEntry(dash.flac.audio, targetHost, backupHosts)) hit = true;
+    }
+    if (Array.isArray(d.durl)) d.durl.forEach((e) => {
+      if (fixEntry(e, targetHost, backupHosts)) hit = true;
+    });
+    return hit;
+  }
   function init$5(cfg) {
     if (window.__BILIKIT_CDN_PICK__) return;
     window.__BILIKIT_CDN_PICK__ = true;
@@ -2633,43 +2670,7 @@
     if (!TARGET_HOST) {
       return;
     }
-    const UPOS_RE = /^(?:https?:)?\/\/[^/]*\.(?:bilivideo\.com|acgvideo\.(?:com|cn))\//;
-    const isUpos = (u) => typeof u === "string" && UPOS_RE.test(u);
-    const swapHost = (u, host) => u.replace(/^(?:https?:)?\/\/[^/]+\//, `https://${host}/`);
-    function fixEntry(e) {
-      if (!e || typeof e !== "object") return false;
-      const cands = [];
-      for (const k of ["baseUrl", "base_url", "url"]) if (typeof e[k] === "string") cands.push(e[k]);
-      for (const k of ["backupUrl", "backup_url"]) if (Array.isArray(e[k])) cands.push(...e[k].filter((x) => typeof x === "string"));
-      const upos = cands.find(isUpos);
-      if (!upos) return false;
-      const primary = swapHost(upos, TARGET_HOST);
-      const backups = BACKUP_HOSTS.map((h) => swapHost(upos, h));
-      for (const k of ["baseUrl", "base_url", "url"]) if (typeof e[k] === "string") e[k] = primary;
-      if (Array.isArray(e.backupUrl)) e.backupUrl = [primary, ...backups];
-      if (Array.isArray(e.backup_url)) e.backup_url = [primary, ...backups];
-      return true;
-    }
-    function rewritePlayurl(root2) {
-      if (!root2 || typeof root2 !== "object") return false;
-      if (root2.code !== void 0 && root2.code !== 0) return false;
-      const d = root2.data || root2.result || root2;
-      if (!d || typeof d !== "object") return false;
-      let hit = false;
-      const dash = d.dash;
-      if (dash) {
-        for (const list of [dash.video, dash.audio, dash.dolby && dash.dolby.audio]) {
-          if (Array.isArray(list)) list.forEach((e) => {
-            if (fixEntry(e)) hit = true;
-          });
-        }
-        if (dash.flac && dash.flac.audio && fixEntry(dash.flac.audio)) hit = true;
-      }
-      if (Array.isArray(d.durl)) d.durl.forEach((e) => {
-        if (fixEntry(e)) hit = true;
-      });
-      return hit;
-    }
+    const rewritePlayurl$1 = (root2) => rewritePlayurl(root2, TARGET_HOST, BACKUP_HOSTS);
     const PLAYURL_PATHS = [
       "/x/player/wbi/playurl",
       "/x/player/playurl",
@@ -2686,7 +2687,7 @@
         get: () => playinfo,
         set: (v) => {
           try {
-            if (rewritePlayurl(v)) log("__playinfo__ 改写", TARGET_HOST);
+            if (rewritePlayurl$1(v)) log("__playinfo__ 改写", TARGET_HOST);
           } catch (_) {
           }
           playinfo = v;
@@ -2703,7 +2704,7 @@
         try {
           const text = await resp.clone().text();
           const obj = JSON.parse(text);
-          if (rewritePlayurl(obj)) {
+          if (rewritePlayurl$1(obj)) {
             log("fetch playurl 改写", TARGET_HOST);
             const headers = new Headers(resp.headers);
             headers.delete("content-length");
@@ -2733,7 +2734,7 @@
           if (typeof r === "string") return this.__cdnText(r);
           if (r && typeof r === "object") {
             try {
-              if (rewritePlayurl(r)) log("xhr(json) playurl 改写", TARGET_HOST);
+              if (rewritePlayurl$1(r)) log("xhr(json) playurl 改写", TARGET_HOST);
             } catch (_) {
             }
           }
@@ -2743,7 +2744,7 @@
           if (this.readyState !== 4 || typeof raw !== "string" || !isPlayurl(this.__cdnUrl)) return raw;
           try {
             const obj = JSON.parse(raw);
-            if (rewritePlayurl(obj)) {
+            if (rewritePlayurl$1(obj)) {
               log("xhr playurl 改写", TARGET_HOST);
               return JSON.stringify(obj);
             }
@@ -3302,6 +3303,12 @@
   ];
   const mixinKey = (orig) => MIXIN_TAB.map((n) => orig[n]).join("").slice(0, 32);
   const keyFromUrl = (u) => u ? u.slice(u.lastIndexOf("/") + 1, u.lastIndexOf(".")) : "";
+  function signParams(params, imgKey, subKey, wts) {
+    const mk = mixinKey(imgKey + subKey);
+    const q = { ...params, wts };
+    const query = Object.keys(q).sort().map((k) => `${encodeURIComponent(k)}=${encodeURIComponent(String(q[k]).replace(/[!'()*]/g, ""))}`).join("&");
+    return `${query}&w_rid=${md5(query + mk)}`;
+  }
   const LS = "bilikit:wbi-core";
   const today = () => Math.floor(Date.now() / 864e5);
   let cache = null;
@@ -3345,11 +3352,19 @@
   function signQuery(params) {
     const keys = readKeys();
     if (!keys) return null;
-    const mk = mixinKey(keys.img + keys.sub);
-    const wts = Math.floor(Date.now() / 1e3);
-    const q = { ...params, wts };
-    const query = Object.keys(q).sort().map((k) => `${encodeURIComponent(k)}=${encodeURIComponent(String(q[k]).replace(/[!'()*]/g, ""))}`).join("&");
-    return `${query}&w_rid=${md5(query + mk)}`;
+    return signParams(params, keys.img, keys.sub, Math.floor(Date.now() / 1e3));
+  }
+  function playurlParams(url) {
+    const [base, qs = ""] = url.split("?");
+    const params = Object.fromEntries(new URLSearchParams(qs));
+    delete params.w_rid;
+    delete params.wts;
+    params.qn = "80";
+    params.try_look = "1";
+    params.platform = "pc";
+    params.fnval = "4048";
+    params.fourk = "1";
+    return { base, params };
   }
   const AUTH_HOSTS = ["message.bilibili.com", "account.bilibili.com", "member.bilibili.com", "pay.bilibili.com", "big.bilibili.com"];
   const AUTH_PATHS = ["/history", "/watchlater", "/favlist", "/medialist", "/account", "/pincenter"];
@@ -3588,15 +3603,7 @@
         match: (u) => u.includes("/x/player/wbi/playurl"),
         rewriteRequest: (u) => {
           try {
-            const [base, qs = ""] = u.split("?");
-            const params = Object.fromEntries(new URLSearchParams(qs));
-            delete params.w_rid;
-            delete params.wts;
-            params.qn = "80";
-            params.try_look = "1";
-            params.platform = "pc";
-            params.fnval = "4048";
-            params.fourk = "1";
+            const { base, params } = playurlParams(u);
             const signed = signQuery(params);
             if (!signed) return;
             return { url: `${base}?${signed}` };
@@ -3622,6 +3629,32 @@
   function isPlayPage(pathname = location.pathname) {
     return /^\/(video\/|bangumi\/play\/|cheese\/play\/|list\/|festival\/)/.test(pathname);
   }
+  const TITLE_SUFFIX = /[_-](哔哩哔哩|bilibili|番剧|动画|电影|电视剧|纪录片|综艺|国创|在线观看|全集)([_-]?(哔哩哔哩|bilibili|番剧|动画|电影|电视剧|纪录片|综艺|国创|在线观看|全集))*$/i;
+  function videoIdOf(href, base = "https://www.bilibili.com") {
+    var _a, _b, _c, _d;
+    try {
+      const u = new URL(href, base);
+      const p = u.pathname;
+      return ((_b = (_a = p.match(/\/video\/(BV\w+|av\d+)/i)) == null ? void 0 : _a[1]) == null ? void 0 : _b.toLowerCase()) || ((_d = (_c = p.match(/\/(?:bangumi|cheese)\/play\/((ep|ss)\d+)/i)) == null ? void 0 : _c[1]) == null ? void 0 : _d.toLowerCase()) || (u.searchParams.get("bvid") || "").toLowerCase() || "";
+    } catch {
+      return "";
+    }
+  }
+  function cleanTitle(raw) {
+    return (raw || "").replace(TITLE_SUFFIX, "").trim();
+  }
+  function dedupeArrival(stack, curId, base = "https://www.bilibili.com", backRestore = false) {
+    if (!curId) return stack;
+    let s = stack;
+    if (backRestore) {
+      let i = s.length - 1;
+      while (i >= 0 && videoIdOf(s[i].url, base) !== curId) i--;
+      if (i >= 0) s = s.slice(0, i + 1);
+    }
+    let n = s.length;
+    while (n && videoIdOf(s[n - 1].url, base) === curId) n--;
+    return n !== s.length ? s.slice(0, n) : s;
+  }
   const STACK_KEY = "bilikit-wayback-stack";
   const STACK_MAX = 20;
   const NS$1 = "bwb";
@@ -3641,16 +3674,7 @@
       } catch {
       }
     }
-    const videoIdOf = (href) => {
-      var _a, _b, _c, _d;
-      try {
-        const u = new URL(href, location.href);
-        const p = u.pathname;
-        return ((_b = (_a = p.match(/\/video\/(BV\w+|av\d+)/i)) == null ? void 0 : _a[1]) == null ? void 0 : _b.toLowerCase()) || ((_d = (_c = p.match(/\/(?:bangumi|cheese)\/play\/((ep|ss)\d+)/i)) == null ? void 0 : _c[1]) == null ? void 0 : _d.toLowerCase()) || (u.searchParams.get("bvid") || "").toLowerCase() || "";
-      } catch {
-        return "";
-      }
-    };
+    const videoIdOf$1 = (href) => videoIdOf(href, location.href);
     const readStack = () => {
       try {
         const a = JSON.parse(sessionStorage.getItem(STACK_KEY) || "[]");
@@ -3665,10 +3689,9 @@
       } catch {
       }
     };
-    const cleanTitle = (raw) => (raw || "").replace(/[_-](哔哩哔哩|bilibili|番剧|动画|电影|电视剧|纪录片|综艺|国创|在线观看|全集)([_-]?(哔哩哔哩|bilibili|番剧|动画|电影|电视剧|纪录片|综艺|国创|在线观看|全集))*$/i, "").trim();
     const titleById = /* @__PURE__ */ new Map();
     const noteTitle = () => {
-      const id = videoIdOf(location.href);
+      const id = videoIdOf$1(location.href);
       const t = cleanTitle(document.title);
       if (id && t) titleById.set(id, t);
     };
@@ -3717,10 +3740,10 @@
       return t > 0 ? t : lastPlayedT;
     };
     function recordEntry(prevHref, prevTitle, t, rerender = true) {
-      const id = videoIdOf(prevHref);
+      const id = videoIdOf$1(prevHref);
       if (!id) return;
       const stack = readStack();
-      if (stack.length && videoIdOf(stack[stack.length - 1].url) === id) return;
+      if (stack.length && videoIdOf$1(stack[stack.length - 1].url) === id) return;
       stack.push({ url: prevHref, title: titleById.get(id) || cleanTitle(prevTitle) || id, t: resumeTime && t > 0 ? Math.floor(t) : 0 });
       const trimmed = stack.length > STACK_MAX ? stack.slice(-STACK_MAX) : stack;
       writeStack(trimmed);
@@ -3731,8 +3754,8 @@
       try {
         const url = args[2];
         if (url != null) {
-          const prevId = videoIdOf(location.href);
-          const curId = videoIdOf(new URL(url, location.href).href);
+          const prevId = videoIdOf$1(location.href);
+          const curId = videoIdOf$1(new URL(url, location.href).href);
           if (prevId && curId && prevId !== curId && !(prevId.startsWith("ss") && curId.startsWith("ep"))) {
             recordEntry(location.href, document.title, departureTime());
             lastPlayedT = 0;
@@ -3774,18 +3797,11 @@
       for (let i = s.length - 1; i >= 0; i--) if (s[i].url === url) return jumpTo(i);
     };
     function dedupeOnArrival(backRestore = false) {
-      const curId = videoIdOf(location.href);
+      const curId = videoIdOf$1(location.href);
       if (!curId) return;
-      let stack = readStack();
-      const before = stack.length;
-      if (backRestore) {
-        let i = stack.length - 1;
-        while (i >= 0 && videoIdOf(stack[i].url) !== curId) i--;
-        if (i >= 0) stack = stack.slice(0, i + 1);
-      }
-      let n = stack.length;
-      while (n && videoIdOf(stack[n - 1].url) === curId) n--;
-      if (n !== before) writeStack(stack.slice(0, n));
+      const stack = readStack();
+      const out = dedupeArrival(stack, curId, location.href, backRestore);
+      if (out.length !== stack.length) writeStack(out);
     }
     const BACK_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10H11"/></svg>';
     const CSS2 = `
@@ -3880,7 +3896,7 @@
     }
     function updateNowRow() {
       if (!nowRow || !nowTitleEl) return;
-      nowTitleEl.textContent = titleById.get(videoIdOf(location.href)) || cleanTitle(document.title) || "正在播放";
+      nowTitleEl.textContent = titleById.get(videoIdOf$1(location.href)) || cleanTitle(document.title) || "正在播放";
       const v = getVideo();
       nowRow.classList.toggle(`${NS$1}-playing`, !!v && !v.paused);
     }

@@ -1,6 +1,7 @@
 import type { BiliKitModule, Cfg } from '../../core/module'
 import { installNetHook, type NetRule } from './net-hook'
 import { signQuery, warmKeys } from './wbi-core'
+import { playurlParams } from './playurl'
 
 /**
  * 免登录：未登录也能看评论 / 他人动态 / 1080p 视频——装它即可卸载 beefreely 等第三方脚本，
@@ -206,15 +207,7 @@ function init(_cfg: Cfg): void {
       match: (u) => u.includes('/x/player/wbi/playurl'),
       rewriteRequest: (u) => {
         try {
-          const [base, qs = ''] = u.split('?')
-          const params: Record<string, string> = Object.fromEntries(new URLSearchParams(qs))
-          delete params.w_rid
-          delete params.wts
-          params.qn = '80'
-          params.try_look = '1'
-          params.platform = 'pc' // 掰回桌面路径 → 解锁 1080p 试看（html5 被服务端卡 480p）
-          params.fnval = '4048' // 全 DASH（含 8K/HDR/杜比位，服务端按能力裁），避免落到 MP4 durl 低清路径
-          params.fourk = '1'
+          const { base, params } = playurlParams(u) // 纯参数改写在 ./playurl
           const signed = signQuery(params)
           if (!signed) return // 拿不到 wbi key → 维持原请求，不强改（下次导航 key 就绪再升）
           return { url: `${base}?${signed}` }

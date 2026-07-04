@@ -9,15 +9,21 @@
     "build": "npm run build:core && npm run build:feed",
     "build:core": "vite build",
     "build:feed": "vite build --config vite.feed.config.ts",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "devDependencies": {
     "@types/qrcode-generator": "^1.0.6",
     "typescript": "^5",
     "vite": "^6",
-    "vite-plugin-monkey": "^5"
+    "vite-plugin-monkey": "^5",
+    "vitest": "^4.1.9"
   },
   "dependencies": {
     "qrcode-generator": "^2.0.4"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild"]
   }
 }

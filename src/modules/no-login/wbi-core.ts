@@ -12,8 +12,22 @@ const MIXIN_TAB = [
   37, 48, 7, 16, 24, 55, 40, 61, 26, 17, 0, 1, 60, 51, 30, 4,
   22, 25, 54, 21, 56, 59, 6, 63, 57, 62, 11, 36, 20, 34, 44, 52,
 ]
-const mixinKey = (orig: string) => MIXIN_TAB.map((n) => orig[n]).join('').slice(0, 32)
-const keyFromUrl = (u: string) => (u ? u.slice(u.lastIndexOf('/') + 1, u.lastIndexOf('.')) : '')
+export const mixinKey = (orig: string) => MIXIN_TAB.map((n) => orig[n]).join('').slice(0, 32)
+export const keyFromUrl = (u: string) => (u ? u.slice(u.lastIndexOf('/') + 1, u.lastIndexOf('.')) : '')
+
+/**
+ * 纯 wbi 签名：给定参数 + imgKey/subKey + wts（秒），返回完整 query 串（含 wts 与 w_rid）。
+ * 无 DOM / 时间 / 网络依赖——可单测。签名规则：合入 wts → 键名字典序 → 值滤掉 `!'()*` → md5(query+mixinKey)。
+ */
+export function signParams(params: Record<string, string | number>, imgKey: string, subKey: string, wts: number): string {
+  const mk = mixinKey(imgKey + subKey)
+  const q: Record<string, string | number> = { ...params, wts }
+  const query = Object.keys(q)
+    .sort()
+    .map((k) => `${encodeURIComponent(k)}=${encodeURIComponent(String(q[k]).replace(/[!'()*]/g, ''))}`)
+    .join('&')
+  return `${query}&w_rid=${md5(query + mk)}`
+}
 
 const LS = 'bilikit:wbi-core' // 自家兜底缓存（当 B 站的 localStorage key 尚未就位时）
 const today = () => Math.floor(Date.now() / 86400000) // 天粒度：wbi key 每日轮换，隔日作废
@@ -56,12 +70,5 @@ export function warmKeys(pureFetch: typeof fetch): void {
 export function signQuery(params: Record<string, string | number>): string | null {
   const keys = readKeys()
   if (!keys) return null
-  const mk = mixinKey(keys.img + keys.sub)
-  const wts = Math.floor(Date.now() / 1000)
-  const q: Record<string, string | number> = { ...params, wts }
-  const query = Object.keys(q)
-    .sort()
-    .map((k) => `${encodeURIComponent(k)}=${encodeURIComponent(String(q[k]).replace(/[!'()*]/g, ''))}`)
-    .join('&')
-  return `${query}&w_rid=${md5(query + mk)}`
+  return signParams(params, keys.img, keys.sub, Math.floor(Date.now() / 1000))
 }

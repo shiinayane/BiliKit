@@ -9,7 +9,7 @@ import type { BiliKitModule, Cfg } from './module'
  */
 const KEY = 'bilikit:settings'
 const CK = 'bilikit_settings' // cookie 名（避免冒号）
-const SENSITIVE = /accessKey|token|secret|passwd|password/i // 不进跨子域 cookie 的键
+export const SENSITIVE = /accessKey|token|secret|passwd|password/i // 不进跨子域 cookie 的键
 // 本 Tab 内设置变更通知（同 Tab 的 storage 事件不触发）：模块可监听它即时响应面板改动
 export const SETTINGS_EVENT = 'bilikit:settings-changed'
 type Store = Record<string, unknown>
@@ -24,8 +24,8 @@ function readCookie(): Store | null {
     return JSON.parse(decodeURIComponent(m[1])) as Store
   } catch { return null }
 }
-// 只把非敏感键写进 cookie
-function toCookieStore(s: Store): Store {
+// 只把非敏感键写进 cookie（纯函数，导出供单测——accessKey 泄漏进跨子域 cookie 是安全事故）
+export function toCookieStore(s: Store): Store {
   const out: Store = {}
   for (const k in s) if (!SENSITIVE.test(k)) out[k] = s[k]
   return out

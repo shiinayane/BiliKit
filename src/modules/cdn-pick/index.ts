@@ -1,4 +1,5 @@
 import type { BiliKitModule, Cfg } from '../../core/module'
+import { rewritePlayurl as rewritePlayurlBase } from './core'
 
 /**
  * CDN 优选：把 B 站视频分片重定向到指定 CDN 镜像，绕开被分到的慢节点（海外 Akamai 等）。
@@ -20,47 +21,8 @@ function init(cfg: Cfg): void {
 
   if (!TARGET_HOST) { log('TARGET_HOST 为空，未启用'); return }
 
-  // upos 系（签名与主机无关，可安全换镜像）；akamaized 不在此列，绝不往上套。
-  const UPOS_RE = /^(?:https?:)?\/\/[^/]*\.(?:bilivideo\.com|acgvideo\.(?:com|cn))\//
-  const isUpos = (u: any) => typeof u === 'string' && UPOS_RE.test(u)
-  const swapHost = (u: string, host: string) => u.replace(/^(?:https?:)?\/\/[^/]+\//, `https://${host}/`)
-
-  let rewriteCount = 0
-
-  // 把一条 dash 流（或 durl 段）整体钉到大陆镜像：主=TARGET_HOST，备份整列重建为 [TARGET, ...BACKUP]。
-  function fixEntry(e: any): boolean {
-    if (!e || typeof e !== 'object') return false
-    const cands: string[] = []
-    for (const k of ['baseUrl', 'base_url', 'url']) if (typeof e[k] === 'string') cands.push(e[k])
-    for (const k of ['backupUrl', 'backup_url']) if (Array.isArray(e[k])) cands.push(...e[k].filter((x: any) => typeof x === 'string'))
-    const upos = cands.find(isUpos)
-    if (!upos) return false // 没有任何 upos 地址（只有 akam）→ 不动（换主机会 403）
-    const primary = swapHost(upos, TARGET_HOST)
-    const backups = BACKUP_HOSTS.map((h) => swapHost(upos, h))
-    for (const k of ['baseUrl', 'base_url', 'url']) if (typeof e[k] === 'string') e[k] = primary
-    if (Array.isArray(e.backupUrl)) e.backupUrl = [primary, ...backups]
-    if (Array.isArray(e.backup_url)) e.backup_url = [primary, ...backups]
-    rewriteCount++
-    return true
-  }
-
-  // 改写整个 playurl 对象（兼容网页 data / 番剧 result 两种外层）
-  function rewritePlayurl(root: any): boolean {
-    if (!root || typeof root !== 'object') return false
-    if (root.code !== undefined && root.code !== 0) return false
-    const d = root.data || root.result || root
-    if (!d || typeof d !== 'object') return false
-    let hit = false
-    const dash = d.dash
-    if (dash) {
-      for (const list of [dash.video, dash.audio, dash.dolby && dash.dolby.audio]) {
-        if (Array.isArray(list)) list.forEach((e: any) => { if (fixEntry(e)) hit = true })
-      }
-      if (dash.flac && dash.flac.audio && fixEntry(dash.flac.audio)) hit = true
-    }
-    if (Array.isArray(d.durl)) d.durl.forEach((e: any) => { if (fixEntry(e)) hit = true }) // 非 dash 的 mp4
-    return hit
-  }
+  // 纯改写逻辑在 ./core；这里绑定 TARGET_HOST / BACKUP_HOSTS，下游调用点不变
+  const rewritePlayurl = (root: any): boolean => rewritePlayurlBase(root, TARGET_HOST, BACKUP_HOSTS)
 
   const PLAYURL_PATHS = [
     '/x/player/wbi/playurl', '/x/player/playurl',
