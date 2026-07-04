@@ -2,7 +2,6 @@ import { register, runAll } from './core/module'
 import { syncSharedSettings } from './core/settings'
 import { mountPanel } from './core/panel'
 import { cdnPick } from './modules/cdn-pick'
-import { noTrack } from './modules/no-track'
 import { themeSync } from './modules/theme-sync'
 import { commentLocation } from './modules/comment-location'
 import { wakeLock } from './modules/wake-lock'
@@ -73,7 +72,6 @@ setupDrawerReveal()
 //       quality-watch / home-clean（尚未上线）。
 register(
   cdnPick,
-  noTrack,
   themeSync,
   commentLocation,
   wakeLock,

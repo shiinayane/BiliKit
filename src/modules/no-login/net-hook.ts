@@ -6,7 +6,7 @@
  * 设计取舍：
  *  - 只处理 **GET** 接口（本模块用到的全是 GET），改请求时把 Request 归一成 (url, init)，不搬 body。
  *  - XHR 用 `class X extends OX` + 重写 responseText/response getter，与 cdn-pick 同一套（本仓库验证过）。
- *  - 与 cdn-pick / no-track 并存：非匹配 URL 一律 `apply` 原链，三个 Core hook 经 register() 定序、不抢。
+ *  - 与 cdn-pick 并存：非匹配 URL 一律 `apply` 原链，两个 Core hook 经 register() 定序、不抢。
  */
 
 export interface NetRule {

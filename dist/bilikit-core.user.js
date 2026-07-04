@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         BiliKit Core
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.5.3
+// @version      0.5.5
 // @author       shiinayane
-// @description  B 站体验增强核心，一装到位：CDN 优选（救海外卡顿）· 埋点/广告拦截（省流量降开销）· 免登录看评论/动态/1080p · 主题跟随系统深浅 · 评论显 IP 属地 · 播放不息屏——统一设置面板集中开关。Safari 友好、无需扩展、零外部依赖。
+// @description  B 站体验增强核心，一装到位：CDN 优选（救海外卡顿）· 免登录看评论/动态/1080p · 主题跟随系统深浅 · 评论显 IP 属地 · 播放不息屏——统一设置面板集中开关。Safari 友好、无需扩展、零外部依赖。
 // @license      MIT
 // @match        *://*.bilibili.com/*
 // @grant        none
@@ -2567,7 +2567,7 @@
     sr.append(gear, overlay);
     document.body.appendChild(root2);
   }
-  function init$6(cfg) {
+  function init$5(cfg) {
     if (window.__BILIKIT_CDN_PICK__) return;
     window.__BILIKIT_CDN_PICK__ = true;
     const TARGET_HOST = cfg.get("targetHost");
@@ -2725,120 +2725,6 @@
         allowCustom: true,
         customPlaceholder: "upos-sz-mirrorXXX.bilivideo.com",
         hint: "把视频分片钉到该大陆镜像，绕开慢节点；选「自定义…」可手填镜像主机（须 upos 系 .bilivideo.com，否则会 403）"
-      }
-    ],
-    init: init$6
-  };
-  function init$5(cfg) {
-    if (window.__BILIKIT_NO_TRACK__) return;
-    window.__BILIKIT_NO_TRACK__ = true;
-    const TELEMETRY = [
-      "data.bilibili.com/log",
-      "api.bilibili.com/x/click-interface/click",
-      "mcbas.",
-      "webase"
-    ];
-    const ADS = ["cm.bilibili.com"];
-    const parseCustom = (s) => (s || "").split("\n").map((x) => x.trim()).filter(Boolean);
-    let adsOn = cfg.get("blockAds") !== false;
-    let custom = parseCustom(cfg.get("custom"));
-    try {
-      window.addEventListener(SETTINGS_EVENT, () => {
-        adsOn = cfg.get("blockAds") !== false;
-        custom = parseCustom(cfg.get("custom"));
-      });
-    } catch (_) {
-    }
-    let blocked = 0;
-    const stats = () => ({ blocked });
-    window.__BILIKIT_NOTRACK_STATS__ = stats;
-    function isBlocked(input) {
-      let u;
-      if (typeof input === "string") u = input;
-      else if (input && typeof input.url === "string") u = input.url;
-      else {
-        try {
-          u = String(input);
-        } catch (_) {
-          return false;
-        }
-      }
-      if (!u) return false;
-      for (const p of TELEMETRY) if (u.includes(p)) return true;
-      if (adsOn) {
-        for (const p of ADS) if (u.includes(p)) return true;
-      }
-      for (const p of custom) if (u.includes(p)) return true;
-      return false;
-    }
-    function hit(u) {
-      blocked++;
-    }
-    const origFetch = window.fetch;
-    if (origFetch) {
-      window.fetch = function(input, init2) {
-        if (isBlocked(input)) {
-          hit();
-          return Promise.resolve(new Response(null, { status: 204, statusText: "No Content" }));
-        }
-        return origFetch.apply(this, arguments);
-      };
-    }
-    if (navigator.sendBeacon) {
-      const origSB = navigator.sendBeacon.bind(navigator);
-      navigator.sendBeacon = function(url, data) {
-        if (isBlocked(url)) {
-          hit();
-          return true;
-        }
-        return origSB(url, data);
-      };
-    }
-    const OX = window.XMLHttpRequest;
-    if (OX) {
-      class X extends OX {
-        constructor() {
-          super(...arguments);
-          this.__ntBlocked = false;
-          this.__ntUrl = "";
-        }
-        open(method, url, ...rest) {
-          this.__ntUrl = url;
-          this.__ntBlocked = isBlocked(url);
-          return super.open(method, url, ...rest);
-        }
-        send(body) {
-          if (this.__ntBlocked) {
-            hit(this.__ntUrl);
-            return;
-          }
-          return super.send(body);
-        }
-      }
-      window.XMLHttpRequest = X;
-    }
-  }
-  const noTrack = {
-    id: "no-track",
-    name: "埋点拦截",
-    description: "拦掉行为遥测与广告请求，省流量、降开销",
-    category: "性能",
-    runAt: "start",
-    settings: [
-      {
-        key: "blockAds",
-        type: "toggle",
-        label: "同时拦广告投放",
-        default: true,
-        hint: "额外拦截 cm.bilibili.com 广告内容/计费请求；关掉则只拦纯遥测日志（data.bilibili.com 等）"
-      },
-      {
-        key: "custom",
-        type: "textarea",
-        label: "额外拦截（每行一个网址片段）",
-        default: "",
-        placeholder: "例如 example.com/track",
-        hint: "请求 URL 含其中任一片段即拦；留空不额外拦"
       }
     ],
     init: init$5
@@ -4298,7 +4184,6 @@
   setupDrawerReveal();
   register(
     cdnPick,
-    noTrack,
     themeSync,
     commentLocation,
     wakeLock,

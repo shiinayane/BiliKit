@@ -139,7 +139,7 @@ export function closeDrawer(): void {
 
 /**
  * 悬停预连接：hover 视频链接时预连 B站静态/接口主机，点开省握手延迟。12s 节流。
- * 不含 data.bilibili.com：埋点域，Core 埋点拦截会短路，预连纯属浪费。
+ * 不含 data.bilibili.com：纯埋点/日志域，播放用不到，预连纯属浪费。
  */
 const PC_HOSTS = ['https://api.bilibili.com', 'https://s1.hdslb.com', 'https://i0.hdslb.com', 'https://i1.hdslb.com', 'https://i2.hdslb.com']
 const PC_WINDOW = 12000
