@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BiliKit Core
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.5.7
+// @version      0.5.8
 // @author       shiinayane
 // @description  B 站体验增强核心，一装到位：CDN 优选（救海外卡顿）· 免登录看评论/动态/1080p · 主题跟随系统深浅 · 评论显 IP 属地 · 播放不息屏——统一设置面板集中开关。Safari 友好、无需扩展、零外部依赖。
 // @license      MIT
@@ -2041,11 +2041,14 @@
       }
     })();
   }
+  const VERSION = "0.5.8";
   const PANEL_ID = "bilikit-panel-root";
   const FEED_ID = "__feed__";
   const OPEN_ID = "__open__";
   const PREVIEW_ID = "__preview__";
+  const ABOUT_ID = "__about__";
   const FEED_CAT = "推荐";
+  const ABOUT_CAT = "关于";
   let selected = "";
   let navEl = null;
   let detailEl = null;
@@ -2380,6 +2383,8 @@
         navEl.appendChild(navItemSpecial(PREVIEW_ID, "封面预览"));
       }
     }
+    navEl.appendChild(el("div", "nav-cat", ABOUT_CAT));
+    navEl.appendChild(navItemSpecial(ABOUT_ID, "关于 BiliKit"));
   }
   function renderFeedDetail(d) {
     const loggedIn = !!get("feed.accessKey", "");
@@ -2471,6 +2476,22 @@
     fields.appendChild(callout("<b>真视频</b>：悬停即拉低清视频、静音自动播，最接近手机 App 的秒开（比雪碧图费流量）。<br><b>雪碧图</b>：只拉缩略帧轮播，省流量、更轻。<br><b>关闭</b>：悬停不预览。"));
     d.appendChild(fields);
   }
+  function renderAboutDetail(d) {
+    d.appendChild(el("div", "detail-title", "关于 BiliKit"));
+    d.appendChild(el("div", "detail-desc", "B 站体验增强套件 · Safari 友好、无需扩展、零外部依赖 · 作者 shiinayane · MIT"));
+    const fields = el("div", "fields");
+    const vrow = el("div", "field row");
+    vrow.appendChild(el("span", "flabel", "版本"));
+    const pill = el("span", "status on");
+    pill.innerHTML = `<span class="dot"></span>BiliKit Core v${VERSION}`;
+    vrow.appendChild(pill);
+    fields.appendChild(vrow);
+    fields.appendChild(callout(
+      '<a href="https://github.com/shiinayane/BiliKit" target="_blank" rel="noopener">GitHub 仓库</a> · <a href="https://github.com/shiinayane/BiliKit/issues" target="_blank" rel="noopener">反馈 / 报 Bug</a> · <a href="https://greasyfork.org/zh-CN/scripts/585248-bilikit-core" target="_blank" rel="noopener">GreasyFork 主页</a>'
+    ));
+    fields.appendChild(callout("<b>开发期 · 快速迭代中</b>：功能可能随时调整，偶有不稳定属正常；B 站接口一变也可能短暂失效。欢迎提 Issue 或建议。", "warn"));
+    d.appendChild(fields);
+  }
   function renderDetail() {
     if (!detailEl) return;
     detailEl.textContent = "";
@@ -2484,6 +2505,10 @@
     }
     if (selected === PREVIEW_ID) {
       renderPreviewDetail(detailEl);
+      return;
+    }
+    if (selected === ABOUT_ID) {
+      renderAboutDetail(detailEl);
       return;
     }
     const m = getModules().find((x) => x.id === selected);
@@ -2550,7 +2575,7 @@
     card.append(head, main, footEl);
     overlay.appendChild(card);
     const open = () => {
-      if (!selected || selected !== FEED_ID && selected !== OPEN_ID && selected !== PREVIEW_ID && !getModules().some((m) => m.id === selected)) selected = firstNavId();
+      if (!selected || selected !== FEED_ID && selected !== OPEN_ID && selected !== PREVIEW_ID && selected !== ABOUT_ID && !getModules().some((m) => m.id === selected)) selected = firstNavId();
       renderNav();
       renderDetail();
       overlay.classList.add("open");

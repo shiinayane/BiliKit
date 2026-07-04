@@ -1,9 +1,10 @@
 import { get, set, isModuleEnabled, setModuleEnabled, getField, setField } from './settings'
 import { getModules, type BiliKitModule, type SettingField } from './module'
 import { startTvLogin } from './tv-login'
+import { VERSION } from './version'
 
 /**
- * 设置面板：左下悬浮齿轮 → 居中模态，Shadow DOM 隔离。
+ * 设置面板：右下悬浮齿轮（有 Feed 则并入其 FAB）→ 居中模态，Shadow DOM 隔离。
  * 主从布局（scales to many modules）：左栏按 category 分组，每行 = 模块名 + 「有可调项」粉点 + 启用开关；
  * 右栏只渲染当前选中模块的配置（无配置则空态）。开关在左栏 → 只有开关的模块也不用进右栏、不空亏。
  * 深浅色跟随系统。只在顶层窗口挂。
@@ -12,7 +13,9 @@ const PANEL_ID = 'bilikit-panel-root'
 const FEED_ID = '__feed__'
 const OPEN_ID = '__open__' // 「打开方式」独立成项，与 Feed 登录分开
 const PREVIEW_ID = '__preview__' // 「封面预览」方式（真视频 / 雪碧图 / 关闭）
+const ABOUT_ID = '__about__' // 「关于」：版本号 + GitHub / 反馈 / GreasyFork 链接
 const FEED_CAT = '推荐'
+const ABOUT_CAT = '关于'
 let dirty = false
 let selected = ''
 
@@ -348,6 +351,9 @@ function renderNav(): void {
       navEl.appendChild(navItemSpecial(PREVIEW_ID, '封面预览'))
     }
   }
+  // 「关于」永远置于最末，自成一组
+  navEl.appendChild(el('div', 'nav-cat', ABOUT_CAT))
+  navEl.appendChild(navItemSpecial(ABOUT_ID, '关于 BiliKit'))
 }
 
 /* ------------------------------------------------------------------ *
@@ -444,12 +450,35 @@ function renderPreviewDetail(d: HTMLElement): void {
   d.appendChild(fields)
 }
 
+// 关于：版本号 + 仓库 / 反馈 / GreasyFork 链接（新标签打开）
+function renderAboutDetail(d: HTMLElement): void {
+  d.appendChild(el('div', 'detail-title', '关于 BiliKit'))
+  d.appendChild(el('div', 'detail-desc', 'B 站体验增强套件 · Safari 友好、无需扩展、零外部依赖 · 作者 shiinayane · MIT'))
+  const fields = el('div', 'fields')
+
+  const vrow = el('div', 'field row')
+  vrow.appendChild(el('span', 'flabel', '版本'))
+  const pill = el('span', 'status on')
+  pill.innerHTML = `<span class="dot"></span>BiliKit Core v${VERSION}`
+  vrow.appendChild(pill)
+  fields.appendChild(vrow)
+
+  fields.appendChild(callout(
+    '<a href="https://github.com/shiinayane/BiliKit" target="_blank" rel="noopener">GitHub 仓库</a> · ' +
+    '<a href="https://github.com/shiinayane/BiliKit/issues" target="_blank" rel="noopener">反馈 / 报 Bug</a> · ' +
+    '<a href="https://greasyfork.org/zh-CN/scripts/585248-bilikit-core" target="_blank" rel="noopener">GreasyFork 主页</a>',
+  ))
+  fields.appendChild(callout('<b>开发期 · 快速迭代中</b>：功能可能随时调整，偶有不稳定属正常；B 站接口一变也可能短暂失效。欢迎提 Issue 或建议。', 'warn'))
+  d.appendChild(fields)
+}
+
 function renderDetail(): void {
   if (!detailEl) return
   detailEl.textContent = ''
   if (selected === FEED_ID) { renderFeedDetail(detailEl); return }
   if (selected === OPEN_ID) { renderOpenDetail(detailEl); return }
   if (selected === PREVIEW_ID) { renderPreviewDetail(detailEl); return }
+  if (selected === ABOUT_ID) { renderAboutDetail(detailEl); return }
   const m = getModules().find((x) => x.id === selected)
   if (!m) { detailEl.appendChild(emptyState('选择左侧一项')); return }
   detailEl.appendChild(el('div', 'detail-title', m.name))
@@ -523,7 +552,7 @@ export function mountPanel(): void {
   overlay.appendChild(card)
 
   const open = () => {
-    if (!selected || (selected !== FEED_ID && selected !== OPEN_ID && selected !== PREVIEW_ID && !getModules().some((m) => m.id === selected))) selected = firstNavId()
+    if (!selected || (selected !== FEED_ID && selected !== OPEN_ID && selected !== PREVIEW_ID && selected !== ABOUT_ID && !getModules().some((m) => m.id === selected))) selected = firstNavId()
     renderNav()
     renderDetail()
     overlay.classList.add('open')
