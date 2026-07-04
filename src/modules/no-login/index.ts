@@ -57,6 +57,15 @@ function init(_cfg: Cfg): void {
   try {
     Object.defineProperty(window, '__playinfo__', { configurable: true, get: () => null, set: () => { /* 丢弃低清 SSR 数据 */ } })
   } catch { /* ignore */ }
+  // 2.5) 新版播放器读的是 playurlSSRData 而非 __playinfo__：抢先声明 const 全局词法绑定 →
+  //      页面后续的 SSR 内联赋值报错被吞、播放器裸引用只能拿到我们的空对象 → 同样逼它重新请求 playurl。
+  //      （照抄 beefreely core/config.ts 的 www action；少了它，新版播放器首帧仍会用 SSR 低清流。）
+  try {
+    const sc = document.createElement('script')
+    sc.textContent = 'const playurlSSRData = {}'
+    ;(document.head || document.documentElement).appendChild(sc)
+    sc.remove()
+  } catch { /* ignore */ }
 
   // 捕获未被本模块包裹的 fetch，供 wbi 取 key 兜底（打 nav 时不经自身 rewrite）
   const pureFetch = window.fetch.bind(window)
@@ -81,7 +90,42 @@ function init(_cfg: Cfg): void {
     vipType: 0,
   }
 
+  // space/v2/myinfo 的假「本人资料」：空间页登录后必打此接口，假 cookie 下必返 -101，
+  // 空间前端见「cookie 已登录 + myinfo 未登录」即判会话失效而 location.reload → 死循环。
+  // 形状整体照抄 beefreely（space/model/constants.ts，对空间前端 known-good），mid 与 MOCK_USER 同一 MID——
+  // 「是否本人空间」按 mid 对比，假 mid ≠ 页面 UP mid → 一律按访客视角渲染，正好是我们要的只读浏览。
+  const MOCK_MYINFO = {
+    profile: {
+      mid: MID, name: 'bilibili', sex: '保密', face: 'https://i0.hdslb.com/bfs/face/member/noface.jpg', sign: '',
+      rank: 10000, level: 6, jointime: 0, moral: 70, silence: 0, email_status: 0, tel_status: 1, identification: 0,
+      vip: { type: 0, status: 0, due_date: 0, vip_pay_type: 0, theme_type: 0,
+        label: { path: '', text: '', label_theme: '', text_color: '', bg_style: 0, bg_color: '', border_color: '', use_img_label: true, img_label_uri_hans: '', img_label_uri_hant: '', img_label_uri_hans_static: '', img_label_uri_hant_static: '', label_id: 0, label_goto: null },
+        avatar_subscript: 0, nickname_color: '', role: 0, avatar_subscript_url: '', tv_vip_status: 0, tv_vip_pay_type: 0, tv_due_date: 0,
+        avatar_icon: { icon_resource: {} }, ott_info: { vip_type: 0, pay_type: 0, pay_channel_id: '', status: 0, overdue_time: 0 }, super_vip: { is_super_vip: false } },
+      pendant: { pid: 0, name: '', image: '', expire: 0, image_enhance: '', image_enhance_frame: '', n_pid: 0 },
+      nameplate: { nid: 0, name: '', image: '', image_small: '', level: '', condition: '' },
+      official: { role: 0, title: '', desc: '', type: -1 },
+      birthday: 315504000, is_tourist: 0, is_fake_account: 0, pin_prompting: 0, is_deleted: 0, in_reg_audit: 0, is_rip_user: false,
+      profession: { id: 0, name: '', show_name: '', is_show: 0, category_one: '', realname: '', title: '', department: '', certificate_no: '', certificate_show: false },
+      face_nft: 0, face_nft_new: 0, is_senior_member: 0,
+      honours: { mid: MID, colour: { dark: '#CE8620', normal: '#F0900B' }, tags: null, is_latest_100honour: 0 },
+      digital_id: '', digital_type: -2,
+      attestation: { type: 0, common_info: { title: '', prefix: '', prefix_title: '' }, splice_info: { title: '' }, icon: '', desc: '' },
+      expert_info: { title: '', state: 0, type: 0, desc: '' }, name_render: null, country_code: '86', handle: '',
+    },
+    level_exp: { current_level: 6, current_min: 28800, current_exp: 29050, next_exp: '--' },
+    coins: 0, following: 0, follower: 0,
+  }
+
   const rules: NetRule[] = [
+    // space/v2/myinfo：伪造成功响应压掉空间页「会话失效 → 自刷」路径（真登录成功不动）
+    {
+      match: (u) => u.includes('/x/space/v2/myinfo'),
+      rewriteResponse: (j) => {
+        try { if (j?.code === 0 && j?.data?.profile) return j } catch { /* ignore */ }
+        return { code: 0, message: '0', ttl: 1, data: MOCK_MYINFO }
+      },
+    },
     // nav：合并成「已登录」，保留 wbi_img 等原字段（→ 登录态 UI + 动态可见）
     {
       match: (u) => u.includes('/x/web-interface/nav'),
@@ -112,6 +156,45 @@ function init(_cfg: Cfg): void {
             if (d.level_info) d.level_info.current_level = 6
           }
         } catch { /* ignore */ }
+        return j
+      },
+    },
+    // relation：与 UP 的关注关系——假 cookie 下真接口返 -101 → 关注按钮/粉丝数报错、
+    // 视频页红 toast 的源头之一。mock 成「无关注关系」（照抄 beefreely useRelation）。
+    // 注意 match 写全 'web-interface/relation?'：别误吞 archive/relation（下一条单独管）。
+    {
+      match: (u) => u.includes('/x/web-interface/relation?'),
+      rewriteResponse: (j) => {
+        try { if (j?.code === 0 && j?.data) return j } catch { /* ignore */ }
+        return { code: 0, message: '0', ttl: 1, data: {
+          relation: { mid: 0, attribute: 0, mtime: 0, tag: null, special: 0 },
+          be_relation: { mid: 0, attribute: 0, mtime: 0, tag: null, special: 0 },
+        } }
+      },
+    },
+    // archive/relation：与本视频的互动状态（点赞/投币/收藏）——同样返 -101 触发未登录提示。
+    // mock 成「均未互动」（照抄 beefreely useArchiveRelation）。
+    {
+      match: (u) => u.includes('/x/web-interface/archive/relation'),
+      rewriteResponse: (j) => {
+        try { if (j?.code === 0 && j?.data) return j } catch { /* ignore */ }
+        return { code: 0, message: '0', ttl: 1, data: {
+          attention: false, favorite: false, season_fav: false, like: false, dislike: false, coin: 0,
+        } }
+      },
+    },
+    // 搜索页热搜接口拼接损坏（B 站自身 bug，只在未登录时出现）：api.bilibili.comx/... 少了个 /
+    // → 404、热搜/搜索结果拿不到。补上斜杠（照抄 beefreely useSearch）。
+    {
+      match: (u) => u.includes('/api.bilibili.comx/web-interface/search'),
+      rewriteRequest: (u) => ({ url: u.replace(/\.com(?!\/)/, '.com/') }),
+    },
+    // 番剧/PGC（ogv/player/playview）：把 user_status.is_login 掰成 true → 播放器不再弹
+    // 「登录后观看」、清晰度不锁最低。PGC 无需重签 playurl，is_login 即全部机制（beefreely 同）。
+    {
+      match: (u) => u.includes('/ogv/player/playview'),
+      rewriteResponse: (j) => {
+        try { if (j?.data?.user_status) j.data.user_status.is_login = true } catch { /* ignore */ }
         return j
       },
     },
