@@ -198,7 +198,10 @@ function init(_cfg: Cfg): void {
         return j
       },
     },
-    // playurl：塞 qn=80(1080p) + try_look=1(试看)、去掉旧签名重签 wbi → 1080p 取流
+    // playurl：塞 qn=80(1080p) + try_look=1(试看)、去掉旧签名重签 wbi → 1080p 取流。
+    // iPad/移动 Safari 触发 B 站触屏判定 → 播放器发 platform=html5(MP4)，服务端对 html5 的免登录
+    // 试看只给到 480p，qn=80 也被打回。故强行掰回桌面 DASH 路径：platform=pc + fnval=4048(全 DASH)
+    // + fourk=1，让服务端按桌面策略放行 1080p 试看（桌面本就这套，零风险；iPad 靠 MSE 放 DASH）。
     {
       match: (u) => u.includes('/x/player/wbi/playurl'),
       rewriteRequest: (u) => {
@@ -209,6 +212,9 @@ function init(_cfg: Cfg): void {
           delete params.wts
           params.qn = '80'
           params.try_look = '1'
+          params.platform = 'pc' // 掰回桌面路径 → 解锁 1080p 试看（html5 被服务端卡 480p）
+          params.fnval = '4048' // 全 DASH（含 8K/HDR/杜比位，服务端按能力裁），避免落到 MP4 durl 低清路径
+          params.fourk = '1'
           const signed = signQuery(params)
           if (!signed) return // 拿不到 wbi key → 维持原请求，不强改（下次导航 key 就绪再升）
           return { url: `${base}?${signed}` }
