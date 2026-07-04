@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BiliKit Feed
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.3.2
+// @version      0.3.3
 // @author       shiinayane
 // @description  B 站首页换成手机 App 的个性化推荐流。零框架纯原生实现（无 React/Vue、gzip 仅 ~22KB）+ 窗口化虚拟化，DOM 数量恒定、长时间刷不涨内存。点卡片在底部抽屉内播放、封面悬停「真视频」秒开预览（MSE，接近原生 App）。需配合 BiliKit Core（登录 / 设置）。
 // @license      MIT
@@ -1250,6 +1250,7 @@
     markerIo = new IntersectionObserver((es) => fab.classList.toggle("scrolled", !es[0].isIntersecting));
     markerIo.observe(marker);
   }
+  const FEED_VERSION = "0.3.3";
   const seen = /* @__PURE__ */ new Set();
   let grid = null;
   let sentinel = null;
@@ -1609,6 +1610,10 @@
       }
     };
     beat();
+    try {
+      localStorage.setItem("bilikit:feed.version", FEED_VERSION);
+    } catch {
+    }
     window.addEventListener("scroll", scheduleRender, { passive: true });
     window.addEventListener("resize", () => {
       invalidateLayout();

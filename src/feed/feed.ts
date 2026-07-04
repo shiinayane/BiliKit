@@ -3,6 +3,7 @@ import { NS, BLANK } from './shared'
 import { injectStyle, hideNativeChrome } from './styles'
 import { makeCard, makeSkeleton } from './card'
 import { mountControls } from './controls'
+import { FEED_VERSION } from './version'
 
 /**
  * App 推荐 feed 就地接管首页（编排层）：
@@ -387,6 +388,7 @@ export function mountFeed(): void {
   if (window.top !== window.self) return
   const beat = () => { try { localStorage.setItem('bilikit:alive.feed', String(Date.now())) } catch { /* 隐私模式忽略 */ } } // 心跳，供 Core 探测
   beat()
+  try { localStorage.setItem('bilikit:feed.version', FEED_VERSION) } catch { /* 隐私模式忽略 */ } // 供 Core「关于」页显示 Feed 版本
   // 窗口化：滚动/改窗都重算可视范围（rAF 节流；render 内部有 grid 空判）。resize 还要作废布局缓存。
   window.addEventListener('scroll', scheduleRender, { passive: true })
   window.addEventListener('resize', () => { invalidateLayout(); scheduleRender() })

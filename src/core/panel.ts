@@ -459,9 +459,19 @@ function renderAboutDetail(d: HTMLElement): void {
   const vrow = el('div', 'field row')
   vrow.appendChild(el('span', 'flabel', '版本'))
   const pill = el('span', 'status on')
-  pill.innerHTML = `<span class="dot"></span>BiliKit Core v${VERSION}`
+  pill.innerHTML = `<span class="dot"></span>Core v${VERSION}`
   vrow.appendChild(pill)
   fields.appendChild(vrow)
+
+  // Feed 版本：Feed 启动时写 localStorage；按心跳判在装/未装（避免读到卸载后残留的旧版本号）
+  const feedAlive = Date.now() - Number(localStorage.getItem('bilikit:alive.feed') || 0) < 15000
+  const feedVer = localStorage.getItem('bilikit:feed.version') || ''
+  const frow = el('div', 'field row')
+  frow.appendChild(el('span', 'flabel', 'Feed'))
+  const fpill = el('span', 'status' + (feedAlive && feedVer ? ' on' : ''))
+  fpill.innerHTML = `<span class="dot"></span>${feedAlive && feedVer ? `Feed v${feedVer}` : '未安装'}`
+  frow.appendChild(fpill)
+  fields.appendChild(frow)
 
   fields.appendChild(callout(
     '<a href="https://github.com/shiinayane/BiliKit" target="_blank" rel="noopener">GitHub 仓库</a> · ' +

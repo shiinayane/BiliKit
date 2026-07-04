@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BiliKit Core
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.5.8
+// @version      0.5.9
 // @author       shiinayane
 // @description  B 站体验增强核心，一装到位：CDN 优选（救海外卡顿）· 免登录看评论/动态/1080p · 主题跟随系统深浅 · 评论显 IP 属地 · 播放不息屏——统一设置面板集中开关。Safari 友好、无需扩展、零外部依赖。
 // @license      MIT
@@ -2041,7 +2041,7 @@
       }
     })();
   }
-  const VERSION = "0.5.8";
+  const VERSION = "0.5.9";
   const PANEL_ID = "bilikit-panel-root";
   const FEED_ID = "__feed__";
   const OPEN_ID = "__open__";
@@ -2483,9 +2483,17 @@
     const vrow = el("div", "field row");
     vrow.appendChild(el("span", "flabel", "版本"));
     const pill = el("span", "status on");
-    pill.innerHTML = `<span class="dot"></span>BiliKit Core v${VERSION}`;
+    pill.innerHTML = `<span class="dot"></span>Core v${VERSION}`;
     vrow.appendChild(pill);
     fields.appendChild(vrow);
+    const feedAlive = Date.now() - Number(localStorage.getItem("bilikit:alive.feed") || 0) < 15e3;
+    const feedVer = localStorage.getItem("bilikit:feed.version") || "";
+    const frow = el("div", "field row");
+    frow.appendChild(el("span", "flabel", "Feed"));
+    const fpill = el("span", "status" + (feedAlive && feedVer ? " on" : ""));
+    fpill.innerHTML = `<span class="dot"></span>${feedAlive && feedVer ? `Feed v${feedVer}` : "未安装"}`;
+    frow.appendChild(fpill);
+    fields.appendChild(frow);
     fields.appendChild(callout(
       '<a href="https://github.com/shiinayane/BiliKit" target="_blank" rel="noopener">GitHub 仓库</a> · <a href="https://github.com/shiinayane/BiliKit/issues" target="_blank" rel="noopener">反馈 / 报 Bug</a> · <a href="https://greasyfork.org/zh-CN/scripts/585248-bilikit-core" target="_blank" rel="noopener">GreasyFork 主页</a>'
     ));
