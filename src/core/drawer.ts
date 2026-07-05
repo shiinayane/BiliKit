@@ -50,6 +50,10 @@ function tryReveal(): void {
   if (!gotReady) return
   if (curWebFull && curImmersive && !gotWebfull) return
   setLoading(false)
+  // 把键盘焦点路由进 iframe——抽屉由父页点击打开，焦点本留在父页，keydown 到不了 iframe，
+  // 空格等播放器快捷键失效（还会滚动 iframe 内的视频页）。contentWindow.focus() 跨源也允许。
+  // iframe 内 Core 再把焦点落到播放器（见 entry-core），双管齐下。
+  try { frameWin()?.focus() } catch { /* 忽略 */ }
 }
 
 function frameWin(): Window | null {

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BiliKit Core
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.5.13
+// @version      0.5.14
 // @author       shiinayane
 // @description  B 站体验增强核心，一装到位：CDN 优选（救海外卡顿）· 免登录看评论/动态/1080p · 主题跟随系统深浅 · 评论显 IP 属地 · 播放不息屏——统一设置面板集中开关。Safari 友好、无需扩展、零外部依赖。
 // @license      MIT
@@ -2051,7 +2051,7 @@
       }
     })();
   }
-  const VERSION = "0.5.13";
+  const VERSION = "0.5.14";
   const PANEL_ID = "bilikit-panel-root";
   const FEED_ID = "__feed__";
   const OPEN_ID = "__open__";
@@ -4054,9 +4054,14 @@
   let gotReady = false;
   let gotWebfull = false;
   function tryReveal() {
+    var _a;
     if (!gotReady) return;
     if (curWebFull && curImmersive && !gotWebfull) return;
     setLoading(false);
+    try {
+      (_a = frameWin()) == null ? void 0 : _a.focus();
+    } catch {
+    }
   }
   function frameWin() {
     try {
@@ -4253,10 +4258,22 @@
     let bound = false;
     let clicked = false;
     let tries = 0;
+    const focusPlayer = () => {
+      var _a;
+      try {
+        const box = document.querySelector(".bpx-player-container");
+        if (box) {
+          if (!box.hasAttribute("tabindex")) box.setAttribute("tabindex", "-1");
+          box.focus({ preventScroll: true });
+        } else (_a = document.querySelector("video")) == null ? void 0 : _a.focus({ preventScroll: true });
+      } catch {
+      }
+    };
     const onReady = () => {
       if (readyDone) return;
       readyDone = true;
       post("bk-drawer-ready");
+      focusPlayer();
     };
     const timer = setInterval(() => {
       if (!readyDone) {

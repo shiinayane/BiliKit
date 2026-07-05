@@ -52,7 +52,16 @@ function setupDrawerReveal(): void {
   let bound = false
   let clicked = false
   let tries = 0
-  const onReady = (): void => { if (readyDone) return; readyDone = true; post('bk-drawer-ready') }
+  // 焦点落到播放器：父页已把键盘路由进本 iframe（contentWindow.focus），这里再把焦点具体放到播放器容器，
+  // 否则焦点在 <body> 上、空格会滚动视频页而非暂停。容器无 tabindex 则临时补 -1 使其可聚焦；preventScroll 防聚焦滚动。
+  const focusPlayer = (): void => {
+    try {
+      const box = document.querySelector('.bpx-player-container') as HTMLElement | null
+      if (box) { if (!box.hasAttribute('tabindex')) box.setAttribute('tabindex', '-1'); box.focus({ preventScroll: true }) }
+      else (document.querySelector('video') as HTMLElement | null)?.focus({ preventScroll: true })
+    } catch { /* 忽略 */ }
+  }
+  const onReady = (): void => { if (readyDone) return; readyDone = true; post('bk-drawer-ready'); focusPlayer() }
   const timer = setInterval(() => {
     if (!readyDone) {
       const v = document.querySelector('video') as HTMLVideoElement | null
