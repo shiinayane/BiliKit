@@ -53,14 +53,15 @@ function init(cfg: Cfg): void {
   const titleById = new Map<string, string>()
   const noteTitle = (): void => { const id = videoIdOf(location.href); const t = cleanTitle(document.title); if (id && t) titleById.set(id, t) }
   let titleEl: Element | null = null
-  let headObserved = false
+  // 只观察 <title> 节点本身（低频，仅标题文本变时触发）。**不再观察 document.head 的 childList**——
+  // B 站播放页 head 里 style/link/preload 频繁增删，那个观察器会以 ~60 次/秒触发、是发热的主要 microtask 源。
+  // 标题节点被整个替换（极少，且只发生在导航时）由 watchTitle 在导航点重新获取兜底。
   const titleMo = new MutationObserver(() => {
-    if (titleEl && !titleEl.isConnected) { titleEl = null; headObserved = false; titleMo.disconnect(); watchTitle() }
+    if (titleEl && !titleEl.isConnected) { titleEl = null; titleMo.disconnect(); watchTitle() }
     noteTitle()
     updateNowRow() // 标题（异步）更新 → 同步刷新「正在播放」行，否则一直显示上一个视频名
   })
   function watchTitle(): void {
-    if (document.head && !headObserved) { headObserved = true; titleMo.observe(document.head, { childList: true }) }
     const el = document.querySelector('title')
     if (el && el !== titleEl) { titleEl = el; titleMo.observe(el, { childList: true, characterData: true, subtree: true }); noteTitle() }
   }
@@ -72,7 +73,11 @@ function init(cfg: Cfg): void {
   const getVideo = (): HTMLVideoElement | null => (playerVideo && playerVideo.isConnected ? playerVideo : document.querySelector('video'))
   const currentVideoTime = (): number => { const v = getVideo(); return v && Number.isFinite(v.currentTime) ? v.currentTime : 0 }
   let lastPlayedT = 0
+  let lastTU = 0
   document.addEventListener('timeupdate', (e) => {
+    const now = performance.now()
+    if (now - lastTU < 1000) return // 节流：记进度 1 次/秒足够，别每次 timeupdate(~16/s)都跑 closest 判定
+    lastTU = now
     const v = e.target as HTMLVideoElement
     if (!(v && v.tagName === 'VIDEO' && Number.isFinite(v.currentTime))) return
     const inPlayer = !!v.closest('#bilibili-player, .bpx-player-container')
@@ -107,6 +112,7 @@ function init(cfg: Cfg): void {
           lastPlayedT = 0 // 上一个视频的进度已消费，别泄漏给下一条
         }
       }
+      watchTitle() // 导航后 <title> 节点可能被 SPA 替换，重新获取观察对象（低频、便宜；补掉去掉 head 观察后的缺口）
     } catch { /* 与视频无关的 push，原样放行 */ }
     return origPush.apply(this, args as any)
   } as any
@@ -179,11 +185,13 @@ function init(cfg: Cfg): void {
 .${NS}-now:hover .${NS}-title{ color:rgba(255,255,255,.4); }
 .${NS}-now .${NS}-title{ color:rgba(255,255,255,.4); }
 .${NS}-bars{ flex:0 0 auto; display:flex; align-items:flex-end; gap:2px; height:12px; }
-.${NS}-bars i{ width:2.5px; height:4px; background:#fb7299; border-radius:1px; }
-.${NS}-playing .${NS}-bars i{ animation:${NS}-eq .9s ease-in-out infinite; }
+.${NS}-bars i{ width:2.5px; height:12px; background:#fb7299; border-radius:1px; transform-origin:bottom; transform:scaleY(.33); }
+/* 只在面板展开(hover)时才跑动画——收起时(99% 时间)零成本；用 transform:scaleY 代替 height 动画，
+   走合成层、不触发每帧布局（原 height 动画是发热主因之一）。 */
+.${NS}-root:hover .${NS}-playing .${NS}-bars i{ animation:${NS}-eq .9s ease-in-out infinite; }
 .${NS}-playing .${NS}-bars i:nth-child(2){ animation-delay:.3s; }
 .${NS}-playing .${NS}-bars i:nth-child(3){ animation-delay:.6s; }
-@keyframes ${NS}-eq{ 0%,100%{ height:4px; } 50%{ height:12px; } }
+@keyframes ${NS}-eq{ 0%,100%{ transform:scaleY(.33); } 50%{ transform:scaleY(1); } }
 @media (prefers-color-scheme: light){
   .${NS}-chip{ background:rgba(255,255,255,.95); border-color:rgba(0,0,0,.08); color:#18191c; box-shadow:0 3px 14px rgba(0,0,0,.14); }
   .${NS}-empty .${NS}-chip svg{ color:rgba(0,0,0,.35); }

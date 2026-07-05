@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BiliKit Core
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.5.11
+// @version      0.5.12
 // @author       shiinayane
 // @description  B 站体验增强核心，一装到位：CDN 优选（救海外卡顿）· 免登录看评论/动态/1080p · 主题跟随系统深浅 · 评论显 IP 属地 · 播放不息屏——统一设置面板集中开关。Safari 友好、无需扩展、零外部依赖。
 // @license      MIT
@@ -45,12 +45,22 @@
     } catch {
     }
   }
+  let cache$1 = null;
   function load() {
+    if (cache$1) return cache$1;
     const local = readLocal();
     const c = readCookie();
-    return c ? { ...local, ...c } : local;
+    cache$1 = c ? { ...local, ...c } : local;
+    return cache$1;
+  }
+  try {
+    window.addEventListener("storage", (e) => {
+      if (!e.key || e.key === KEY) cache$1 = null;
+    });
+  } catch {
   }
   function save(s) {
+    cache$1 = s;
     writeCookie(s);
     try {
       localStorage.setItem(KEY, JSON.stringify(s));
@@ -2041,7 +2051,7 @@
       }
     })();
   }
-  const VERSION = "0.5.11";
+  const VERSION = "0.5.12";
   const PANEL_ID = "bilikit-panel-root";
   const FEED_ID = "__feed__";
   const OPEN_ID = "__open__";
@@ -3696,11 +3706,9 @@
       if (id && t) titleById.set(id, t);
     };
     let titleEl = null;
-    let headObserved = false;
     const titleMo = new MutationObserver(() => {
       if (titleEl && !titleEl.isConnected) {
         titleEl = null;
-        headObserved = false;
         titleMo.disconnect();
         watchTitle();
       }
@@ -3708,10 +3716,6 @@
       updateNowRow();
     });
     function watchTitle() {
-      if (document.head && !headObserved) {
-        headObserved = true;
-        titleMo.observe(document.head, { childList: true });
-      }
       const el2 = document.querySelector("title");
       if (el2 && el2 !== titleEl) {
         titleEl = el2;
@@ -3728,7 +3732,11 @@
       return v && Number.isFinite(v.currentTime) ? v.currentTime : 0;
     };
     let lastPlayedT = 0;
+    let lastTU = 0;
     document.addEventListener("timeupdate", (e) => {
+      const now = performance.now();
+      if (now - lastTU < 1e3) return;
+      lastTU = now;
       const v = e.target;
       if (!(v && v.tagName === "VIDEO" && Number.isFinite(v.currentTime))) return;
       const inPlayer = !!v.closest("#bilibili-player, .bpx-player-container");
@@ -3761,6 +3769,7 @@
             lastPlayedT = 0;
           }
         }
+        watchTitle();
       } catch {
       }
       return origPush.apply(this, args);
@@ -3841,11 +3850,13 @@
 .${NS$1}-now:hover .${NS$1}-title{ color:rgba(255,255,255,.4); }
 .${NS$1}-now .${NS$1}-title{ color:rgba(255,255,255,.4); }
 .${NS$1}-bars{ flex:0 0 auto; display:flex; align-items:flex-end; gap:2px; height:12px; }
-.${NS$1}-bars i{ width:2.5px; height:4px; background:#fb7299; border-radius:1px; }
-.${NS$1}-playing .${NS$1}-bars i{ animation:${NS$1}-eq .9s ease-in-out infinite; }
+.${NS$1}-bars i{ width:2.5px; height:12px; background:#fb7299; border-radius:1px; transform-origin:bottom; transform:scaleY(.33); }
+/* 只在面板展开(hover)时才跑动画——收起时(99% 时间)零成本；用 transform:scaleY 代替 height 动画，
+   走合成层、不触发每帧布局（原 height 动画是发热主因之一）。 */
+.${NS$1}-root:hover .${NS$1}-playing .${NS$1}-bars i{ animation:${NS$1}-eq .9s ease-in-out infinite; }
 .${NS$1}-playing .${NS$1}-bars i:nth-child(2){ animation-delay:.3s; }
 .${NS$1}-playing .${NS$1}-bars i:nth-child(3){ animation-delay:.6s; }
-@keyframes ${NS$1}-eq{ 0%,100%{ height:4px; } 50%{ height:12px; } }
+@keyframes ${NS$1}-eq{ 0%,100%{ transform:scaleY(.33); } 50%{ transform:scaleY(1); } }
 @media (prefers-color-scheme: light){
   .${NS$1}-chip{ background:rgba(255,255,255,.95); border-color:rgba(0,0,0,.08); color:#18191c; box-shadow:0 3px 14px rgba(0,0,0,.14); }
   .${NS$1}-empty .${NS$1}-chip svg{ color:rgba(0,0,0,.35); }

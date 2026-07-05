@@ -37,14 +37,22 @@ function writeCookie(s: Store): void {
   } catch { /* ignore */ }
 }
 
+// 合并后的设置缓存：get() 每次调用曾都重新读 localStorage + 解析 cookie（site-drawer 每次点击/mouseover
+// 都调 get，profile 里 readCookie 占可观自耗时）。缓存一份，set() 就地更新、跨标签改动由 storage 事件失效。
+let cache: Store | null = null
 function load(): Store {
+  if (cache) return cache
   // 跨子域 cookie（非敏感）覆盖本域，同时保留本域独有的敏感键（如 feed.accessKey）
   const local = readLocal()
   const c = readCookie()
-  return c ? { ...local, ...c } : local
+  cache = c ? { ...local, ...c } : local
+  return cache
 }
+// 别的标签页改了本域 localStorage → 失效重读（本标签自己 set 走 save 就地更新，不会触发本事件）
+try { window.addEventListener('storage', (e) => { if (!e.key || e.key === KEY) cache = null }) } catch { /* ignore */ }
 
 function save(s: Store): boolean {
+  cache = s // 缓存随即反映本次写入（s 通常就是 load() 返回的同一对象）
   writeCookie(s) // 非敏感 → 跨子域共享
   try {
     localStorage.setItem(KEY, JSON.stringify(s)) // 本域全量（含敏感键，供 Feed 读）
