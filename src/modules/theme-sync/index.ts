@@ -90,14 +90,28 @@ function init(cfg: Cfg): void {
   window.addEventListener(SETTINGS_EVENT, apply)
   window.addEventListener('storage', (e) => { if (!e.key || e.key === 'bilikit:settings') apply() })
 
-  // 评论宿主懒加载、SPA 换视频后会重建，新元素带的是 B 站自己（可能过期）的主题值；
-  // 轻量观察 DOM 增删，有新组件就补设一次（rAF 合并；只在 .theme 不符时才写，平时近乎零成本）。
+  // 评论宿主(bili-comments)懒加载 / SPA 换视频后会重建，新元素带 B 站自己（可能过期）的主题值 → 补设一次。
+  // **只观察评论容器 #commentapp，不再观察整个 document**——后者在播放页会被弹幕/播放器的高频 DOM churn
+  // 以 ~60 次/秒触发，是明显的功耗热点（profile 实测）。#commentapp 子树只在评论加载/翻页时变动，频率低得多。
+  // rAF 合并、syncComponentTheme 只在 .theme 不符时才写，平时近乎零成本。
   let syncPending = 0
   const scheduleComponentSync = () => {
     if (syncPending) return
     syncPending = requestAnimationFrame(() => { syncPending = 0; syncComponentTheme(wantDark()) })
   }
-  new MutationObserver(scheduleComponentSync).observe(document.documentElement, { childList: true, subtree: true })
+  function watchComments(): void {
+    const app = document.querySelector('#commentapp')
+    if (app) { new MutationObserver(scheduleComponentSync).observe(app, { childList: true, subtree: true }); return }
+    // #commentapp 尚未挂载：短轮询直到出现（找到即观察、即停；~20s 兜底放弃）
+    let tries = 0
+    const t = setInterval(() => {
+      const a = document.querySelector('#commentapp')
+      if (a) { clearInterval(t); new MutationObserver(scheduleComponentSync).observe(a, { childList: true, subtree: true }) }
+      else if (++tries > 40) clearInterval(t)
+    }, 500)
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', watchComments)
+  else watchComments()
 }
 
 export const themeSync: BiliKitModule = {

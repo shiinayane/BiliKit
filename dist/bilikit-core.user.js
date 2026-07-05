@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BiliKit Core
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.5.12
+// @version      0.5.13
 // @author       shiinayane
 // @description  B 站体验增强核心，一装到位：CDN 优选（救海外卡顿）· 免登录看评论/动态/1080p · 主题跟随系统深浅 · 评论显 IP 属地 · 播放不息屏——统一设置面板集中开关。Safari 友好、无需扩展、零外部依赖。
 // @license      MIT
@@ -2051,7 +2051,7 @@
       }
     })();
   }
-  const VERSION = "0.5.12";
+  const VERSION = "0.5.13";
   const PANEL_ID = "bilikit-panel-root";
   const FEED_ID = "__feed__";
   const OPEN_ID = "__open__";
@@ -2866,7 +2866,23 @@
         syncComponentTheme(wantDark());
       });
     };
-    new MutationObserver(scheduleComponentSync).observe(document.documentElement, { childList: true, subtree: true });
+    function watchComments() {
+      const app = document.querySelector("#commentapp");
+      if (app) {
+        new MutationObserver(scheduleComponentSync).observe(app, { childList: true, subtree: true });
+        return;
+      }
+      let tries = 0;
+      const t = setInterval(() => {
+        const a = document.querySelector("#commentapp");
+        if (a) {
+          clearInterval(t);
+          new MutationObserver(scheduleComponentSync).observe(a, { childList: true, subtree: true });
+        } else if (++tries > 40) clearInterval(t);
+      }, 500);
+    }
+    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", watchComments);
+    else watchComments();
   }
   const themeSync = {
     id: "theme-sync",
