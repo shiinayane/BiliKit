@@ -79,6 +79,23 @@ function setupDrawerReveal(): void {
 }
 setupDrawerReveal()
 
+// 抽屉关闭时，父页会把本 iframe 导去 about:blank 再整体移出 DOM（见 core/drawer.ts closeDrawer）。
+// 导航到 about:blank 会先对本文档触发 pagehide——赶在文档被拆之前，主动放掉视频解码资源
+// （pause + 清 src + load()）。这是缓解（非根治）iOS Safari 对 <video>/MSE 内存回收不及时的
+// 已知手法：见 WebKit bug 11683（iframe 内存泄漏，需先 about:blank 再移除）与社区对视频元素
+// 反复换源导致内存增长的报告（如 aws/amazon-chime-sdk-component-library-react#771）——显式清理
+// 能降低增长但不保证根除，故仍配合父页销毁 iframe 元素双管齐下。
+function teardownVideoOnLeave(): void {
+  if (window.top === window.self || !location.hash.includes('bk-drawer')) return
+  window.addEventListener('pagehide', () => {
+    try {
+      const v = document.querySelector('video') as HTMLVideoElement | null
+      if (v) { v.pause(); v.removeAttribute('src'); v.load() }
+    } catch { /* 尽力而为，不影响页面正常卸载 */ }
+  })
+}
+teardownVideoOnLeave()
+
 // 注册所有 Core（页面世界，@grant none）模块。
 // cdn-pick / theme-sync 先跑（runAt='start'，需在页面用 fetch / 首帧换肤前挂钩）。
 // 暂缓：float / way-back（与将来的 App 推荐 feed 有交互冲突，待 feed 定后再迁）；

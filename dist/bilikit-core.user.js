@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BiliKit Core
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.5.14
+// @version      0.5.15
 // @author       shiinayane
 // @description  B 站体验增强核心，一装到位：CDN 优选（救海外卡顿）· 免登录看评论/动态/1080p · 主题跟随系统深浅 · 评论显 IP 属地 · 播放不息屏——统一设置面板集中开关。Safari 友好、无需扩展、零外部依赖。
 // @license      MIT
@@ -2051,7 +2051,7 @@
       }
     })();
   }
-  const VERSION = "0.5.14";
+  const VERSION = "0.5.15";
   const PANEL_ID = "bilikit-panel-root";
   const FEED_ID = "__feed__";
   const OPEN_ID = "__open__";
@@ -4078,6 +4078,14 @@
     }
     if (on) loadTimer = setTimeout(() => setLoading(false), 6e3);
   }
+  function createFrame() {
+    const f = document.createElement("iframe");
+    f.className = `${NS}-dframe`;
+    f.allow = "autoplay; fullscreen; picture-in-picture; encrypted-media; clipboard-write";
+    f.allowFullscreen = true;
+    f.setAttribute("sandbox", "allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-presentation allow-modals allow-downloads");
+    return f;
+  }
   function ensureDom() {
     if (mask) return;
     if (!styled) {
@@ -4090,11 +4098,7 @@
     mask.className = `${NS}-dmask`;
     panel = document.createElement("div");
     panel.className = `${NS}-drawer`;
-    frame = document.createElement("iframe");
-    frame.className = `${NS}-dframe`;
-    frame.allow = "autoplay; fullscreen; picture-in-picture; encrypted-media; clipboard-write";
-    frame.allowFullscreen = true;
-    frame.setAttribute("sandbox", "allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-presentation allow-modals allow-downloads");
+    frame = createFrame();
     window.addEventListener("message", (e) => {
       if (e.source !== frameWin()) return;
       if (e.data === "bk-drawer-ready") {
@@ -4134,6 +4138,10 @@
       clearTimeout(closeTimer);
       closeTimer = null;
     }
+    if (!frame) {
+      frame = createFrame();
+      panel.insertBefore(frame, panel.firstChild);
+    }
     curUrl = url;
     curWebFull = webFull;
     curImmersive = immersive;
@@ -4162,7 +4170,11 @@
     setLoading(false);
     document.documentElement.style.overflow = "";
     closeTimer = setTimeout(() => {
-      if (frame && !(panel == null ? void 0 : panel.classList.contains("on"))) frame.src = "about:blank";
+      if (frame && !(panel == null ? void 0 : panel.classList.contains("on"))) {
+        frame.src = "about:blank";
+        frame.remove();
+        frame = null;
+      }
     }, 340);
   }
   const PC_HOSTS = ["https://api.bilibili.com", "https://s1.hdslb.com", "https://i0.hdslb.com", "https://i1.hdslb.com", "https://i2.hdslb.com"];
@@ -4303,6 +4315,21 @@
     }, 150);
   }
   setupDrawerReveal();
+  function teardownVideoOnLeave() {
+    if (window.top === window.self || !location.hash.includes("bk-drawer")) return;
+    window.addEventListener("pagehide", () => {
+      try {
+        const v = document.querySelector("video");
+        if (v) {
+          v.pause();
+          v.removeAttribute("src");
+          v.load();
+        }
+      } catch {
+      }
+    });
+  }
+  teardownVideoOnLeave();
   register(
     cdnPick,
     themeSync,

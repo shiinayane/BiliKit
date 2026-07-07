@@ -66,6 +66,17 @@ function setLoading(on: boolean): void {
   if (on) loadTimer = setTimeout(() => setLoading(false), 6000) // 兜底：信号迟迟不来也撤遮罩
 }
 
+// 造一个新 iframe（属性与 sandbox 固定）。销毁旧的、开新的都走这一份，别写两遍。
+function createFrame(): HTMLIFrameElement {
+  const f = document.createElement('iframe')
+  f.className = `${NS}-dframe`
+  f.allow = 'autoplay; fullscreen; picture-in-picture; encrypted-media; clipboard-write'
+  f.allowFullscreen = true
+  // sandbox：不含 allow-top-navigation → 禁止被嵌视频页把顶层窗口导航走（frame-busting）。须在设 src 前就位。
+  f.setAttribute('sandbox', 'allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-presentation allow-modals allow-downloads')
+  return f
+}
+
 function ensureDom(): void {
   if (mask) return
   if (!styled) { styled = true; const s = document.createElement('style'); s.textContent = CSS; (document.head || document.documentElement).appendChild(s) }
@@ -73,13 +84,9 @@ function ensureDom(): void {
   mask.className = `${NS}-dmask`
   panel = document.createElement('div')
   panel.className = `${NS}-drawer`
-  frame = document.createElement('iframe')
-  frame.className = `${NS}-dframe`
-  frame.allow = 'autoplay; fullscreen; picture-in-picture; encrypted-media; clipboard-write'
-  frame.allowFullscreen = true
-  // sandbox：不含 allow-top-navigation → 禁止被嵌视频页把顶层窗口导航走（frame-busting）。须在设 src 前就位。
-  frame.setAttribute('sandbox', 'allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-presentation allow-modals allow-downloads')
+  frame = createFrame()
   // Core 在抽屉 iframe 内的两个揭幕信号：视频首帧就绪 / 网页全屏已铺满。（揭幕由此触发，setLoading 自带超时兜底）
+  // 挂在 window 上、判 e.source===frameWin()，故换新 iframe 后天然认新的、不用重新绑定。
   window.addEventListener('message', (e) => {
     if (e.source !== frameWin()) return
     if (e.data === 'bk-drawer-ready') { gotReady = true; tryReveal() }
@@ -112,17 +119,18 @@ function ensureDom(): void {
 export function openDrawer(url: string, cover = '', webFull = false, immersive = false): void {
   ensureDom()
   if (closeTimer) { clearTimeout(closeTimer); closeTimer = null }
+  if (!frame) { frame = createFrame(); panel!.insertBefore(frame, panel!.firstChild) } // 上次关闭已销毁 iframe（见 closeDrawer）→ 重新造一个挂回面板
   curUrl = url
   curWebFull = webFull
   curImmersive = immersive
   const marked = url.split('#')[0] + (webFull ? MARK_WEB : MARK) // 去掉原 URL 的 hash，换上抽屉标记（否则 Core 认不到、不隐顶栏/不发揭幕信号）
-  if (frame!.src !== marked) {
+  if (frame.src !== marked) {
     // 换视频（或已被 about:blank 清过）：重新加载 → 显遮罩、等 iframe 内 Core 发「首帧就绪」再揭幕
     gotReady = false
     gotWebfull = false
     if (loadCover) loadCover.style.backgroundImage = cover ? `url("${cover}")` : ''
     setLoading(true)
-    frame!.src = marked
+    frame.src = marked
   } else {
     // 同一视频、iframe 未卸载（快速重开，仍在播）：已加载好，直接揭幕、不显遮罩——否则不重载就等不到新信号，会卡满 6s
     setLoading(false)
@@ -138,7 +146,18 @@ export function closeDrawer(): void {
   ctrls.classList.remove('on')
   setLoading(false)
   document.documentElement.style.overflow = ''
-  closeTimer = setTimeout(() => { if (frame && !panel?.classList.contains('on')) frame.src = 'about:blank' }, 340)
+  // 关闭后销毁 iframe（而非只导去 about:blank、长驻复用）：iOS Safari 对 <video>/MSE 解码内存的回收
+  // 在「同一个 iframe 反复换 src」的用法下不可靠（WebKit 已知类别问题），实测关抽屉内存不降。
+  // 已知缓解手法：先导去 about:blank 卸载旧文档（其 pagehide 由 iframe 内 Core 兜底暂停/清 video），
+  // 再把 <iframe> 元素整个移出 DOM（而非仅换 src）——比长驻同一元素更能让引擎回收该 frame 的
+  // 合成层/媒体资源；下次 openDrawer 会造一个新的。注意：这是缓解、非根治，WebKit 侧仍可能有残留。
+  closeTimer = setTimeout(() => {
+    if (frame && !panel?.classList.contains('on')) {
+      frame.src = 'about:blank'
+      frame.remove()
+      frame = null
+    }
+  }, 340)
 }
 
 /**
