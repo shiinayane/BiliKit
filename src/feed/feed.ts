@@ -119,8 +119,12 @@ function render(): void {
   // 锚点补偿：仅当「窗口上方有占位」(firstRow>0) 时需要——顶部(首屏/刷新)时 firstRow=0 不补偿，
   // 免得与 refreshFeed 的 scrollTo(top) 打架、也不会误落在非顶部。
   // 单点锚：几何推出「当前视口顶那一行的首卡」(O(1))，避免每帧遍历全窗口读 BCR 造成布局抖动。
+  // 用 offsetTop 而非 getBoundingClientRect().top：后者会把 CSS transform 算进去，若锚点卡恰好在
+  // 两次测量之间 hover 状态变化（卡片 hover 有 translateY(-4px)），会测出几像素的假位移——代码信以为真
+  // 拿 scrollBy 去"纠正"，等于让整页真的跟着抖一下，看起来就是"划过一张卡，其它卡的文字跟着晃"。
+  // offsetTop 是纯布局属性、不受 transform 影响，只在真实布局位置变化（窗口化增删节点撑高占位）时才变。
   const anchor = firstRow > 0 ? nodes.get(Math.max(0, Math.floor(into / rowH)) * cols) || null : null
-  const anchorTop = anchor ? anchor.getBoundingClientRect().top : 0
+  const anchorTop = anchor ? anchor.offsetTop : 0
 
   // 1) 移除窗口外节点（连同 observer/监听器/闭包一起 GC）
   for (const [i, el] of nodes) {
@@ -142,7 +146,7 @@ function render(): void {
   // 4) 补偿：锚点渲染后若位移 >0.5px，反向滚回保持可见内容不动（同帧完成，无中间态）。
   //    置 suppressScroll 跳过这次 scrollBy 触发的 scroll，免得再引发一轮 render（估算准时 delta≈0，通常不触发）。
   if (anchor) {
-    const delta = anchor.getBoundingClientRect().top - anchorTop
+    const delta = anchor.offsetTop - anchorTop
     if (Math.abs(delta) > 0.5) { suppressScroll = true; window.scrollBy(0, delta) }
   }
 }

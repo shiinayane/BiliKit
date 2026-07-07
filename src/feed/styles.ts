@@ -9,8 +9,13 @@ export function injectStyle(): void {
     .${NS}{ display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:22px 16px; padding:16px 0; }
     /* 不再用 content-visibility：真·窗口化已把 DOM 限制在可视附近；且 CV 会让「窗口内但不在视口」的卡
        塌回 contain-intrinsic-size，与视口内卡的真实高不一致 → 滚动时高度抖动。去掉后每卡真实等高。 */
-    .${NS}-card{ cursor:pointer; transition:transform .18s ease; }
-    .${NS}-card:hover{ transform:translateY(-4px); } /* 悬浮浮起（transform → 合成层，不触发重排） */
+    /* hover 浮起用 top 偏移而**不是 transform**：transform 会把这张卡提成合成层、移开又拆掉——
+       WebKit 的重叠测试会把「视觉边界（含 hover 大投影，伸进邻卡）与之重叠、绘制顺序在后」的邻卡内容
+       连带提升/降回合成层；网格列宽是 1fr 分数像素，文字在普通绘制与合成层上的亚像素栅格化不同，
+       建/拆层那一瞬邻卡遮罩文字就会肉眼可见地「动一下」（圆角裁剪短暂失效露缝也是同一根）。
+       top 是纯绘制偏移（position:relative 已就位）：不建层、不触发邻卡任何变化，只重绘本卡区域。 */
+    .${NS}-card{ cursor:pointer; top:0; transition:top .18s ease; }
+    .${NS}-card:hover{ top:-4px; }
     .${NS}-cover{ position:relative; aspect-ratio:16/9; border-radius:8px; overflow:hidden; background:var(--bg2,#e3e5e7); transition:box-shadow .18s ease; }
     .${NS}-card:hover .${NS}-cover{ box-shadow:0 6px 20px rgba(0,0,0,.22); }
     .${NS}-cover img{ width:100%; height:100%; object-fit:cover; display:block; opacity:0; transition:opacity .35s ease; }
@@ -102,8 +107,12 @@ export function injectStyle(): void {
 
     /* ——— 卡片操作：稍后再看 / 我不想看 / 撤销浮层 ——— */
     .${NS}-card{ position:relative; } /* 承载「不想看」模糊浮层的定位上下文 */
-    /* hover / 菜单展开时抬高本卡层级，否则溢出的三点菜单会被 DOM 后面的卡片盖住 */
-    .${NS}-card:hover, .${NS}-card.menuopen{ z-index:20; }
+    /* 三点菜单展开时抬高本卡层级，否则溢出的菜单会被 DOM 后面的卡片盖住。
+       触发条件收窄为「悬到三点按钮本身」+ menuopen，而不是「悬到整张卡」——
+       z-index 变化会让 Safari 重排该网格的合成层绘制顺序，touch 太频繁（鼠标扫过任意卡都算）会让
+       其它卡片的圆角裁剪（同类 Safari 合成层 bug，见上面 border-radius 那段注释）瞬间失效、露出缝隙。
+       用 :has() 把触发范围缩到「真悬到三点按钮」这个小目标上，日常划过网格不再触发全局重排。 */
+    .${NS}-card:has(.${NS}-more-wrap:hover), .${NS}-card.menuopen{ z-index:20; }
     /* 稍后再看：封面右上角，hover 现（触屏首触即现）。深色封面上永远白图标、暗玻璃底 */
     .${NS}-wl{ position:absolute; top:8px; right:8px; z-index:3; width:32px; height:32px; border-radius:50%; border:0; padding:0; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,.55); color:#fff; cursor:pointer; opacity:0; transform:translateY(-4px); -webkit-backdrop-filter:blur(4px); backdrop-filter:blur(4px); transition:opacity .18s ease, transform .18s ease, background .16s ease; }
     .${NS}-wl svg{ width:17px; height:17px; }
@@ -126,7 +135,7 @@ export function injectStyle(): void {
     .${NS}-mi:hover{ background:var(--bg2,#e3e5e7); color:var(--brand_blue,#00aeec); }
     /* 提交「不想看」后：卡片内容模糊压暗 + 浮层（愁脸文案 + 撤销），淡入过渡 */
     .${NS}-card.disliked{ cursor:default; }
-    .${NS}-card.disliked:hover{ transform:none; }
+    .${NS}-card.disliked:hover{ top:0; } /* 已「不想看」的卡不再浮起（浮起改走 top，见上） */
     .${NS}-card.disliked .${NS}-cover, .${NS}-card.disliked .${NS}-bottom{ filter:blur(5px); opacity:.5; pointer-events:none; transition:filter .28s ease, opacity .28s ease; }
     .${NS}-dov{ position:absolute; inset:0; z-index:8; display:none; align-items:center; justify-content:center; }
     .${NS}-card.disliked .${NS}-dov{ display:flex; animation:bk-dov-in .26s ease; }
