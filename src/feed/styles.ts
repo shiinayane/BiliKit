@@ -57,7 +57,7 @@ export function injectStyle(): void {
     .${NS}-mstat span{ display:inline-flex; align-items:center; gap:3px; }
     .${NS}-mstat svg{ width:15px; height:15px; }
     /* 下方：头像独占左栏，右栏上标题、下「UP名 · 日期」 */
-    .${NS}-bottom{ display:flex; gap:10px; margin-top:9px; align-items:flex-start; }
+    .${NS}-bottom{ position:relative; z-index:2; display:flex; gap:10px; margin-top:9px; align-items:flex-start; } /* z-index:2 压过封面合成层，向上弹的三点菜单才不被封面盖住 */
     .${NS}-face{ width:34px; height:34px; flex:0 0 34px; border-radius:50%; object-fit:cover; background:var(--bg2,#e3e5e7); }
     img.${NS}-face{ cursor:pointer; transition:box-shadow .15s ease; } /* 有头像时可点进空间（占位 div 不给手型） */
     img.${NS}-face:hover{ box-shadow:0 0 0 2px var(--brand_blue,#00aeec); } /* hover 强调：品牌色圆环 */
@@ -65,7 +65,8 @@ export function injectStyle(): void {
     .${NS}-up{ cursor:pointer; } /* UP 名可点进空间 */
     .${NS}-up:hover{ color:var(--brand_blue,#00aeec); }
     /* min-height 固定 2 行：让每张卡等高，虚拟化的行高估算才准、不漂移抖动（1 行标题也占 2 行位） */
-    .${NS}-title{ margin:0 0 6px; font-size:15px; font-weight:500; line-height:1.4; min-height:2.8em; color:var(--text1,#18191c); display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+    .${NS}-title{ margin:0 0 6px; font-size:15px; font-weight:500; line-height:1.4; min-height:2.8em; color:var(--text1,#18191c); display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; transition:color .16s ease; }
+    .${NS}-title:hover{ color:var(--brand_blue,#00aeec); } /* 与 UP 名一致：hover 标题本身即高亮成品牌色，示意可点 */
     .${NS}-sub{ display:flex; align-items:center; font-size:13px; color:var(--text3,#9499a0); }
     .${NS}-who{ min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .${NS}-sub i{ margin:0 5px; font-style:normal; }
@@ -98,6 +99,46 @@ export function injectStyle(): void {
     .${NS}-fab button.busy{ pointer-events:none; }
     .${NS}-fab button.busy svg{ animation:bk-spin .8s linear infinite; }
     @keyframes bk-spin{ to{ transform:rotate(360deg); } }
+
+    /* ——— 卡片操作：稍后再看 / 我不想看 / 撤销浮层 ——— */
+    .${NS}-card{ position:relative; } /* 承载「不想看」模糊浮层的定位上下文 */
+    /* hover / 菜单展开时抬高本卡层级，否则溢出的三点菜单会被 DOM 后面的卡片盖住 */
+    .${NS}-card:hover, .${NS}-card.menuopen{ z-index:20; }
+    /* 稍后再看：封面右上角，hover 现（触屏首触即现）。深色封面上永远白图标、暗玻璃底 */
+    .${NS}-wl{ position:absolute; top:8px; right:8px; z-index:3; width:32px; height:32px; border-radius:50%; border:0; padding:0; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,.55); color:#fff; cursor:pointer; opacity:0; transform:translateY(-4px); -webkit-backdrop-filter:blur(4px); backdrop-filter:blur(4px); transition:opacity .18s ease, transform .18s ease, background .16s ease; }
+    .${NS}-wl svg{ width:17px; height:17px; }
+    .${NS}-card:hover .${NS}-wl{ opacity:1; transform:none; }
+    .${NS}-wl:hover{ background:var(--brand_blue,#00aeec); }
+    .${NS}-wl.busy{ pointer-events:none; }
+    .${NS}-wl.busy svg{ animation:bk-spin .8s linear infinite; }
+    .${NS}-wl.done{ opacity:1; transform:none; background:var(--brand_blue,#00aeec); }
+    /* 三点「我不想看」：随 UP名·日期行右端、常显（不再压标题，标题恢复占满右侧宽度）。
+       给 sub 定个 min-height，让「有菜单」与「无菜单」的卡等高，虚拟化行高不漂移。菜单向上弹（本行在卡底部）。 */
+    .${NS}-sub{ min-height:22px; }
+    .${NS}-more-wrap{ position:relative; flex:none; margin-left:auto; } /* auto 把三点推到本行最右端 */
+    .${NS}-more{ width:22px; height:22px; border:0; padding:0; border-radius:6px; background:transparent; color:var(--text3,#9499a0); display:flex; align-items:center; justify-content:center; cursor:pointer; transition:background .16s ease, color .16s ease; }
+    .${NS}-more svg{ width:16px; height:16px; }
+    .${NS}-more:hover{ background:var(--bg2,#e3e5e7); color:var(--text1,#18191c); }
+    /* 菜单向上弹；z-index 高 + 下方 .bk-feed-bottom 抬到封面之上（封面是 Safari 合成层，否则菜单被自家封面盖住） */
+    .${NS}-menu{ position:absolute; bottom:26px; right:0; z-index:30; min-width:136px; padding:4px; background:var(--bg1,#fff); border:1px solid var(--line_regular,#e3e5e7); border-radius:8px; box-shadow:0 6px 24px rgba(0,0,0,.16); opacity:0; visibility:hidden; transform:translateY(4px); transition:opacity .16s ease, transform .16s ease, visibility .16s; }
+    .${NS}-more-wrap:hover .${NS}-menu, .${NS}-more-wrap.open .${NS}-menu{ opacity:1; visibility:visible; transform:none; }
+    .${NS}-mi{ display:block; width:100%; text-align:left; padding:8px 10px; border:0; border-radius:6px; background:transparent; color:var(--text1,#18191c); font-size:13px; white-space:nowrap; cursor:pointer; }
+    .${NS}-mi:hover{ background:var(--bg2,#e3e5e7); color:var(--brand_blue,#00aeec); }
+    /* 提交「不想看」后：卡片内容模糊压暗 + 浮层（愁脸文案 + 撤销），淡入过渡 */
+    .${NS}-card.disliked{ cursor:default; }
+    .${NS}-card.disliked:hover{ transform:none; }
+    .${NS}-card.disliked .${NS}-cover, .${NS}-card.disliked .${NS}-bottom{ filter:blur(5px); opacity:.5; pointer-events:none; transition:filter .28s ease, opacity .28s ease; }
+    .${NS}-dov{ position:absolute; inset:0; z-index:8; display:none; align-items:center; justify-content:center; }
+    .${NS}-card.disliked .${NS}-dov{ display:flex; animation:bk-dov-in .26s ease; }
+    @keyframes bk-dov-in{ from{ opacity:0; transform:scale(.96); } to{ opacity:1; transform:none; } }
+    .${NS}-dov-in{ display:flex; flex-direction:column; align-items:center; gap:11px; padding:12px; text-align:center; }
+    .${NS}-dov-txt{ color:var(--text1,#18191c); font-size:14px; font-weight:500; }
+    .${NS}-undo{ display:inline-flex; align-items:center; gap:5px; padding:6px 15px; border:1px solid var(--line_regular,#e3e5e7); border-radius:16px; background:var(--bg1,#fff); color:var(--text1,#18191c); font-size:13px; cursor:pointer; transition:color .16s ease, border-color .16s ease; }
+    .${NS}-undo svg{ width:15px; height:15px; }
+    .${NS}-undo:hover{ color:var(--brand_blue,#00aeec); border-color:var(--brand_blue,#00aeec); }
+    /* 轻量 toast：底部居中，跟随 B 站主题变量 */
+    .${NS}-toast{ position:fixed; left:50%; bottom:44px; z-index:2147483000; transform:translateX(-50%) translateY(12px); max-width:76vw; padding:9px 16px; border-radius:8px; background:rgba(0,0,0,.82); color:#fff; font-size:13px; line-height:1.4; opacity:0; pointer-events:none; -webkit-backdrop-filter:blur(6px); backdrop-filter:blur(6px); transition:opacity .2s ease, transform .2s ease; }
+    .${NS}-toast.on{ opacity:1; transform:translateX(-50%) translateY(0); }
   `
   ;(document.head || document.documentElement).appendChild(s)
 }

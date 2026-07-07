@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BiliKit Core
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.5.19
+// @version      0.5.20
 // @author       shiinayane
 // @description  B 站体验增强核心，一装到位：CDN 优选（救海外卡顿）· 免登录看评论/动态/1080p · 主题跟随系统深浅 · 评论显 IP 属地 · 播放不息屏——统一设置面板集中开关。Safari 友好、无需扩展、零外部依赖。
 // @license      MIT
@@ -2051,7 +2051,7 @@
       }
     })();
   }
-  const VERSION = "0.5.19";
+  const VERSION = "0.5.20";
   const PANEL_ID = "bilikit-panel-root";
   const FEED_ID = "__feed__";
   const OPEN_ID = "__open__";
@@ -4212,6 +4212,7 @@
     }
   }
   function resolve(target) {
+    if (target.closest(".bk-feed-noopen")) return null;
     const pick = (root2, url) => {
       const img = root2.querySelector("img");
       return { url, cover: img && (img.currentSrc || img.src) || "" };
@@ -4260,7 +4261,7 @@
     if (window.top === window.self || !location.hash.includes("bk-drawer")) return;
     const ads = [".ad-report", ".video-page-special-card-small", ".video-page-game-card-small", ".slide-ad-exp", ".activity-m-v1", ".pop-live-small-mode", ".right-bottom-banner", ".eva-banner", ".gg-floor-module", ".video-card-ad-small"];
     const s = document.createElement("style");
-    s.textContent = `#biliMainHeader,.bili-header,.fixed-header,.international-header{display:none!important}html,body{background-color:var(--bg1)!important}` + ads.join(",") + `{display:none!important}`;
+    s.textContent = `#biliMainHeader,.bili-header,.fixed-header,.international-header{display:none!important}` + ads.join(",") + `{display:none!important}`;
     (document.head || document.documentElement).appendChild(s);
   }
   hideDrawerChrome();

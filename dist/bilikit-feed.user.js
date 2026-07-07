@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BiliKit Feed
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.3.4
+// @version      0.3.8
 // @author       shiinayane
 // @description  B 站首页换成手机 App 的个性化推荐流。零框架纯原生实现（无 React/Vue、gzip 仅 ~22KB）+ 窗口化虚拟化，DOM 数量恒定、长时间刷不涨内存。点卡片在底部抽屉内播放、封面悬停「真视频」秒开预览（MSE，接近原生 App）。需配合 BiliKit Core（登录 / 设置）。
 // @license      MIT
@@ -216,6 +216,7 @@
     return i >= 0 ? desc.slice(i + 3).trim() : "";
   }
   function normalize(item) {
+    var _a;
     if (!item || typeof item !== "object") return null;
     const args = item.args || {};
     const pa = item.player_args || {};
@@ -231,6 +232,8 @@
       aid: String(args.aid || pa.aid || item.param || ""),
       cid: String(pa.cid || args.cid || item.cid || ""),
       // player_args.cid 常有；无则预览时 pagelist 兜底
+      param: String(item.param || args.aid || pa.aid || ""),
+      // dislike 接口的 id
       duration: item.cover_left_text_1 || "",
       // 时长（实测在 text_1，如 13:02）
       play: item.cover_left_text_2 || "",
@@ -238,18 +241,20 @@
       danmaku: item.cover_left_text_3 || "",
       // 弹幕数（如 13弹幕）
       date: descDate(item.desc || ""),
-      reason: item.bottom_rcmd_reason || ""
+      reason: item.bottom_rcmd_reason || "",
+      dislikeReasons: Array.isArray((_a = item.three_point) == null ? void 0 : _a.dislike_reasons) ? item.three_point.dislike_reasons.filter((r) => r && typeof r.id === "number").map((r) => ({ id: r.id, name: String(r.name || ""), toast: String(r.toast || "") })) : []
     };
   }
-  async function fetchAppFeed(accessKey = "") {
-    var _a;
+  let _dumpedTP = false;
+  async function fetchAppFeed(accessKey2 = "") {
+    var _a, _b;
     const idx = Math.floor(Date.now() / 1e3) + Math.floor(Math.random() * 1e3);
     const query = signAppQuery({
       build: "1",
       mobi_app: "iphone",
       device: "pad",
       idx: String(idx),
-      access_key: accessKey
+      access_key: accessKey2
     });
     const url = `https://app.bilibili.com/x/v2/feed/index?${query}`;
     const text = await gmRequest({ method: "GET", url });
@@ -260,6 +265,11 @@
       return { code: -1, message: "响应非 JSON（可能被风控/登录拦截）", cards: [], raw: text };
     }
     const items2 = Array.isArray((_a = json == null ? void 0 : json.data) == null ? void 0 : _a.items) ? json.data.items : [];
+    if (!_dumpedTP && items2.length) {
+      _dumpedTP = true;
+      const sample = (_b = items2.find((i) => i && i.three_point)) == null ? void 0 : _b.three_point;
+      if (sample) console.debug("[BiliKit Feed] three_point 样本（校对「我不想看」reason id/name 用）:", JSON.stringify(sample));
+    }
     const cards = items2.map(normalize).filter((c) => !!c && c.goto === "av");
     const code = typeof (json == null ? void 0 : json.code) === "number" ? json.code : -1;
     return { code, message: (json == null ? void 0 : json.message) || "", cards, raw: json };
@@ -332,7 +342,7 @@
     .${NS}-mstat span{ display:inline-flex; align-items:center; gap:3px; }
     .${NS}-mstat svg{ width:15px; height:15px; }
     /* 下方：头像独占左栏，右栏上标题、下「UP名 · 日期」 */
-    .${NS}-bottom{ display:flex; gap:10px; margin-top:9px; align-items:flex-start; }
+    .${NS}-bottom{ position:relative; z-index:2; display:flex; gap:10px; margin-top:9px; align-items:flex-start; } /* z-index:2 压过封面合成层，向上弹的三点菜单才不被封面盖住 */
     .${NS}-face{ width:34px; height:34px; flex:0 0 34px; border-radius:50%; object-fit:cover; background:var(--bg2,#e3e5e7); }
     img.${NS}-face{ cursor:pointer; transition:box-shadow .15s ease; } /* 有头像时可点进空间（占位 div 不给手型） */
     img.${NS}-face:hover{ box-shadow:0 0 0 2px var(--brand_blue,#00aeec); } /* hover 强调：品牌色圆环 */
@@ -340,7 +350,8 @@
     .${NS}-up{ cursor:pointer; } /* UP 名可点进空间 */
     .${NS}-up:hover{ color:var(--brand_blue,#00aeec); }
     /* min-height 固定 2 行：让每张卡等高，虚拟化的行高估算才准、不漂移抖动（1 行标题也占 2 行位） */
-    .${NS}-title{ margin:0 0 6px; font-size:15px; font-weight:500; line-height:1.4; min-height:2.8em; color:var(--text1,#18191c); display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+    .${NS}-title{ margin:0 0 6px; font-size:15px; font-weight:500; line-height:1.4; min-height:2.8em; color:var(--text1,#18191c); display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; transition:color .16s ease; }
+    .${NS}-title:hover{ color:var(--brand_blue,#00aeec); } /* 与 UP 名一致：hover 标题本身即高亮成品牌色，示意可点 */
     .${NS}-sub{ display:flex; align-items:center; font-size:13px; color:var(--text3,#9499a0); }
     .${NS}-who{ min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .${NS}-sub i{ margin:0 5px; font-style:normal; }
@@ -373,6 +384,46 @@
     .${NS}-fab button.busy{ pointer-events:none; }
     .${NS}-fab button.busy svg{ animation:bk-spin .8s linear infinite; }
     @keyframes bk-spin{ to{ transform:rotate(360deg); } }
+
+    /* ——— 卡片操作：稍后再看 / 我不想看 / 撤销浮层 ——— */
+    .${NS}-card{ position:relative; } /* 承载「不想看」模糊浮层的定位上下文 */
+    /* hover / 菜单展开时抬高本卡层级，否则溢出的三点菜单会被 DOM 后面的卡片盖住 */
+    .${NS}-card:hover, .${NS}-card.menuopen{ z-index:20; }
+    /* 稍后再看：封面右上角，hover 现（触屏首触即现）。深色封面上永远白图标、暗玻璃底 */
+    .${NS}-wl{ position:absolute; top:8px; right:8px; z-index:3; width:32px; height:32px; border-radius:50%; border:0; padding:0; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,.55); color:#fff; cursor:pointer; opacity:0; transform:translateY(-4px); -webkit-backdrop-filter:blur(4px); backdrop-filter:blur(4px); transition:opacity .18s ease, transform .18s ease, background .16s ease; }
+    .${NS}-wl svg{ width:17px; height:17px; }
+    .${NS}-card:hover .${NS}-wl{ opacity:1; transform:none; }
+    .${NS}-wl:hover{ background:var(--brand_blue,#00aeec); }
+    .${NS}-wl.busy{ pointer-events:none; }
+    .${NS}-wl.busy svg{ animation:bk-spin .8s linear infinite; }
+    .${NS}-wl.done{ opacity:1; transform:none; background:var(--brand_blue,#00aeec); }
+    /* 三点「我不想看」：随 UP名·日期行右端、常显（不再压标题，标题恢复占满右侧宽度）。
+       给 sub 定个 min-height，让「有菜单」与「无菜单」的卡等高，虚拟化行高不漂移。菜单向上弹（本行在卡底部）。 */
+    .${NS}-sub{ min-height:22px; }
+    .${NS}-more-wrap{ position:relative; flex:none; margin-left:auto; } /* auto 把三点推到本行最右端 */
+    .${NS}-more{ width:22px; height:22px; border:0; padding:0; border-radius:6px; background:transparent; color:var(--text3,#9499a0); display:flex; align-items:center; justify-content:center; cursor:pointer; transition:background .16s ease, color .16s ease; }
+    .${NS}-more svg{ width:16px; height:16px; }
+    .${NS}-more:hover{ background:var(--bg2,#e3e5e7); color:var(--text1,#18191c); }
+    /* 菜单向上弹；z-index 高 + 下方 .bk-feed-bottom 抬到封面之上（封面是 Safari 合成层，否则菜单被自家封面盖住） */
+    .${NS}-menu{ position:absolute; bottom:26px; right:0; z-index:30; min-width:136px; padding:4px; background:var(--bg1,#fff); border:1px solid var(--line_regular,#e3e5e7); border-radius:8px; box-shadow:0 6px 24px rgba(0,0,0,.16); opacity:0; visibility:hidden; transform:translateY(4px); transition:opacity .16s ease, transform .16s ease, visibility .16s; }
+    .${NS}-more-wrap:hover .${NS}-menu, .${NS}-more-wrap.open .${NS}-menu{ opacity:1; visibility:visible; transform:none; }
+    .${NS}-mi{ display:block; width:100%; text-align:left; padding:8px 10px; border:0; border-radius:6px; background:transparent; color:var(--text1,#18191c); font-size:13px; white-space:nowrap; cursor:pointer; }
+    .${NS}-mi:hover{ background:var(--bg2,#e3e5e7); color:var(--brand_blue,#00aeec); }
+    /* 提交「不想看」后：卡片内容模糊压暗 + 浮层（愁脸文案 + 撤销），淡入过渡 */
+    .${NS}-card.disliked{ cursor:default; }
+    .${NS}-card.disliked:hover{ transform:none; }
+    .${NS}-card.disliked .${NS}-cover, .${NS}-card.disliked .${NS}-bottom{ filter:blur(5px); opacity:.5; pointer-events:none; transition:filter .28s ease, opacity .28s ease; }
+    .${NS}-dov{ position:absolute; inset:0; z-index:8; display:none; align-items:center; justify-content:center; }
+    .${NS}-card.disliked .${NS}-dov{ display:flex; animation:bk-dov-in .26s ease; }
+    @keyframes bk-dov-in{ from{ opacity:0; transform:scale(.96); } to{ opacity:1; transform:none; } }
+    .${NS}-dov-in{ display:flex; flex-direction:column; align-items:center; gap:11px; padding:12px; text-align:center; }
+    .${NS}-dov-txt{ color:var(--text1,#18191c); font-size:14px; font-weight:500; }
+    .${NS}-undo{ display:inline-flex; align-items:center; gap:5px; padding:6px 15px; border:1px solid var(--line_regular,#e3e5e7); border-radius:16px; background:var(--bg1,#fff); color:var(--text1,#18191c); font-size:13px; cursor:pointer; transition:color .16s ease, border-color .16s ease; }
+    .${NS}-undo svg{ width:15px; height:15px; }
+    .${NS}-undo:hover{ color:var(--brand_blue,#00aeec); border-color:var(--brand_blue,#00aeec); }
+    /* 轻量 toast：底部居中，跟随 B 站主题变量 */
+    .${NS}-toast{ position:fixed; left:50%; bottom:44px; z-index:2147483000; transform:translateX(-50%) translateY(12px); max-width:76vw; padding:9px 16px; border-radius:8px; background:rgba(0,0,0,.82); color:#fff; font-size:13px; line-height:1.4; opacity:0; pointer-events:none; -webkit-backdrop-filter:blur(6px); backdrop-filter:blur(6px); transition:opacity .2s ease, transform .2s ease; }
+    .${NS}-toast.on{ opacity:1; transform:translateX(-50%) translateY(0); }
   `;
     (document.head || document.documentElement).appendChild(s);
   }
@@ -1182,9 +1233,99 @@
     });
     cover.addEventListener("mouseleave", stop);
   }
+  function accessKey() {
+    try {
+      return JSON.parse(localStorage.getItem("bilikit:settings") || "{}")["feed.accessKey"] || "";
+    } catch {
+      return "";
+    }
+  }
+  function biliJct() {
+    const m = document.cookie.match(/(?:^|;\s*)bili_jct=([^;]+)/);
+    return m ? decodeURIComponent(m[1]) : "";
+  }
+  const nowIdx = () => String(Math.floor(Date.now() / 1e3));
+  async function feedDislike(card, reasonId, cancel) {
+    const key = accessKey();
+    if (!key) return { ok: false, message: "未配置 access_key，无法提交反馈" };
+    const query = signAppQuery({
+      access_key: key,
+      build: "1",
+      mobi_app: "iphone",
+      device: "pad",
+      goto: card.goto || "av",
+      id: card.param || card.aid,
+      reason_id: String(reasonId),
+      idx: nowIdx()
+    });
+    const path = cancel ? "/x/feed/dislike/cancel" : "/x/feed/dislike";
+    try {
+      const text = await gmRequest({ method: "GET", url: `https://app.bilibili.com${path}?${query}` });
+      const json = JSON.parse(text);
+      return { ok: (json == null ? void 0 : json.code) === 0, message: (json == null ? void 0 : json.message) || ((json == null ? void 0 : json.code) === 0 ? "" : "失败") };
+    } catch {
+      return { ok: false, message: "网络错误" };
+    }
+  }
+  const dislikeVideo = (c, reasonId) => feedDislike(c, reasonId, false);
+  const undoDislikeVideo = (c, reasonId) => feedDislike(c, reasonId, true);
+  async function toview(aid, del) {
+    if (!aid) return { ok: false, message: "缺少视频 id" };
+    const path = del ? "/x/v2/history/toview/del" : "/x/v2/history/toview/add";
+    const csrf = biliJct();
+    if (csrf) {
+      try {
+        const r = await fetch(`https://api.bilibili.com${path}`, {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: `aid=${encodeURIComponent(aid)}&csrf=${encodeURIComponent(csrf)}`
+        });
+        const json = await r.json();
+        return { ok: (json == null ? void 0 : json.code) === 0, message: (json == null ? void 0 : json.message) || "" };
+      } catch {
+        return { ok: false, message: "网络错误" };
+      }
+    }
+    const key = accessKey();
+    if (!key) return { ok: false, message: "需网页登录或在设置里配置 access_key" };
+    const query = signAppQuery({ access_key: key, build: "1", mobi_app: "iphone", device: "pad", aid, idx: nowIdx() });
+    try {
+      const text = await gmRequest({ method: "POST", url: `https://api.bilibili.com${path}?${query}` });
+      const json = JSON.parse(text);
+      return { ok: (json == null ? void 0 : json.code) === 0, message: (json == null ? void 0 : json.message) || "" };
+    } catch {
+      return { ok: false, message: "网络错误" };
+    }
+  }
+  const watchLaterAdd = (aid) => toview(aid, false);
+  const watchLaterDel = (aid) => toview(aid, true);
+  let toastEl = null;
+  let toastTimer = null;
+  function toast(msg) {
+    if (!toastEl) {
+      toastEl = document.createElement("div");
+      toastEl.className = `${NS}-toast`;
+      document.body.appendChild(toastEl);
+    }
+    toastEl.textContent = msg;
+    void toastEl.offsetWidth;
+    toastEl.classList.add("on");
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toastEl == null ? void 0 : toastEl.classList.remove("on"), 2200);
+  }
   const PLAY_SVG = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
   const DM_SVG = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 4h16a1.5 1.5 0 0 1 1.5 1.5v9A1.5 1.5 0 0 1 20 16H9l-5 4V5.5A1.5 1.5 0 0 1 5.5 4z"/></svg>';
+  const WL_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 12a7.5 7.5 0 1 0 1.95-5.05"/><path d="M4 3.5V7h3.5"/><path d="M10.5 9l4.3 3-4.3 3z" fill="currentColor" stroke="none"/></svg>';
+  const WL_DONE_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
+  const MORE_SVG = '<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/></svg>';
+  const UNDO_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v6h6"/><path d="M3.5 13a9 9 0 1 0 2.6-7.6L3 8"/></svg>';
   const stripUnit = (s) => s.replace(/观看|播放|弹幕|次/g, "").trim();
+  function pickReasons(rs) {
+    const upper = rs.find((r) => /^\s*up\s*主/i.test(r.name)) || rs.find((r) => /(作者|视频主)/.test(r.name));
+    const notInterest = rs.find((r) => r.id === 1) || rs.find((r) => /不感兴趣|这个内容/.test(r.name)) || rs.find((r) => r !== upper);
+    return { notInterest, upper };
+  }
   function makeCard(c) {
     const el = document.createElement("div");
     el.className = `${NS}-card`;
@@ -1193,7 +1334,11 @@
     const badge = c.reason ? `<span class="${NS}-badge">${esc(c.reason)}</span>` : "";
     const who = `<span class="${NS}-up">${esc(c.up)}</span>` + (c.date ? `<i>·</i>${esc(c.date)}` : "");
     const sub = badge + `<span class="${NS}-who">${who}</span>`;
-    el.innerHTML = `<div class="${NS}-cover"><img alt="" data-src="${esc(coverUrl(c.cover))}"><div class="${NS}-mask"><div class="${NS}-mstat">${mstat}</div>` + (c.duration ? `<span>${esc(c.duration)}</span>` : "<span></span>") + `</div></div><div class="${NS}-bottom">` + (c.face ? `<img class="${NS}-face" src="${esc(coverUrl(c.face))}" alt="" loading="lazy">` : `<div class="${NS}-face"></div>`) + `<div class="${NS}-right"><div class="${NS}-title">${esc(c.title)}</div><div class="${NS}-sub">${sub}</div></div></div>`;
+    const wlBtn = c.bvid ? `<button class="${NS}-wl ${NS}-noopen" type="button" title="稍后再看" aria-label="稍后再看">${WL_SVG}</button>` : "";
+    const { notInterest, upper } = pickReasons(c.dislikeReasons || []);
+    const menu = notInterest || upper ? `<div class="${NS}-more-wrap ${NS}-noopen"><button class="${NS}-more" type="button" title="我不想看" aria-label="我不想看">${MORE_SVG}</button><div class="${NS}-menu">` + (notInterest ? `<button class="${NS}-mi" type="button" data-rid="${notInterest.id}" data-lbl="不感兴趣">不感兴趣</button>` : "") + (upper ? `<button class="${NS}-mi" type="button" data-rid="${upper.id}" data-lbl="不想看此UP主">不想看此UP主</button>` : "") + `</div></div>` : "";
+    const overlay = `<div class="${NS}-dov ${NS}-noopen"><div class="${NS}-dov-in"><div class="${NS}-dov-txt"></div><button class="${NS}-undo" type="button">${UNDO_SVG}<span>撤销</span></button></div></div>`;
+    el.innerHTML = `<div class="${NS}-cover"><img alt="" data-src="${esc(coverUrl(c.cover))}"><div class="${NS}-mask"><div class="${NS}-mstat">${mstat}</div>` + (c.duration ? `<span>${esc(c.duration)}</span>` : "<span></span>") + `</div>` + wlBtn + `</div><div class="${NS}-bottom">` + (c.face ? `<img class="${NS}-face" src="${esc(coverUrl(c.face))}" alt="" loading="lazy">` : `<div class="${NS}-face"></div>`) + `<div class="${NS}-right"><div class="${NS}-title">${esc(c.title)}</div><div class="${NS}-sub">${sub}${menu}</div></div></div>` + overlay;
     const coverEl = el.querySelector(`.${NS}-cover`);
     const imgEl = el.querySelector("img");
     imgEl.addEventListener("load", () => {
@@ -1206,6 +1351,66 @@
       const pm = readSetting("feed.previewMode", "video");
       if (pm === "sprite") setupHoverPreview(coverEl, c.bvid);
       else if (pm !== "off") setupVideoPreview(coverEl, c.bvid, c.cid);
+    }
+    const wlEl = el.querySelector(`.${NS}-wl`);
+    if (wlEl) wlEl.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      if (wlEl.classList.contains("busy")) return;
+      const added = wlEl.classList.contains("done");
+      wlEl.classList.add("busy");
+      const r = added ? await watchLaterDel(c.aid) : await watchLaterAdd(c.aid);
+      wlEl.classList.remove("busy");
+      if (!r.ok) {
+        toast(r.message || (added ? "移出失败" : "添加失败"));
+        return;
+      }
+      if (added) {
+        wlEl.innerHTML = WL_SVG;
+        wlEl.classList.remove("done");
+        wlEl.title = "稍后再看";
+        toast("已移出稍后再看");
+      } else {
+        wlEl.innerHTML = WL_DONE_SVG;
+        wlEl.classList.add("done");
+        wlEl.title = "已加入稍后再看（再点移出）";
+        toast("已添加到稍后再看");
+      }
+    });
+    const moreWrap = el.querySelector(`.${NS}-more-wrap`);
+    if (moreWrap) {
+      let lastRid = 0;
+      const moreBtn = moreWrap.querySelector(`.${NS}-more`);
+      const setOpen = (on) => {
+        moreWrap.classList.toggle("open", on);
+        el.classList.toggle("menuopen", on);
+      };
+      moreBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        setOpen(!moreWrap.classList.contains("open"));
+      });
+      el.querySelectorAll(`.${NS}-mi`).forEach((b) => b.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        const btn = b;
+        const rid = Number(btn.dataset.rid);
+        const lbl = btn.dataset.lbl || "已标记不想看";
+        setOpen(false);
+        const r = await dislikeVideo(c, rid);
+        if (!r.ok) {
+          toast(r.message || "提交失败");
+          return;
+        }
+        lastRid = rid;
+        el.querySelector(`.${NS}-dov-txt`).textContent = lbl;
+        el.classList.add("disliked");
+      }));
+      const undoEl = el.querySelector(`.${NS}-undo`);
+      undoEl.addEventListener("click", (e) => {
+        e.stopPropagation();
+        el.classList.remove("disliked");
+        undoDislikeVideo(c, lastRid).then((r) => {
+          if (!r.ok) toast(r.message || "撤销失败");
+        });
+      });
     }
     el.addEventListener("click", (e) => {
       if (c.mid && e.target.closest(`.${NS}-face, .${NS}-up`)) {
@@ -1256,7 +1461,7 @@
     markerIo = new IntersectionObserver((es) => fab.classList.toggle("scrolled", !es[0].isIntersecting));
     markerIo.observe(marker);
   }
-  const FEED_VERSION = "0.3.4";
+  const FEED_VERSION = "0.3.8";
   const seen = /* @__PURE__ */ new Set();
   let grid = null;
   let sentinel = null;

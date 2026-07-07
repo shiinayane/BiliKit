@@ -76,6 +76,9 @@ export function gmRequest(opts: { method: string; url: string; data?: string; he
   })
 }
 
+// 「我不想看」反馈项：来自 item.three_point.dislike_reasons，id 是提交给 /x/feed/dislike 的 reason_id。
+export interface DislikeReason { id: number; name: string; toast: string }
+
 export interface FeedCard {
   goto: string
   title: string
@@ -87,11 +90,13 @@ export interface FeedCard {
   bvid: string
   aid: string
   cid: string // 分 P cid，playurl 必需；App feed 的 player_args 常带，缺则预览时用 pagelist 兜底
+  param: string // App 推荐条目 id（dislike 接口的 id 参数 = item.param；av 条目即 aid）
   duration: string
   play: string
   danmaku: string // 弹幕数（cover_left_text_3）
   date: string // 发布日期，如「6月11日」——仅存在于 desc 文本，无原始时间戳
   reason: string // 推荐理由，如「已关注」（bottom_rcmd_reason）
+  dislikeReasons: DislikeReason[] // 三点菜单「我不想看」的可选理由；空数组=该条不支持反馈（不显菜单）
 }
 
 // desc 形如「UP名 · 6月11日」或仅「UP名」。取「·」后一段当日期；没有则空。
@@ -116,13 +121,23 @@ function normalize(item: any): FeedCard | null {
     bvid: item.bvid || pa.bvid || '',
     aid: String(args.aid || pa.aid || item.param || ''),
     cid: String(pa.cid || args.cid || item.cid || ''), // player_args.cid 常有；无则预览时 pagelist 兜底
+    param: String(item.param || args.aid || pa.aid || ''), // dislike 接口的 id
     duration: item.cover_left_text_1 || '', // 时长（实测在 text_1，如 13:02）
     play: item.cover_left_text_2 || '', // 观看数（实测在 text_2，如 25.4万观看）
     danmaku: item.cover_left_text_3 || '', // 弹幕数（如 13弹幕）
     date: descDate(item.desc || ''),
     reason: item.bottom_rcmd_reason || '',
+    dislikeReasons: Array.isArray(item.three_point?.dislike_reasons)
+      ? item.three_point.dislike_reasons
+          .filter((r: any) => r && typeof r.id === 'number')
+          .map((r: any) => ({ id: r.id, name: String(r.name || ''), toast: String(r.toast || '') }))
+      : [],
   }
 }
+
+// 首次拉到数据时打印一条 three_point 样本——「我不想看」reason 的真实 id/name 只有真机响应里才有，
+// 打出来便于校对菜单映射（不含 access_key，安全）。只打一次。
+let _dumpedTP = false
 
 /** 拉一页 App 推荐。accessKey 空串 = 匿名。返回归一化视频卡 + 原始 JSON（便于排查字段）。 */
 export async function fetchAppFeed(accessKey = ''): Promise<{ code: number; message: string; cards: FeedCard[]; raw: any }> {
@@ -144,6 +159,11 @@ export async function fetchAppFeed(accessKey = ''): Promise<{ code: number; mess
     return { code: -1, message: '响应非 JSON（可能被风控/登录拦截）', cards: [], raw: text }
   }
   const items: any[] = Array.isArray(json?.data?.items) ? json.data.items : [] // 防 items 非数组时 .map 抛错
+  if (!_dumpedTP && items.length) {
+    _dumpedTP = true
+    const sample = items.find((i) => i && i.three_point)?.three_point
+    if (sample) console.debug('[BiliKit Feed] three_point 样本（校对「我不想看」reason id/name 用）:', JSON.stringify(sample))
+  }
   const cards = items.map(normalize).filter((c): c is FeedCard => !!c && c.goto === 'av')
   // code 归一为 number：缺失/非数字一律当失败(-1)，避免调用方 `===0`/`!code` 误判
   const code = typeof json?.code === 'number' ? json.code : -1

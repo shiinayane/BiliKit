@@ -21,6 +21,8 @@ function isVideoUrl(u: string): boolean {
 
 // 从点击目标解析出「要打开的视频 URL(+可选封面)」；非视频 / 需放行 → null
 function resolve(target: HTMLElement): { url: string; cover: string } | null {
+  // Feed 卡片上的操作控件（稍后再看 / 我不想看菜单 / 撤销浮层）统一带 .bk-feed-noopen——放行、别当成「点视频」
+  if (target.closest('.bk-feed-noopen')) return null
   const pick = (root: Element, url: string) => {
     const img = root.querySelector('img') as HTMLImageElement | null
     return { url, cover: (img && (img.currentSrc || img.src)) || '' }
