@@ -12,8 +12,10 @@ const MARK = '#bk-drawer' // iframe 标记：Core 识别后隐顶栏+去广告
 const MARK_WEB = '#bk-drawer-web' // 同上 + Core 再点一次「网页全屏」，播放器铺满抽屉（沉浸模式）
 
 const CSS = `
-.${NS}-dctrls button{ width:40px; height:40px; border-radius:50%; padding:0; display:flex; align-items:center; justify-content:center; border:1px solid var(--line_regular,#e3e5e7); background:var(--bg1,#fff); color:var(--text2,#61666d); cursor:pointer; box-shadow:0 2px 10px rgba(0,0,0,.12); transition:color .16s ease, transform .16s ease, box-shadow .16s ease, opacity .18s ease; }
-.${NS}-dctrls button:hover{ color:var(--brand_blue,#00aeec); transform:translateY(-2px); box-shadow:0 5px 16px rgba(0,0,0,.2); }
+/* 这两颗按钮浮在顶部的暗遮罩(dmask,rgba(0,0,0,.5))上——深浅色下遮罩都是暗的，故**不跟页面主题**，
+   固定用浅色，两种模式都是「暗底上的白按钮」，清晰不糊。浅色模式观感不变，深色模式不再暗按钮糊暗遮罩。 */
+.${NS}-dctrls button{ width:40px; height:40px; border-radius:50%; padding:0; display:flex; align-items:center; justify-content:center; border:1px solid rgba(0,0,0,.06); background:rgba(255,255,255,.96); color:#61666d; cursor:pointer; box-shadow:0 2px 12px rgba(0,0,0,.35); -webkit-backdrop-filter:blur(6px); backdrop-filter:blur(6px); transition:color .16s ease, transform .16s ease, box-shadow .16s ease, opacity .18s ease; }
+.${NS}-dctrls button:hover{ color:var(--brand_blue,#00aeec); transform:translateY(-2px); box-shadow:0 5px 18px rgba(0,0,0,.45); }
 .${NS}-dctrls button:active{ transform:scale(.94); }
 @keyframes bk-dspin{ to{ transform:rotate(360deg); } }
 .${NS}-dmask{ position:fixed; inset:0; z-index:100000; background:rgba(0,0,0,.5); opacity:0; pointer-events:none; transition:opacity .3s ease; }
