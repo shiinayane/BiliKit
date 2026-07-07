@@ -21,6 +21,12 @@ export function injectStyle(): void {
     /* hover 真视频预览：低清 dash 静音自动播，盖在封面上（同雪碧图层级 z-index:1，遮罩之下、图片之上） */
     .${NS}-vpreview{ position:absolute; inset:0; z-index:1; width:100%; height:100%; object-fit:cover; display:block; opacity:0; transition:opacity .2s ease; pointer-events:none; background:#000; }
     .${NS}-vpreview.on{ opacity:1; }
+    /* Safari 圆角裁剪补丁：透明度过渡的封面图 / 真视频预览会被 Safari 提为合成子层；父卡 hover 浮起(transform)
+       期间，Safari 有时不把这些子层裁到 .bk-cover 的 border-radius，方角越过圆角、露出一条缝（深色下尤其明显）。
+       给每个「铺满封面、贴到边角」的子层自身也上同款圆角，方角即被磨圆、与父级圆角重合，父级裁剪失效时也不再露缝。
+       走 border-radius(仅编译期圆角)而非 -webkit-mask 强裁——后者会把播放中的视频每帧重刷进遮罩缓冲、增功耗。 */
+    .${NS}-cover img, .${NS}-vpreview, .${NS}-preview{ border-radius:8px; }
+    .${NS}-mask, .${NS}-pbar{ border-radius:0 0 8px 8px; }
     /* 预览播放时：隐藏播放/弹幕数遮罩；右下角时长转「当前 / 总时长」，去渐变、加阴影保可读 */
     .${NS}-cover.previewing .${NS}-mstat{ display:none; }
     .${NS}-cover.previewing .${NS}-mask{ background:none; justify-content:flex-end; }
