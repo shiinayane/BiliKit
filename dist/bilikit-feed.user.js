@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BiliKit Feed
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.3.8
+// @version      0.3.9
 // @author       shiinayane
 // @description  B 站首页换成手机 App 的个性化推荐流。零框架纯原生实现（无 React/Vue、gzip 仅 ~22KB）+ 窗口化虚拟化，DOM 数量恒定、长时间刷不涨内存。点卡片在底部抽屉内播放、封面悬停「真视频」秒开预览（MSE，接近原生 App）。需配合 BiliKit Core（登录 / 设置）。
 // @license      MIT
@@ -278,6 +278,12 @@
   const BLANK = "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==";
   const esc = (s) => s.replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[ch]);
   const coverUrl = (u) => u ? u.replace(/^http:/, "https:") : BLANK;
+  function coverSized(u) {
+    const base = coverUrl(u);
+    if (base === BLANK) return { avif: BLANK, webp: BLANK, jpg: BLANK };
+    const p = "@640w_360h_1c";
+    return { avif: `${base}${p}.avif`, webp: `${base}${p}.webp`, jpg: `${base}${p}` };
+  }
   function readSetting(key, fallback) {
     try {
       const v = JSON.parse(localStorage.getItem("bilikit:settings") || "{}")[key];
@@ -1071,6 +1077,22 @@
   }
   const DELAY = 500;
   const FADE = 220;
+  const MAX_ACTIVE = 3;
+  const activeOrder = [];
+  function registerActive(entry) {
+    const i = activeOrder.indexOf(entry);
+    if (i !== -1) activeOrder.splice(i, 1);
+    activeOrder.push(entry);
+    while (activeOrder.length > MAX_ACTIVE) {
+      const idx = activeOrder.findIndex((x) => !x.isHovering());
+      if (idx === -1) break;
+      activeOrder.splice(idx, 1)[0].teardown();
+    }
+  }
+  function unregisterActive(entry) {
+    const i = activeOrder.indexOf(entry);
+    if (i !== -1) activeOrder.splice(i, 1);
+  }
   const fmt = (s) => {
     if (!isFinite(s) || s < 0) s = 0;
     const m = Math.floor(s / 60), ss = Math.floor(s % 60);
@@ -1131,6 +1153,7 @@
       attemptOk = true;
       cover.classList.add("previewing");
       video.classList.add("on");
+      registerActive(selfEntry);
     };
     const stop = () => {
       hovering = false;
@@ -1167,6 +1190,7 @@
       }
       restoreCover();
       attemptOk = false;
+      unregisterActive(selfEntry);
       if (video) {
         try {
           (_a = video.__mseCleanup) == null ? void 0 : _a.call(video);
@@ -1184,6 +1208,7 @@
         video = null;
       }
     };
+    const selfEntry = { teardown, isHovering: () => hovering };
     cover.__bkTeardown = teardown;
     cover.addEventListener("mouseenter", () => {
       if (hovering) return;
@@ -1338,7 +1363,9 @@
     const { notInterest, upper } = pickReasons(c.dislikeReasons || []);
     const menu = notInterest || upper ? `<div class="${NS}-more-wrap ${NS}-noopen"><button class="${NS}-more" type="button" title="我不想看" aria-label="我不想看">${MORE_SVG}</button><div class="${NS}-menu">` + (notInterest ? `<button class="${NS}-mi" type="button" data-rid="${notInterest.id}" data-lbl="不感兴趣">不感兴趣</button>` : "") + (upper ? `<button class="${NS}-mi" type="button" data-rid="${upper.id}" data-lbl="不想看此UP主">不想看此UP主</button>` : "") + `</div></div>` : "";
     const overlay = `<div class="${NS}-dov ${NS}-noopen"><div class="${NS}-dov-in"><div class="${NS}-dov-txt"></div><button class="${NS}-undo" type="button">${UNDO_SVG}<span>撤销</span></button></div></div>`;
-    el.innerHTML = `<div class="${NS}-cover"><img alt="" data-src="${esc(coverUrl(c.cover))}"><div class="${NS}-mask"><div class="${NS}-mstat">${mstat}</div>` + (c.duration ? `<span>${esc(c.duration)}</span>` : "<span></span>") + `</div>` + wlBtn + `</div><div class="${NS}-bottom">` + (c.face ? `<img class="${NS}-face" src="${esc(coverUrl(c.face))}" alt="" loading="lazy">` : `<div class="${NS}-face"></div>`) + `<div class="${NS}-right"><div class="${NS}-title">${esc(c.title)}</div><div class="${NS}-sub">${sub}${menu}</div></div></div>` + overlay;
+    const cov = coverSized(c.cover);
+    const pic = `<picture><source type="image/avif" data-srcset="${esc(cov.avif)}"><source type="image/webp" data-srcset="${esc(cov.webp)}"><img alt="" data-src="${esc(cov.jpg)}" decoding="async"></picture>`;
+    el.innerHTML = `<div class="${NS}-cover">${pic}<div class="${NS}-mask"><div class="${NS}-mstat">${mstat}</div>` + (c.duration ? `<span>${esc(c.duration)}</span>` : "<span></span>") + `</div>` + wlBtn + `</div><div class="${NS}-bottom">` + (c.face ? `<img class="${NS}-face" src="${esc(coverUrl(c.face))}" alt="" loading="lazy" decoding="async">` : `<div class="${NS}-face"></div>`) + `<div class="${NS}-right"><div class="${NS}-title">${esc(c.title)}</div><div class="${NS}-sub">${sub}${menu}</div></div></div>` + overlay;
     const coverEl = el.querySelector(`.${NS}-cover`);
     const imgEl = el.querySelector("img");
     imgEl.addEventListener("load", () => {
@@ -1461,7 +1488,7 @@
     markerIo = new IntersectionObserver((es) => fab.classList.toggle("scrolled", !es[0].isIntersecting));
     markerIo.observe(marker);
   }
-  const FEED_VERSION = "0.3.8";
+  const FEED_VERSION = "0.3.9";
   const seen = /* @__PURE__ */ new Set();
   let grid = null;
   let sentinel = null;
@@ -1747,13 +1774,23 @@
         for (const e of ents) {
           const card = e.target;
           const img = card.querySelector("img");
+          const sources = card.querySelectorAll("picture source[data-srcset]");
           if (e.isIntersecting) {
             if (img && (!img.getAttribute("src") || img.src.startsWith("data:")) && img.dataset.src) {
               (_a = img.parentElement) == null ? void 0 : _a.classList.remove("failed");
+              sources.forEach((s) => {
+                const ss = s.dataset.srcset;
+                if (ss) s.srcset = ss;
+              });
               img.src = img.dataset.src;
             }
           } else {
-            if (img && img.src && !img.src.startsWith("data:")) img.src = BLANK;
+            if (img && img.src && !img.src.startsWith("data:")) {
+              sources.forEach((s) => {
+                s.srcset = "";
+              });
+              img.src = BLANK;
+            }
           }
         }
       },

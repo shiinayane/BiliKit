@@ -314,13 +314,22 @@ function takeover(): boolean {
       for (const e of ents) {
         const card = e.target as HTMLElement
         const img = card.querySelector('img') as HTMLImageElement | null
+        // 封面 <picture> 的 <source> 也得随 <img> 同步懒加载/卸载（见 card.ts 注释）：设置 img.src 会
+        // 重新触发浏览器的 <picture> 源选择，届时才读 <source> 当前的 srcset——所以「进视口」必须先把
+        // data-srcset 填回 srcset（让浏览器选中它）、再设 img.src；「离视口」必须先清空 srcset（不然
+        // img.src 改回 BLANK 时选择算法还是会命中 source、又把大图重新拉一遍，等于白卸载）。
+        const sources = card.querySelectorAll('picture source[data-srcset]')
         if (e.isIntersecting) {
           if (img && (!img.getAttribute('src') || img.src.startsWith('data:')) && img.dataset.src) {
             img.parentElement?.classList.remove('failed') // 重新加载 → 清掉上次的失败态，给一次重试
+            sources.forEach((s) => { const ss = (s as HTMLSourceElement).dataset.srcset; if (ss) (s as HTMLSourceElement).srcset = ss })
             img.src = img.dataset.src
           }
         } else {
-          if (img && img.src && !img.src.startsWith('data:')) img.src = BLANK
+          if (img && img.src && !img.src.startsWith('data:')) {
+            sources.forEach((s) => { (s as HTMLSourceElement).srcset = '' })
+            img.src = BLANK
+          }
         }
       }
     },

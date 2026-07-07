@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BiliKit Core
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.5.20
+// @version      0.5.21
 // @author       shiinayane
 // @description  B 站体验增强核心，一装到位：CDN 优选（救海外卡顿）· 免登录看评论/动态/1080p · 主题跟随系统深浅 · 评论显 IP 属地 · 播放不息屏——统一设置面板集中开关。Safari 友好、无需扩展、零外部依赖。
 // @license      MIT
@@ -2051,7 +2051,7 @@
       }
     })();
   }
-  const VERSION = "0.5.20";
+  const VERSION = "0.5.21";
   const PANEL_ID = "bilikit-panel-root";
   const FEED_ID = "__feed__";
   const OPEN_ID = "__open__";
@@ -4179,10 +4179,19 @@
     setLoading(false);
     document.documentElement.style.overflow = "";
     closeTimer = setTimeout(() => {
-      if (frame && !(panel == null ? void 0 : panel.classList.contains("on"))) {
-        frame.remove();
-        frame = null;
-      }
+      if (!frame || (panel == null ? void 0 : panel.classList.contains("on"))) return;
+      const f = frame;
+      f.src = "about:blank";
+      requestAnimationFrame(() => {
+        var _a;
+        if (panel == null ? void 0 : panel.classList.contains("on")) return;
+        try {
+          (_a = f.contentWindow) == null ? void 0 : _a.close();
+        } catch {
+        }
+        f.remove();
+        if (frame === f) frame = null;
+      });
     }, 340);
   }
   const PC_HOSTS = ["https://api.bilibili.com", "https://s1.hdslb.com", "https://i0.hdslb.com", "https://i1.hdslb.com", "https://i2.hdslb.com"];

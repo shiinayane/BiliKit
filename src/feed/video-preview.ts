@@ -12,6 +12,27 @@ import { attachMse } from './mse-preview'
 const DELAY = 500 // hover 停留判定：防鼠标划过就播（取流并行藏在这段等待里，到点即播、不牺牲速度）
 const FADE = 220 // 与 CSS .bk-feed-vpreview 的 .2s 淡出对齐
 
+// 并发预览实例数硬上限（窗口化之外的防御性兜底）：mouseleave 后 video/MSE 不会立刻拆，留着供再次 hover
+// 秒回放——若同一窗口内短时间连续 hover 很多张卡（窗口可能同时挂着十几张卡，都没被滚动移出去），
+// 各自留一份已解码首帧的实例会随 hover 次数无界累积。超过上限时，淘汰「最久未使用、且当前不在
+// hover 中」的一个，彻底 teardown（同窗口化移除卡片时那份清理逻辑）。全 Feed 共享一份队列。
+const MAX_ACTIVE = 3
+const activeOrder: { teardown: () => void; isHovering: () => boolean }[] = []
+function registerActive(entry: { teardown: () => void; isHovering: () => boolean }): void {
+  const i = activeOrder.indexOf(entry)
+  if (i !== -1) activeOrder.splice(i, 1) // 已在队列则先摘出，下面重新推到队尾（标记为最近使用）
+  activeOrder.push(entry)
+  while (activeOrder.length > MAX_ACTIVE) {
+    const idx = activeOrder.findIndex((x) => !x.isHovering())
+    if (idx === -1) break // 全部正被 hover（单鼠标场景几乎不可能）——本轮不淘汰，避免拆掉正在看的
+    activeOrder.splice(idx, 1)[0].teardown()
+  }
+}
+function unregisterActive(entry: { teardown: () => void; isHovering: () => boolean }): void {
+  const i = activeOrder.indexOf(entry)
+  if (i !== -1) activeOrder.splice(i, 1)
+}
+
 const fmt = (s: number): string => {
   if (!isFinite(s) || s < 0) s = 0
   const m = Math.floor(s / 60), ss = Math.floor(s % 60)
@@ -70,6 +91,7 @@ export function setupVideoPreview(cover: HTMLElement, bvid: string, cid?: string
     attemptOk = true
     cover.classList.add('previewing') // 隐遮罩/播放数、时长转「当前/总时长」
     video.classList.add('on')
+    registerActive(selfEntry) // 挂进全局并发上限队列，超额时会淘汰最久未用的（见文件顶部）
   }
 
   // mouseleave：淡出预览，但**保留** video/MSE 供再次 hover 秒回放（补拉随 timeupdate 停止而自然暂停）。
@@ -89,12 +111,14 @@ export function setupVideoPreview(cover: HTMLElement, bvid: string, cid?: string
   }
 
   // 卡片被窗口化移除前调用：立即（不淡出）彻底拆除 MSE（停补拉、撤源、释放 objectURL）+ 移除 video 元素
+  // 并发上限淘汰命中时也会调用这个（见 registerActive）——两条路径共用同一份拆除逻辑。
   const teardown = (): void => {
     hovering = false
     if (enterTimer) { clearTimeout(enterTimer); enterTimer = null }
     if (hideTimer) { clearTimeout(hideTimer); hideTimer = null }
     restoreCover()
     attemptOk = false
+    unregisterActive(selfEntry)
     if (video) {
       try { (video as any).__mseCleanup?.() } catch { /* ignore */ }
       try { video.removeAttribute('src'); video.load() } catch { /* ignore */ }
@@ -102,6 +126,7 @@ export function setupVideoPreview(cover: HTMLElement, bvid: string, cid?: string
       video = null
     }
   }
+  const selfEntry = { teardown, isHovering: () => hovering }
   ;(cover as any).__bkTeardown = teardown
 
   cover.addEventListener('mouseenter', () => {

@@ -1,4 +1,4 @@
-import { NS, esc, coverUrl, readSetting } from './shared'
+import { NS, esc, coverUrl, coverSized, readSetting } from './shared'
 import { setupHoverPreview } from './hover-preview'
 import { setupVideoPreview } from './video-preview'
 import { watchLaterAdd, watchLaterDel, dislikeVideo, undoDislikeVideo, toast } from './actions'
@@ -61,14 +61,25 @@ export function makeCard(c: FeedCard): HTMLElement {
     `<div class="${NS}-dov-txt"></div>` +
     `<button class="${NS}-undo" type="button">${UNDO_SVG}<span>撤销</span></button>` +
     `</div></div>`
+  // 封面用 <picture> 做 AVIF/WEBP 格式协商（同尺寸下比 JPEG 小 27%~45%，见 shared.ts coverSized 实测数据）。
+  // <source> 的 srcset 和 <img> 的 src 一样得**懒加载/屏外卸载**——都用 data-* 占位、由 feed.ts 的 IO
+  // 回调统一按「进视口才填、离视口即清」处理；若 <picture> 一插入 DOM 就给 <source> 填了真实 srcset，
+  // 浏览器会立即触发取图（不等 <img> 的 src），等于绕过了懒加载，白白提前拉一堆图——因此两者必须同步懒加载。
+  const cov = coverSized(c.cover)
+  const pic =
+    `<picture>` +
+    `<source type="image/avif" data-srcset="${esc(cov.avif)}">` +
+    `<source type="image/webp" data-srcset="${esc(cov.webp)}">` +
+    `<img alt="" data-src="${esc(cov.jpg)}" decoding="async">` +
+    `</picture>`
   el.innerHTML =
-    `<div class="${NS}-cover"><img alt="" data-src="${esc(coverUrl(c.cover))}">` +
+    `<div class="${NS}-cover">${pic}` +
     `<div class="${NS}-mask"><div class="${NS}-mstat">${mstat}</div>` +
     (c.duration ? `<span>${esc(c.duration)}</span>` : '<span></span>') +
     `</div>` + wlBtn +
     `</div>` +
     `<div class="${NS}-bottom">` +
-    (c.face ? `<img class="${NS}-face" src="${esc(coverUrl(c.face))}" alt="" loading="lazy">` : `<div class="${NS}-face"></div>`) +
+    (c.face ? `<img class="${NS}-face" src="${esc(coverUrl(c.face))}" alt="" loading="lazy" decoding="async">` : `<div class="${NS}-face"></div>`) +
     `<div class="${NS}-right">` +
     `<div class="${NS}-title">${esc(c.title)}</div>` +
     `<div class="${NS}-sub">${sub}${menu}</div>` + // 三点菜单随 UP名·日期行、右对齐常显

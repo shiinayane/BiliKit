@@ -155,13 +155,21 @@ export function closeDrawer(): void {
   // 都定性为应用层没做清理、补上即好，而非 WebKit 天生无解。移除 iframe 会销毁其浏览上下文
   // （连 contentWindow / window.frames 引用一并释放），且各浏览器实测移除 iframe 都会在其文档上触发
   // unload/pagehide（见 whatwg/html#4611）——iframe 内的 teardownVideoOnLeave 借此暂停并清空 video。
-  // 不再写 `frame.src='about:blank'`：那句导航是异步的、会被紧随的同步 remove() 取消，等于死代码。
+  // 销毁顺序参考同类项目 BewlyCat 踩过的坑（其代码注释明确记录过：先把 iframe 移出 DOM 会导致
+  // contentWindow 提前变 null，随后再调用 close() 已经晚了、从未真正生效）——顺序改成：
+  // ①导去 about:blank ②等一帧让导航真正开始 ③显式 contentWindow.close()（尽力而为，忽略跨源等异常）
+  // ④最后才移出 DOM。每一步都重新判「是否已在此间被重新打开」，重开时整段直接放弃、把 iframe 让给新会话。
   // 下次 openDrawer 若发现 frame 已销毁会新造一个。
   closeTimer = setTimeout(() => {
-    if (frame && !panel?.classList.contains('on')) {
-      frame.remove()
-      frame = null
-    }
+    if (!frame || panel?.classList.contains('on')) return // 已在这段时间内被重新打开，不销毁
+    const f = frame
+    f.src = 'about:blank'
+    requestAnimationFrame(() => {
+      if (panel?.classList.contains('on')) return // 这一帧内又被重开，把 f 让给新会话继续用，不动它
+      try { f.contentWindow?.close() } catch { /* 跨源限制等，尽力而为 */ }
+      f.remove()
+      if (frame === f) frame = null
+    })
   }, 340)
 }
 
