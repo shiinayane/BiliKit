@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BiliKit Core
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.5.16
+// @version      0.5.17
 // @author       shiinayane
 // @description  B 站体验增强核心，一装到位：CDN 优选（救海外卡顿）· 免登录看评论/动态/1080p · 主题跟随系统深浅 · 评论显 IP 属地 · 播放不息屏——统一设置面板集中开关。Safari 友好、无需扩展、零外部依赖。
 // @license      MIT
@@ -2051,7 +2051,7 @@
       }
     })();
   }
-  const VERSION = "0.5.16";
+  const VERSION = "0.5.17";
   const PANEL_ID = "bilikit-panel-root";
   const FEED_ID = "__feed__";
   const OPEN_ID = "__open__";
@@ -2924,11 +2924,12 @@
       return null;
     }
     const format = (loc) => loc.replace(/^\s*IP属地[:：]\s*/, "");
+    let observers = [];
     const observed = /* @__PURE__ */ new WeakSet();
     function observeRoot(sr) {
       if (observed.has(sr)) return;
       observed.add(sr);
-      new MutationObserver((muts) => {
+      const mo = new MutationObserver((muts) => {
         for (const m of muts) {
           if (m.type !== "childList") continue;
           for (const n of m.addedNodes) {
@@ -2938,7 +2939,9 @@
             }
           }
         }
-      }).observe(sr, { childList: true, subtree: true });
+      });
+      mo.observe(sr, { childList: true, subtree: true });
+      observers.push(mo);
     }
     function walk(root2) {
       if (root2.localName === "bili-comment-action-buttons-renderer") inject(root2);
@@ -2994,6 +2997,8 @@
     function bind(comments) {
       const sr = comments.shadowRoot;
       if (!sr) return;
+      for (const o of observers) o.disconnect();
+      observers = [];
       topRoot = sr;
       observeRoot(sr);
       walk(sr);

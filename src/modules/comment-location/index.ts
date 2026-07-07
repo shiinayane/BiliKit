@@ -32,11 +32,14 @@ function init(cfg: Cfg): void {
   const format = (loc: string) => loc.replace(/^\s*IP属地[:：]\s*/, '') // 恒去「IP属地：」前缀，只留地名
 
   // 穿透嵌套 shadow：给每个 action-buttons 注入属地；给每个尚未观察的嵌套 shadowRoot 挂作用域 observer。
+  // 记住给评论树各层 shadowRoot 挂的观察器，SPA 换视频重绑时全部断开——否则旧观察器的回调引用模块闭包、
+  // 一直可达，会把已脱离 DOM 的整棵旧评论树吊住不放（每看一个带评论的视频积一棵）。这是本模块的内存泄漏点。
+  let observers: MutationObserver[] = []
   const observed = new WeakSet<ShadowRoot>()
   function observeRoot(sr: ShadowRoot): void {
     if (observed.has(sr)) return
     observed.add(sr)
-    new MutationObserver((muts) => {
+    const mo = new MutationObserver((muts) => {
       // 只在「编辑器之外新增了元素节点」时才排扫（新评论/回复批次都是元素节点）。
       // 逐条按 target 判 contenteditable 在混合批次里会被绕过，导致输入框打字引发的 childList
       // 抖动仍触发全树 walk；改为看 addedNodes：编辑器内新增节点 isContentEditable 继承为 true，跳过。
@@ -46,7 +49,9 @@ function init(cfg: Cfg): void {
           if (n.nodeType === 1 && !n.isContentEditable) { schedule(); return }
         }
       }
-    }).observe(sr, { childList: true, subtree: true })
+    })
+    mo.observe(sr, { childList: true, subtree: true })
+    observers.push(mo)
   }
   // 从某根穿透整树：注入属地 + 给每个嵌套 shadowRoot 挂观察者。root 可为 Element 或 ShadowRoot
   function walk(root: any): void {
@@ -99,6 +104,10 @@ function init(cfg: Cfg): void {
   function bind(comments: any): void {
     const sr = comments.shadowRoot
     if (!sr) return
+    // 换视频重绑：先断开上一棵评论树的所有观察器（否则旧树被观察器吊住、随会话累积）。
+    // observed WeakSet 无需重置——旧 root 已脱离、随之可 GC，新 root 是新对象、天然不在集合里。
+    for (const o of observers) o.disconnect()
+    observers = []
     topRoot = sr
     observeRoot(sr) // 顶层：懒加载新批次；更深展开由 walk 逐层挂的观察者捕获
     walk(sr) // 首扫
