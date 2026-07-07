@@ -146,14 +146,15 @@ export function closeDrawer(): void {
   ctrls.classList.remove('on')
   setLoading(false)
   document.documentElement.style.overflow = ''
-  // 关闭后销毁 iframe（而非只导去 about:blank、长驻复用）：iOS Safari 对 <video>/MSE 解码内存的回收
-  // 在「同一个 iframe 反复换 src」的用法下不可靠（WebKit 已知类别问题），实测关抽屉内存不降。
-  // 已知缓解手法：先导去 about:blank 卸载旧文档（其 pagehide 由 iframe 内 Core 兜底暂停/清 video），
-  // 再把 <iframe> 元素整个移出 DOM（而非仅换 src）——比长驻同一元素更能让引擎回收该 frame 的
-  // 合成层/媒体资源；下次 openDrawer 会造一个新的。注意：这是缓解、非根治，WebKit 侧仍可能有残留。
+  // 关闭后**销毁** iframe 元素（而非旧写法：只导去 about:blank、长驻复用同一个 iframe 一整个会话）。
+  // 内存不回收的根源大概率就是「iframe 从没被真正销毁过」——同类案例（如 amazon-chime-sdk#771）最终
+  // 都定性为应用层没做清理、补上即好，而非 WebKit 天生无解。移除 iframe 会销毁其浏览上下文
+  // （连 contentWindow / window.frames 引用一并释放），且各浏览器实测移除 iframe 都会在其文档上触发
+  // unload/pagehide（见 whatwg/html#4611）——iframe 内的 teardownVideoOnLeave 借此暂停并清空 video。
+  // 不再写 `frame.src='about:blank'`：那句导航是异步的、会被紧随的同步 remove() 取消，等于死代码。
+  // 下次 openDrawer 若发现 frame 已销毁会新造一个。
   closeTimer = setTimeout(() => {
     if (frame && !panel?.classList.contains('on')) {
-      frame.src = 'about:blank'
       frame.remove()
       frame = null
     }

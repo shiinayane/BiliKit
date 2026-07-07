@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BiliKit Core
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.5.15
+// @version      0.5.16
 // @author       shiinayane
 // @description  B 站体验增强核心，一装到位：CDN 优选（救海外卡顿）· 免登录看评论/动态/1080p · 主题跟随系统深浅 · 评论显 IP 属地 · 播放不息屏——统一设置面板集中开关。Safari 友好、无需扩展、零外部依赖。
 // @license      MIT
@@ -2051,7 +2051,7 @@
       }
     })();
   }
-  const VERSION = "0.5.15";
+  const VERSION = "0.5.16";
   const PANEL_ID = "bilikit-panel-root";
   const FEED_ID = "__feed__";
   const OPEN_ID = "__open__";
@@ -4171,7 +4171,6 @@
     document.documentElement.style.overflow = "";
     closeTimer = setTimeout(() => {
       if (frame && !(panel == null ? void 0 : panel.classList.contains("on"))) {
-        frame.src = "about:blank";
         frame.remove();
         frame = null;
       }
@@ -4317,17 +4316,22 @@
   setupDrawerReveal();
   function teardownVideoOnLeave() {
     if (window.top === window.self || !location.hash.includes("bk-drawer")) return;
-    window.addEventListener("pagehide", () => {
+    let done = false;
+    const cleanup = () => {
+      if (done) return;
+      done = true;
       try {
-        const v = document.querySelector("video");
-        if (v) {
+        document.querySelectorAll("video").forEach((v) => {
           v.pause();
           v.removeAttribute("src");
+          v.srcObject = null;
           v.load();
-        }
+        });
       } catch {
       }
-    });
+    };
+    window.addEventListener("pagehide", cleanup);
+    window.addEventListener("unload", cleanup);
   }
   teardownVideoOnLeave();
   register(

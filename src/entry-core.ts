@@ -87,12 +87,23 @@ setupDrawerReveal()
 // 能降低增长但不保证根除，故仍配合父页销毁 iframe 元素双管齐下。
 function teardownVideoOnLeave(): void {
   if (window.top === window.self || !location.hash.includes('bk-drawer')) return
-  window.addEventListener('pagehide', () => {
+  let done = false
+  const cleanup = (): void => {
+    if (done) return
+    done = true
     try {
-      const v = document.querySelector('video') as HTMLVideoElement | null
-      if (v) { v.pause(); v.removeAttribute('src'); v.load() }
+      document.querySelectorAll('video').forEach((v) => {
+        v.pause()
+        v.removeAttribute('src') // 走 <video src=blobUrl>（MSE 老 API）这条
+        ;(v as any).srcObject = null // 走 video.srcObject=MediaSource（ManagedMediaSource）这条
+        v.load() // 重置媒体元素、断开当前 MediaSource，尽早吐出解码资源
+      })
     } catch { /* 尽力而为，不影响页面正常卸载 */ }
-  })
+  }
+  // 父页移除本 iframe 时，Safari 会在本文档触发 unload/pagehide（whatwg/html#4611）——两个都听、只跑一次，
+  // 抢在文档被拆之前把视频解码资源放掉。整页导航离开也同样受益。
+  window.addEventListener('pagehide', cleanup)
+  window.addEventListener('unload', cleanup)
 }
 teardownVideoOnLeave()
 
