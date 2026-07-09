@@ -16,12 +16,12 @@ export function injectStyle(): void {
        top 是纯绘制偏移（position:relative 已就位）：不建层、不触发邻卡任何变化，只重绘本卡区域。 */
     .${NS}-card{ cursor:pointer; top:0; transition:top .18s ease; }
     .${NS}-card:hover{ top:-4px; }
-    .${NS}-cover{ position:relative; aspect-ratio:16/9; border-radius:8px; overflow:hidden; background:var(--bg2,#e3e5e7); transition:box-shadow .18s ease; }
     /* isolation:isolate 修 WebKit #77572：overflow:hidden+border-radius 容器里含硬件合成子层（hover 预览的 <video>，
        媒体合成面无视元素 border-radius）时 Safari 不把子层裁到圆角、露缝；建独立层叠上下文即正确裁剪。
-       **只在封面真的挂着 <video> 预览时才加**（.hasvp，由 video-preview 在创建/拆除时增删）——没视频时封面图靠
-       自身 border-radius 就够，不必让每张封面常驻一个层叠上下文/合成面，省图形内存。不用 -webkit-mask（增功耗）。 */
-    .${NS}-cover.hasvp{ isolation:isolate; }
+       **必须常驻、不能按需切换**：0.3.17 曾改成「仅挂 <video> 时加 .hasvp」以省合成面，但动态增删 isolation
+       会在建/拆层叠上下文那一瞬 churn 合成层，触发 WebKit overlap testing 把邻卡遮罩(播放/弹幕图标)顶得上下位移、
+       露缝（与 hover 用 transform 会晃邻卡同源）——故回归常驻。每张封面一个层叠上下文的图形开销可接受。 */
+    .${NS}-cover{ position:relative; aspect-ratio:16/9; border-radius:8px; overflow:hidden; background:var(--bg2,#e3e5e7); transition:box-shadow .18s ease; isolation:isolate; }
     .${NS}-card:hover .${NS}-cover{ box-shadow:0 6px 20px rgba(0,0,0,.22); }
     .${NS}-cover img{ width:100%; height:100%; object-fit:cover; display:block; opacity:0; transition:opacity .35s ease; }
     .${NS}-cover.loaded img{ opacity:1; }
