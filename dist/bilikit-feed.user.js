@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BiliKit Feed
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.3.19
+// @version      0.3.20
 // @author       shiinayane
 // @description  B 站首页换成手机 App 的个性化推荐流。零框架纯原生实现（无 React/Vue、gzip 仅 ~22KB）+ 窗口化虚拟化，DOM 数量恒定、长时间刷不涨内存。点卡片在底部抽屉内播放、封面悬停「真视频」秒开预览（MSE，接近原生 App）。需配合 BiliKit Core（登录 / 设置）。
 // @license      MIT
@@ -1539,7 +1539,7 @@
     });
     const moreWrap = el.querySelector(`.${NS}-more-wrap`);
     if (moreWrap) {
-      let lastRid = 0;
+      let lastRid = c.dislikedRid || 0;
       const moreBtn = moreWrap.querySelector(`.${NS}-more`);
       const setOpen = (on) => {
         moreWrap.classList.toggle("open", on);
@@ -1561,17 +1561,25 @@
           return;
         }
         lastRid = rid;
+        c.disliked = true;
+        c.dislikedRid = rid;
+        c.dislikedLbl = lbl;
         el.querySelector(`.${NS}-dov-txt`).textContent = lbl;
         el.classList.add("disliked");
       }));
       const undoEl = el.querySelector(`.${NS}-undo`);
       undoEl.addEventListener("click", (e) => {
         e.stopPropagation();
+        c.disliked = false;
         el.classList.remove("disliked");
         undoDislikeVideo(c, lastRid).then((r) => {
           if (!r.ok) toast(r.message || "撤销失败");
         });
       });
+      if (c.disliked) {
+        el.querySelector(`.${NS}-dov-txt`).textContent = c.dislikedLbl || "已标记不想看";
+        el.classList.add("disliked");
+      }
     }
     el.addEventListener("click", (e) => {
       if (c.mid && e.target.closest(`.${NS}-face, .${NS}-up`)) {
@@ -1652,7 +1660,7 @@
     markerIo = new IntersectionObserver((es) => fab.classList.toggle("scrolled", !es[0].isIntersecting));
     markerIo.observe(marker);
   }
-  const FEED_VERSION = "0.3.19";
+  const FEED_VERSION = "0.3.20";
   const seen = /* @__PURE__ */ new Set();
   let grid = null;
   let sentinel = null;

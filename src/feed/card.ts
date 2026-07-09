@@ -116,7 +116,7 @@ export function makeCard(c: FeedCard): HTMLElement {
   // —— 我不想看：菜单 + 提交 + 卡片模糊浮层 + 撤销 ——
   const moreWrap = el.querySelector(`.${NS}-more-wrap`) as HTMLElement | null
   if (moreWrap) {
-    let lastRid = 0 // 记住本次提交的 reason_id，撤销时回传
+    let lastRid = c.dislikedRid || 0 // 记住本次提交的 reason_id，撤销时回传（重建时从数据恢复）
     const moreBtn = moreWrap.querySelector(`.${NS}-more`) as HTMLElement
     // 触屏无 hover：点击也能开。同步给卡片 .menuopen（抬 z-index，菜单不被下方卡片盖住；桌面 hover 另有 :hover 兜底）
     const setOpen = (on: boolean) => { moreWrap.classList.toggle('open', on); el.classList.toggle('menuopen', on) }
@@ -130,15 +130,23 @@ export function makeCard(c: FeedCard): HTMLElement {
       const r = await dislikeVideo(c, rid)
       if (!r.ok) { toast(r.message || '提交失败'); return }
       lastRid = rid
+      // 标记态写进数据（随 items[] 存活）——卸载重建时据此恢复，不然划走再回来就变回普通卡
+      c.disliked = true; c.dislikedRid = rid; c.dislikedLbl = lbl
       ;(el.querySelector(`.${NS}-dov-txt`) as HTMLElement).textContent = lbl
       el.classList.add('disliked')
     }))
     const undoEl = el.querySelector(`.${NS}-undo`) as HTMLElement
     undoEl.addEventListener('click', (e) => {
       e.stopPropagation()
+      c.disliked = false // 撤销标记态（同步数据，重建时不再恢复浮层）
       el.classList.remove('disliked') // 乐观回退，UI 立即恢复
       undoDislikeVideo(c, lastRid).then((r) => { if (!r.ok) toast(r.message || '撤销失败') })
     })
+    // 重建恢复：卡片曾被标「不想看」→ 重建时（此刻）把浮层文案 + .disliked 恢复出来
+    if (c.disliked) {
+      ;(el.querySelector(`.${NS}-dov-txt`) as HTMLElement).textContent = c.dislikedLbl || '已标记不想看'
+      el.classList.add('disliked')
+    }
   }
 
   el.addEventListener('click', (e) => {

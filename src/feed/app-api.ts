@@ -102,6 +102,11 @@ export interface FeedCard {
   dislikeReasons: DislikeReason[] // 三点菜单「我不想看」的可选理由；空数组=该条不支持反馈（不显菜单）
   source: 'app' | 'web' // 数据源——决定「我不想看」走 app(/x/feed/dislike) 还是 web(/x/web-interface/feedback/dislike)
   trackId: string // web dislike 必需（app 不需要，留空）
+  // 「我不想看」标记态——存在数据上（随 items[] 存活），供卡片被窗口化卸载后重建时恢复模糊浮层/撤销，
+  // 否则划走再回来就变回普通卡（dislike 只改 DOM）。运行期由 card.ts 读写，归一化时无需赋值。
+  disliked?: boolean
+  dislikedRid?: number // 本次提交的 reason_id（撤销回传）
+  dislikedLbl?: string // 浮层显示的文案（如「不感兴趣」）
 }
 
 // desc 形如「UP名 · 6月11日」或仅「UP名」。取「·」后一段当日期；没有则空。
