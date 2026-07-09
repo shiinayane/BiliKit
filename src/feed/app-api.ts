@@ -1,8 +1,11 @@
 import { signAppQuery } from '../lib/app-sign'
+import { signWbi, WBI_REF } from '../lib/wbi'
+import { fmtCount, fmtDuration, fmtDate } from './shared'
 
 /**
  * B 站 App 推荐接口封装（见 docs/RESEARCH-feed.md）。
  * access_key 空 = 匿名热门流。跨域 app.bilibili.com 不给 CORS → 走 GM.xmlHttpRequest（Feed @grant 了它）。
+ * 另含 web 推荐流（wbi 签名 + cookie）——与 app 流并列的第二个数据源，归一到同一个 FeedCard 形状。
  */
 declare const GM: any
 declare const GM_xmlhttpRequest: any
@@ -97,6 +100,8 @@ export interface FeedCard {
   date: string // 发布日期，如「6月11日」——仅存在于 desc 文本，无原始时间戳
   reason: string // 推荐理由，如「已关注」（bottom_rcmd_reason）
   dislikeReasons: DislikeReason[] // 三点菜单「我不想看」的可选理由；空数组=该条不支持反馈（不显菜单）
+  source: 'app' | 'web' // 数据源——决定「我不想看」走 app(/x/feed/dislike) 还是 web(/x/web-interface/feedback/dislike)
+  trackId: string // web dislike 必需（app 不需要，留空）
 }
 
 // desc 形如「UP名 · 6月11日」或仅「UP名」。取「·」后一段当日期；没有则空。
@@ -132,6 +137,8 @@ function normalize(item: any): FeedCard | null {
           .filter((r: any) => r && typeof r.id === 'number')
           .map((r: any) => ({ id: r.id, name: String(r.name || ''), toast: String(r.toast || '') }))
       : [],
+    source: 'app',
+    trackId: '',
   }
 }
 
@@ -166,6 +173,57 @@ export async function fetchAppFeed(accessKey = ''): Promise<{ code: number; mess
   }
   const cards = items.map(normalize).filter((c): c is FeedCard => !!c && c.goto === 'av')
   // code 归一为 number：缺失/非数字一律当失败(-1)，避免调用方 `===0`/`!code` 误判
+  const code = typeof json?.code === 'number' ? json.code : -1
+  return { code, message: json?.message || '', cards, raw: json }
+}
+
+// web 推荐条目 → FeedCard（字段与 app 流不同，真机样本核对过：id=aid、pic=封面、owner.{name,face,mid}、
+// stat.{view,danmaku}、rcmd_reason.content、pubdate 时间戳、duration 秒；原始数字经 fmt* 转成显示串）。
+function normalizeWeb(item: any): FeedCard | null {
+  if (!item || item.goto !== 'av') return null // 只要视频卡（web 流也混直播/广告等）
+  const owner = item.owner || {}
+  const stat = item.stat || {}
+  const aid = String(item.id || item.aid || '')
+  return {
+    goto: 'av',
+    title: item.title || '',
+    up: owner.name || '',
+    mid: String(owner.mid || ''),
+    face: owner.face || '',
+    cover: item.pic || '',
+    uri: item.uri || (item.bvid ? `https://www.bilibili.com/video/${item.bvid}` : ''),
+    bvid: item.bvid || '',
+    aid,
+    cid: String(item.cid || ''),
+    param: aid,
+    duration: fmtDuration(item.duration || 0),
+    play: stat.view ? fmtCount(stat.view) : '',
+    danmaku: stat.danmaku ? fmtCount(stat.danmaku) : '',
+    date: item.pubdate ? fmtDate(item.pubdate) : '',
+    reason: (item.rcmd_reason && item.rcmd_reason.content) || (item.is_followed ? '已关注' : ''),
+    // web 端「不想看」reason 是固定两项（不像 app 从 three_point 动态取）：内容不感兴趣=1、不想看此UP主=4。
+    // 复用卡片现有的 pickReasons 映射：name 得能被它匹配到——'不感兴趣'命中 notInterest(id===1)、'UP主'命中 upper(/^up主/)。
+    // 实际提交走 web 接口（见 actions.ts，按 source 分派）；菜单显示的标签在 card.ts 里另写死。
+    dislikeReasons: [
+      { id: 1, name: '不感兴趣', toast: '' },
+      { id: 4, name: 'UP主', toast: '' },
+    ],
+    source: 'web',
+    trackId: String(item.track_id || ''),
+  }
+}
+
+/** 拉一页 web 推荐（wbi 签名，带 cookie → 个性化；匿名亦返回泛化内容）。freshIdx 从 1 起、每页递增。 */
+export async function fetchWebFeed(freshIdx: number): Promise<{ code: number; message: string; cards: FeedCard[]; raw: any }> {
+  const query = await signWbi({ fresh_type: 4, feed_version: 'V8', homepage_ver: 1, ps: 12, fresh_idx: freshIdx, fresh_idx_1h: freshIdx })
+  if (!query) return { code: -1, message: 'wbi 签名未就绪', cards: [], raw: null }
+  let text: string
+  try { text = await gmRequest({ method: 'GET', url: `https://api.bilibili.com/x/web-interface/wbi/index/top/feed/rcmd?${query}`, headers: WBI_REF }) }
+  catch { return { code: -1, message: '网络错误', cards: [], raw: null } }
+  let json: any
+  try { json = JSON.parse(text) } catch { return { code: -1, message: '响应非 JSON（可能被风控拦截）', cards: [], raw: text } }
+  const list: any[] = Array.isArray(json?.data?.item) ? json.data.item : []
+  const cards = list.map(normalizeWeb).filter((c): c is FeedCard => !!c)
   const code = typeof json?.code === 'number' ? json.code : -1
   return { code, message: json?.message || '', cards, raw: json }
 }

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BiliKit Feed
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.3.13
+// @version      0.3.16
 // @author       shiinayane
 // @description  B 站首页换成手机 App 的个性化推荐流。零框架纯原生实现（无 React/Vue、gzip 仅 ~22KB）+ 窗口化虚拟化，DOM 数量恒定、长时间刷不涨内存。点卡片在底部抽屉内播放、封面悬停「真视频」秒开预览（MSE，接近原生 App）。需配合 BiliKit Core（登录 / 设置）。
 // @license      MIT
@@ -140,6 +140,159 @@
     const sorted = Object.keys(p).sort().map((k) => `${k}=${encodeURIComponent(p[k])}`).join("&");
     return `${sorted}&sign=${md5(sorted + APPSEC)}`;
   }
+  const MIXIN_TAB = [
+    46,
+    47,
+    18,
+    2,
+    53,
+    8,
+    23,
+    32,
+    15,
+    50,
+    10,
+    31,
+    58,
+    3,
+    45,
+    35,
+    27,
+    43,
+    5,
+    49,
+    33,
+    9,
+    42,
+    19,
+    29,
+    28,
+    14,
+    39,
+    12,
+    38,
+    41,
+    13,
+    37,
+    48,
+    7,
+    16,
+    24,
+    55,
+    40,
+    61,
+    26,
+    17,
+    0,
+    1,
+    60,
+    51,
+    30,
+    4,
+    22,
+    25,
+    54,
+    21,
+    56,
+    59,
+    6,
+    63,
+    57,
+    62,
+    11,
+    36,
+    20,
+    34,
+    44,
+    52
+  ];
+  const mixinKey = (orig) => MIXIN_TAB.map((n) => orig[n]).join("").slice(0, 32);
+  const REF = { Referer: "https://www.bilibili.com/" };
+  const LS_KEY = "bilikit:wbi";
+  let keysPromise = null;
+  function todayStamp() {
+    return Math.floor(Date.now() / 864e5);
+  }
+  async function fetchKeys() {
+    var _a, _b;
+    try {
+      const c = JSON.parse(localStorage.getItem(LS_KEY) || "null");
+      if (c && c.day === todayStamp() && c.img && c.sub) return { img: c.img, sub: c.sub };
+    } catch {
+    }
+    try {
+      const t = await gmRequest({ method: "GET", url: "https://api.bilibili.com/x/web-interface/nav", headers: REF });
+      const w = (_b = (_a = JSON.parse(t)) == null ? void 0 : _a.data) == null ? void 0 : _b.wbi_img;
+      const base = (u) => (u || "").split("/").pop().split(".")[0];
+      const img = base(w == null ? void 0 : w.img_url), sub = base(w == null ? void 0 : w.sub_url);
+      if (!img || !sub) return null;
+      try {
+        localStorage.setItem(LS_KEY, JSON.stringify({ img, sub, day: todayStamp() }));
+      } catch {
+      }
+      return { img, sub };
+    } catch {
+      return null;
+    }
+  }
+  function getKeys() {
+    if (!keysPromise) {
+      keysPromise = fetchKeys().catch(() => null).then((k) => {
+        if (!k) keysPromise = null;
+        return k;
+      });
+    }
+    return keysPromise;
+  }
+  async function signWbi(params) {
+    const keys = await getKeys();
+    if (!keys) return null;
+    const mk = mixinKey(keys.img + keys.sub);
+    const wts = Math.floor(Date.now() / 1e3);
+    const q = { ...params, wts };
+    const query = Object.keys(q).sort().map((k) => {
+      const v = String(q[k]).replace(/[!'()*]/g, "");
+      return `${encodeURIComponent(k)}=${encodeURIComponent(v)}`;
+    }).join("&");
+    return `${query}&w_rid=${md5(query + mk)}`;
+  }
+  const WBI_REF = REF;
+  const NS = "bk-feed";
+  const BLANK = "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==";
+  const esc = (s) => s.replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[ch]);
+  const coverUrl = (u) => u ? u.replace(/^http:/, "https:") : BLANK;
+  function coverSized(u) {
+    const base = coverUrl(u);
+    if (base === BLANK) return { avif: BLANK, webp: BLANK, jpg: BLANK };
+    const p = "@640w_360h_1c";
+    return { avif: `${base}${p}.avif`, webp: `${base}${p}.webp`, jpg: `${base}${p}` };
+  }
+  function fmtCount(n) {
+    if (!isFinite(n) || n < 0) n = 0;
+    if (n >= 1e8) return (n / 1e8).toFixed(1).replace(/\.0$/, "") + "亿";
+    if (n >= 1e4) return (n / 1e4).toFixed(1).replace(/\.0$/, "") + "万";
+    return String(n);
+  }
+  function fmtDuration(sec) {
+    if (!isFinite(sec) || sec < 0) sec = 0;
+    sec = Math.floor(sec);
+    const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), s = sec % 60;
+    const mm = h ? String(m).padStart(2, "0") : String(m);
+    return (h ? h + ":" : "") + mm + ":" + String(s).padStart(2, "0");
+  }
+  function fmtDate(tsSec) {
+    if (!tsSec) return "";
+    const d = new Date(tsSec * 1e3);
+    return `${d.getMonth() + 1}月${d.getDate()}日`;
+  }
+  function readSetting(key, fallback) {
+    try {
+      const v = JSON.parse(localStorage.getItem("bilikit:settings") || "{}")[key];
+      return v === void 0 ? fallback : v;
+    } catch {
+      return fallback;
+    }
+  }
   const redactKey = (u) => (u || "").replace(/(access_key=)[^&]*/i, "$1<redacted>");
   function gmXhr() {
     return typeof GM !== "undefined" && GM && GM.xmlHttpRequest ? GM.xmlHttpRequest.bind(GM) : typeof GM_xmlhttpRequest !== "undefined" ? GM_xmlhttpRequest : null;
@@ -242,7 +395,9 @@
       // 弹幕数（如 13弹幕）
       date: descDate(item.desc || ""),
       reason: item.bottom_rcmd_reason || "",
-      dislikeReasons: Array.isArray((_a = item.three_point) == null ? void 0 : _a.dislike_reasons) ? item.three_point.dislike_reasons.filter((r) => r && typeof r.id === "number").map((r) => ({ id: r.id, name: String(r.name || ""), toast: String(r.toast || "") })) : []
+      dislikeReasons: Array.isArray((_a = item.three_point) == null ? void 0 : _a.dislike_reasons) ? item.three_point.dislike_reasons.filter((r) => r && typeof r.id === "number").map((r) => ({ id: r.id, name: String(r.name || ""), toast: String(r.toast || "") })) : [],
+      source: "app",
+      trackId: ""
     };
   }
   let _dumpedTP = false;
@@ -274,23 +429,59 @@
     const code = typeof (json == null ? void 0 : json.code) === "number" ? json.code : -1;
     return { code, message: (json == null ? void 0 : json.message) || "", cards, raw: json };
   }
-  const NS = "bk-feed";
-  const BLANK = "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==";
-  const esc = (s) => s.replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[ch]);
-  const coverUrl = (u) => u ? u.replace(/^http:/, "https:") : BLANK;
-  function coverSized(u) {
-    const base = coverUrl(u);
-    if (base === BLANK) return { avif: BLANK, webp: BLANK, jpg: BLANK };
-    const p = "@640w_360h_1c";
-    return { avif: `${base}${p}.avif`, webp: `${base}${p}.webp`, jpg: `${base}${p}` };
+  function normalizeWeb(item) {
+    if (!item || item.goto !== "av") return null;
+    const owner = item.owner || {};
+    const stat = item.stat || {};
+    const aid = String(item.id || item.aid || "");
+    return {
+      goto: "av",
+      title: item.title || "",
+      up: owner.name || "",
+      mid: String(owner.mid || ""),
+      face: owner.face || "",
+      cover: item.pic || "",
+      uri: item.uri || (item.bvid ? `https://www.bilibili.com/video/${item.bvid}` : ""),
+      bvid: item.bvid || "",
+      aid,
+      cid: String(item.cid || ""),
+      param: aid,
+      duration: fmtDuration(item.duration || 0),
+      play: stat.view ? fmtCount(stat.view) : "",
+      danmaku: stat.danmaku ? fmtCount(stat.danmaku) : "",
+      date: item.pubdate ? fmtDate(item.pubdate) : "",
+      reason: item.rcmd_reason && item.rcmd_reason.content || (item.is_followed ? "已关注" : ""),
+      // web 端「不想看」reason 是固定两项（不像 app 从 three_point 动态取）：内容不感兴趣=1、不想看此UP主=4。
+      // 复用卡片现有的 pickReasons 映射：name 得能被它匹配到——'不感兴趣'命中 notInterest(id===1)、'UP主'命中 upper(/^up主/)。
+      // 实际提交走 web 接口（见 actions.ts，按 source 分派）；菜单显示的标签在 card.ts 里另写死。
+      dislikeReasons: [
+        { id: 1, name: "不感兴趣", toast: "" },
+        { id: 4, name: "UP主", toast: "" }
+      ],
+      source: "web",
+      trackId: String(item.track_id || "")
+    };
   }
-  function readSetting(key, fallback) {
+  async function fetchWebFeed(freshIdx) {
+    var _a;
+    const query = await signWbi({ fresh_type: 4, feed_version: "V8", homepage_ver: 1, ps: 12, fresh_idx: freshIdx, fresh_idx_1h: freshIdx });
+    if (!query) return { code: -1, message: "wbi 签名未就绪", cards: [], raw: null };
+    let text;
     try {
-      const v = JSON.parse(localStorage.getItem("bilikit:settings") || "{}")[key];
-      return v === void 0 ? fallback : v;
+      text = await gmRequest({ method: "GET", url: `https://api.bilibili.com/x/web-interface/wbi/index/top/feed/rcmd?${query}`, headers: WBI_REF });
     } catch {
-      return fallback;
+      return { code: -1, message: "网络错误", cards: [], raw: null };
     }
+    let json;
+    try {
+      json = JSON.parse(text);
+    } catch {
+      return { code: -1, message: "响应非 JSON（可能被风控拦截）", cards: [], raw: text };
+    }
+    const list = Array.isArray((_a = json == null ? void 0 : json.data) == null ? void 0 : _a.item) ? json.data.item : [];
+    const cards = list.map(normalizeWeb).filter((c) => !!c);
+    const code = typeof (json == null ? void 0 : json.code) === "number" ? json.code : -1;
+    return { code, message: (json == null ? void 0 : json.message) || "", cards, raw: json };
   }
   function injectStyle() {
     if (document.getElementById("bk-feed-style")) return;
@@ -399,6 +590,21 @@
     .${NS}-fab button.busy{ pointer-events:none; }
     .${NS}-fab button.busy svg{ animation:bk-spin .8s linear infinite; }
     @keyframes bk-spin{ to{ transform:rotate(360deg); } }
+    /* 推荐源切换器：占一个 FAB 槽（40x40）；默认只显当前源（.bk-src-cur 复用 fab 圆钮样式），
+       hover（或触屏 .open）当前钮淡出、竖向胶囊(.bk-src-pop)从底部对齐向上展开列出两项。 */
+    .${NS}-src{ position:relative; width:40px; height:40px; }
+    .${NS}-src-cur{ position:absolute; inset:0; transition:opacity .16s ease; }
+    .${NS}-src:hover .${NS}-src-cur, .${NS}-src.open .${NS}-src-cur{ opacity:0; pointer-events:none; }
+    .${NS}-src-pop{ position:absolute; right:0; bottom:0; z-index:1; display:flex; flex-direction:column;
+      border-radius:20px; background:var(--bg1,#fff); border:1px solid var(--line_regular,#e3e5e7);
+      box-shadow:0 4px 16px rgba(0,0,0,.18); overflow:hidden;
+      opacity:0; visibility:hidden; transform:translateY(6px);
+      transition:opacity .16s ease, transform .16s ease, visibility .16s; }
+    .${NS}-src:hover .${NS}-src-pop, .${NS}-src.open .${NS}-src-pop{ opacity:1; visibility:visible; transform:none; }
+    /* 胶囊里的两项：去掉 fab 圆钮的边/底/影/圆，做成连续竖条；当前项品牌色高亮 */
+    .${NS}-fab .${NS}-src-opt{ width:40px; height:40px; border:0; border-radius:0; background:transparent; box-shadow:none; color:var(--text2,#61666d); }
+    .${NS}-fab .${NS}-src-opt:hover{ transform:none; box-shadow:none; background:var(--bg2,#e3e5e7); color:var(--brand_blue,#00aeec); }
+    .${NS}-fab .${NS}-src-opt.on{ color:var(--brand_blue,#00aeec); }
 
     /* ——— 卡片操作：稍后再看 / 我不想看 / 撤销浮层 ——— */
     .${NS}-card{ position:relative; } /* 承载「不想看」模糊浮层的定位上下文 */
@@ -581,123 +787,6 @@
     });
     cover.addEventListener("mouseleave", stop);
   }
-  const MIXIN_TAB = [
-    46,
-    47,
-    18,
-    2,
-    53,
-    8,
-    23,
-    32,
-    15,
-    50,
-    10,
-    31,
-    58,
-    3,
-    45,
-    35,
-    27,
-    43,
-    5,
-    49,
-    33,
-    9,
-    42,
-    19,
-    29,
-    28,
-    14,
-    39,
-    12,
-    38,
-    41,
-    13,
-    37,
-    48,
-    7,
-    16,
-    24,
-    55,
-    40,
-    61,
-    26,
-    17,
-    0,
-    1,
-    60,
-    51,
-    30,
-    4,
-    22,
-    25,
-    54,
-    21,
-    56,
-    59,
-    6,
-    63,
-    57,
-    62,
-    11,
-    36,
-    20,
-    34,
-    44,
-    52
-  ];
-  const mixinKey = (orig) => MIXIN_TAB.map((n) => orig[n]).join("").slice(0, 32);
-  const REF = { Referer: "https://www.bilibili.com/" };
-  const LS_KEY = "bilikit:wbi";
-  let keysPromise = null;
-  function todayStamp() {
-    return Math.floor(Date.now() / 864e5);
-  }
-  async function fetchKeys() {
-    var _a, _b;
-    try {
-      const c = JSON.parse(localStorage.getItem(LS_KEY) || "null");
-      if (c && c.day === todayStamp() && c.img && c.sub) return { img: c.img, sub: c.sub };
-    } catch {
-    }
-    try {
-      const t = await gmRequest({ method: "GET", url: "https://api.bilibili.com/x/web-interface/nav", headers: REF });
-      const w = (_b = (_a = JSON.parse(t)) == null ? void 0 : _a.data) == null ? void 0 : _b.wbi_img;
-      const base = (u) => (u || "").split("/").pop().split(".")[0];
-      const img = base(w == null ? void 0 : w.img_url), sub = base(w == null ? void 0 : w.sub_url);
-      if (!img || !sub) return null;
-      try {
-        localStorage.setItem(LS_KEY, JSON.stringify({ img, sub, day: todayStamp() }));
-      } catch {
-      }
-      return { img, sub };
-    } catch {
-      return null;
-    }
-  }
-  function getKeys() {
-    if (!keysPromise) {
-      keysPromise = fetchKeys().catch(() => null).then((k) => {
-        if (!k) keysPromise = null;
-        return k;
-      });
-    }
-    return keysPromise;
-  }
-  async function signWbi(params) {
-    const keys = await getKeys();
-    if (!keys) return null;
-    const mk = mixinKey(keys.img + keys.sub);
-    const wts = Math.floor(Date.now() / 1e3);
-    const q = { ...params, wts };
-    const query = Object.keys(q).sort().map((k) => {
-      const v = String(q[k]).replace(/[!'()*]/g, "");
-      return `${encodeURIComponent(k)}=${encodeURIComponent(v)}`;
-    }).join("&");
-    return `${query}&w_rid=${md5(query + mk)}`;
-  }
-  const WBI_REF = REF;
   function targetMirror() {
     return readSetting("module.cdn-pick.cfg.targetHost", "upos-sz-mirrorhwb.bilivideo.com");
   }
@@ -1305,8 +1394,38 @@
       return { ok: false, message: "网络错误" };
     }
   }
-  const dislikeVideo = (c, reasonId) => feedDislike(c, reasonId, false);
-  const undoDislikeVideo = (c, reasonId) => feedDislike(c, reasonId, true);
+  async function webDislike(card, reasonId, cancel) {
+    const csrf = biliJct();
+    if (!csrf) return { ok: false, message: "需网页登录后才能反馈" };
+    const path = cancel ? "/x/web-interface/feedback/dislike/cancel" : "/x/web-interface/feedback/dislike";
+    const body = new URLSearchParams({
+      app_id: "100",
+      platform: "5",
+      from_spmid: "",
+      spmid: "333.1007.0.0",
+      goto: card.goto || "av",
+      id: card.aid || card.param,
+      mid: card.mid || "0",
+      track_id: card.trackId || "",
+      feedback_page: "1",
+      reason_id: String(reasonId),
+      csrf
+    });
+    try {
+      const r = await fetch(`https://api.bilibili.com${path}`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: body.toString()
+      });
+      const json = await r.json();
+      return { ok: (json == null ? void 0 : json.code) === 0, message: (json == null ? void 0 : json.message) || "" };
+    } catch {
+      return { ok: false, message: "网络错误" };
+    }
+  }
+  const dislikeVideo = (c, reasonId) => c.source === "web" ? webDislike(c, reasonId, false) : feedDislike(c, reasonId, false);
+  const undoDislikeVideo = (c, reasonId) => c.source === "web" ? webDislike(c, reasonId, true) : feedDislike(c, reasonId, true);
   async function toview(aid, del) {
     if (!aid) return { ok: false, message: "缺少视频 id" };
     const path = del ? "/x/v2/history/toview/del" : "/x/v2/history/toview/add";
@@ -1476,13 +1595,42 @@
   let controls = null;
   let markerEl = null;
   let markerIo = null;
-  function mountControls(onRefresh) {
+  const PHONE_SVG = '<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="2" width="12" height="20" rx="2.5"/><line x1="10.5" y1="18" x2="13.5" y2="18"/></svg>';
+  const PC_SVG = '<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3.5" width="20" height="13" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="16.5" x2="12" y2="21"/></svg>';
+  const REFRESH_SVG = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg>';
+  const TOP_SVG = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>';
+  function buildSourceSwitcher(initial, onSwitch) {
+    let cur = initial;
+    const wrap = document.createElement("div");
+    wrap.className = `${NS}-src`;
+    const iconOf = (s) => s === "app" ? PHONE_SVG : PC_SVG;
+    wrap.innerHTML = `<button class="${NS}-src-cur" type="button" title="推荐来源" aria-label="切换推荐来源"></button><div class="${NS}-src-pop"><button class="${NS}-src-opt" data-src="app" type="button" title="App 推荐" aria-label="App 推荐">${PHONE_SVG}</button><button class="${NS}-src-opt" data-src="web" type="button" title="网页推荐" aria-label="网页推荐">${PC_SVG}</button></div>`;
+    const curBtn = wrap.querySelector(`.${NS}-src-cur`);
+    const paint = (s) => {
+      cur = s;
+      curBtn.innerHTML = iconOf(s);
+      wrap.querySelectorAll(`.${NS}-src-opt`).forEach((o) => o.classList.toggle("on", o.dataset.src === s));
+    };
+    paint(cur);
+    curBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      wrap.classList.toggle("open");
+    });
+    wrap.querySelectorAll(`.${NS}-src-opt`).forEach((o) => o.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const s = o.dataset.src;
+      wrap.classList.remove("open");
+      if (s === cur) return;
+      paint(s);
+      onSwitch(s);
+    }));
+    return wrap;
+  }
+  function mountControls(onRefresh, srcCtl) {
     if (controls && controls.isConnected) return;
     controls == null ? void 0 : controls.remove();
     markerEl == null ? void 0 : markerEl.remove();
     markerIo == null ? void 0 : markerIo.disconnect();
-    const REFRESH_SVG = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg>';
-    const TOP_SVG = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>';
     const fab = document.createElement("div");
     fab.className = `${NS}-fab`;
     fab.innerHTML = `<button class="bk-top" title="返回顶部" aria-label="返回顶部">${TOP_SVG}</button><button class="bk-refresh" title="刷新内容" aria-label="刷新内容">${REFRESH_SVG}</button>`;
@@ -1492,6 +1640,7 @@
       "click",
       () => window.scrollTo({ top: 0, behavior: "smooth" })
     );
+    if (srcCtl) fab.insertBefore(buildSourceSwitcher(srcCtl.initial, srcCtl.onSwitch), fab.firstChild);
     document.body.appendChild(fab);
     controls = fab;
     const marker = document.createElement("div");
@@ -1501,7 +1650,7 @@
     markerIo = new IntersectionObserver((es) => fab.classList.toggle("scrolled", !es[0].isIntersecting));
     markerIo.observe(marker);
   }
-  const FEED_VERSION = "0.3.13";
+  const FEED_VERSION = "0.3.16";
   const seen = /* @__PURE__ */ new Set();
   let grid = null;
   let sentinel = null;
@@ -1524,6 +1673,14 @@
   let renderRaf = 0;
   let suppressScroll = false;
   let cooldownUntil = 0;
+  let source = (() => {
+    try {
+      return localStorage.getItem("bilikit:feed.tab") === "web" ? "web" : "app";
+    } catch {
+      return "app";
+    }
+  })();
+  let webFreshIdx = 1;
   function getAccessKey() {
     try {
       return JSON.parse(localStorage.getItem("bilikit:settings") || "{}")["feed.accessKey"] || "";
@@ -1696,7 +1853,7 @@
       let first = true;
       while ((first || sentinelInView()) && emptyStreak < 3) {
         first = false;
-        const { code, message, cards } = await fetchAppFeed(getAccessKey());
+        const { code, message, cards } = source === "web" ? await fetchWebFeed(webFreshIdx++) : await fetchAppFeed(getAccessKey());
         if (gen !== feedGen) return;
         if (code !== 0) {
           console.warn(`[BiliKit Feed] 加载失败 code=${code} ${message}`);
@@ -1717,11 +1874,11 @@
         emptyStreak = addedThisPage === 0 ? emptyStreak + 1 : 0;
       }
       if (emptyStreak >= 3) {
-        if (getAccessKey()) {
-          cooldownUntil = performance.now() + 3e3;
-        } else {
+        if (source === "app" && !getAccessKey()) {
           exhausted = true;
           showTip("匿名推荐已刷完（B 站给匿名请求的是固定内容池）。配置 access_key 可看个性化、不重复的推荐。");
+        } else {
+          cooldownUntil = performance.now() + 3e3;
         }
       }
     } catch (e) {
@@ -1744,6 +1901,7 @@
     removeTip();
     seen.clear();
     exhausted = false;
+    webFreshIdx = 1;
     cooldownUntil = 0;
     renderSkeletons(12);
     if (btn) {
@@ -1753,6 +1911,16 @@
       void loadMore();
     }
     window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+  function switchSource(s) {
+    if (s === source) return;
+    source = s;
+    try {
+      localStorage.setItem("bilikit:feed.tab", s);
+    } catch {
+    }
+    webFreshIdx = 1;
+    refreshFeed();
   }
   function findNativeFeed() {
     const card = document.querySelector(".feed-card, .bili-video-card");
@@ -1836,7 +2004,7 @@
       });
       gridRo.observe(grid);
     }
-    mountControls((btn) => refreshFeed(btn));
+    mountControls((btn) => refreshFeed(btn), { initial: source, onSwitch: switchSource });
     renderSkeletons(12);
     loadMore();
     return true;

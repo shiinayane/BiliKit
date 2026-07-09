@@ -108,6 +108,21 @@ export function injectStyle(): void {
     .${NS}-fab button.busy{ pointer-events:none; }
     .${NS}-fab button.busy svg{ animation:bk-spin .8s linear infinite; }
     @keyframes bk-spin{ to{ transform:rotate(360deg); } }
+    /* 推荐源切换器：占一个 FAB 槽（40x40）；默认只显当前源（.bk-src-cur 复用 fab 圆钮样式），
+       hover（或触屏 .open）当前钮淡出、竖向胶囊(.bk-src-pop)从底部对齐向上展开列出两项。 */
+    .${NS}-src{ position:relative; width:40px; height:40px; }
+    .${NS}-src-cur{ position:absolute; inset:0; transition:opacity .16s ease; }
+    .${NS}-src:hover .${NS}-src-cur, .${NS}-src.open .${NS}-src-cur{ opacity:0; pointer-events:none; }
+    .${NS}-src-pop{ position:absolute; right:0; bottom:0; z-index:1; display:flex; flex-direction:column;
+      border-radius:20px; background:var(--bg1,#fff); border:1px solid var(--line_regular,#e3e5e7);
+      box-shadow:0 4px 16px rgba(0,0,0,.18); overflow:hidden;
+      opacity:0; visibility:hidden; transform:translateY(6px);
+      transition:opacity .16s ease, transform .16s ease, visibility .16s; }
+    .${NS}-src:hover .${NS}-src-pop, .${NS}-src.open .${NS}-src-pop{ opacity:1; visibility:visible; transform:none; }
+    /* 胶囊里的两项：去掉 fab 圆钮的边/底/影/圆，做成连续竖条；当前项品牌色高亮 */
+    .${NS}-fab .${NS}-src-opt{ width:40px; height:40px; border:0; border-radius:0; background:transparent; box-shadow:none; color:var(--text2,#61666d); }
+    .${NS}-fab .${NS}-src-opt:hover{ transform:none; box-shadow:none; background:var(--bg2,#e3e5e7); color:var(--brand_blue,#00aeec); }
+    .${NS}-fab .${NS}-src-opt.on{ color:var(--brand_blue,#00aeec); }
 
     /* ——— 卡片操作：稍后再看 / 我不想看 / 撤销浮层 ——— */
     .${NS}-card{ position:relative; } /* 承载「不想看」模糊浮层的定位上下文 */

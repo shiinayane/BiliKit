@@ -1,4 +1,4 @@
-import { fetchAppFeed, type FeedCard } from './app-api'
+import { fetchAppFeed, fetchWebFeed, type FeedCard } from './app-api'
 import { NS, BLANK } from './shared'
 import { injectStyle, hideNativeChrome } from './styles'
 import { makeCard, makeSkeleton } from './card'
@@ -40,6 +40,12 @@ let lastStart = -1, lastEnd = -1, lastTotalRows = -1 // 上次窗口；三者都
 let renderRaf = 0
 let suppressScroll = false // 补偿 scrollBy 会触发一次 scroll 事件，用它跳过、免得再引发一轮 render
 let cooldownUntil = 0 // 加载失败后的退避截止时刻（performance.now），期间不重试，避免疯狂打 API
+
+// 推荐源：'app'（app.bilibili.com，access_key）/ 'web'（web wbi 接口，cookie 个性化）。持久化在独立 key，
+// 是 UI 态、不进 Core 设置面板。web 流按 fresh_idx 递增翻页（有状态），app 流无状态。
+type Source = 'app' | 'web'
+let source: Source = ((): Source => { try { return localStorage.getItem('bilikit:feed.tab') === 'web' ? 'web' : 'app' } catch { return 'app' } })()
+let webFreshIdx = 1
 
 function getAccessKey(): string {
   try {
@@ -216,7 +222,10 @@ async function loadMore(): Promise<void> {
     let first = true
     while ((first || sentinelInView()) && emptyStreak < 3) {
       first = false
-      const { code, message, cards } = await fetchAppFeed(getAccessKey())
+      // 按当前源分派：app 无状态、web 递增 fresh_idx（先自增再拉，保证每页页码不同）
+      const { code, message, cards } = source === 'web'
+        ? await fetchWebFeed(webFreshIdx++)
+        : await fetchAppFeed(getAccessKey())
       if (gen !== feedGen) return // 期间发生了重新接管/刷新，本次已过期，交给新一轮（finally 不清新代的状态）
       if (code !== 0) { console.warn(`[BiliKit Feed] 加载失败 code=${code} ${message}`); failed = true; break }
       clearSkeletons() // 拿到数据后立刻撤骨架：否则骨架占位高度会撑出哨兵，导致填充循环提前退出
@@ -234,13 +243,12 @@ async function loadMore(): Promise<void> {
       emptyStreak = addedThisPage === 0 ? emptyStreak + 1 : 0
     }
     if (emptyStreak >= 3) {
-      if (getAccessKey()) {
-        // 已登录不应「刷完」：多为瞬时空/重复页，不永久锁死，退避几秒后由滚动自然重试
-        cooldownUntil = performance.now() + 3000
-      } else {
-        // 匿名池确实是固定内容，连续 3 页无新 → 锁死并提示
+      // 只有「app 源 + 匿名」才是固定内容池、会真刷完 → 锁死提示；web 源或已登录多为瞬时空/重复页，退避重试即可
+      if (source === 'app' && !getAccessKey()) {
         exhausted = true
         showTip('匿名推荐已刷完（B 站给匿名请求的是固定内容池）。配置 access_key 可看个性化、不重复的推荐。')
+      } else {
+        cooldownUntil = performance.now() + 3000
       }
     }
   } catch (e) {
@@ -266,6 +274,7 @@ function refreshFeed(btn?: HTMLElement): void {
   removeTip()
   seen.clear()
   exhausted = false
+  webFreshIdx = 1 // web 源翻页从头开始
   cooldownUntil = 0 // 手动刷新清退避，立即重试
   renderSkeletons(12) // 刷新时也先铺骨架
   if (btn) {
@@ -276,6 +285,16 @@ function refreshFeed(btn?: HTMLElement): void {
     void loadMore()
   }
   window.scrollTo({ top: 0, behavior: 'smooth' })
+}
+
+// 切源：app ↔ web。同源则无操作；换源即持久化 + 重置 web 页码 + 走 refreshFeed 全套重置重拉。
+// 由右下角 FAB 的源切换器调用（其 UI 高亮由 controls.ts 自己维护，这里只管数据 + 刷新）。
+function switchSource(s: Source): void {
+  if (s === source) return
+  source = s
+  try { localStorage.setItem('bilikit:feed.tab', s) } catch { /* 隐私模式忽略 */ }
+  webFreshIdx = 1
+  refreshFeed()
 }
 
 function findNativeFeed(): HTMLElement | null {
@@ -364,7 +383,8 @@ function takeover(): boolean {
     gridRo.observe(grid)
   }
 
-  mountControls((btn) => refreshFeed(btn)) // 右下角：刷新内容 + 返回顶部
+  // 右下角 FAB：源切换（手机 App/电脑 Web，hover 展胶囊）+ 刷新 + 返回顶部
+  mountControls((btn) => refreshFeed(btn), { initial: source, onSwitch: switchSource })
   renderSkeletons(12) // 数据到达前先铺骨架占位，避免空白
   loadMore() // 循环内会一直拉到填满首屏（哨兵离开加载区）
   return true

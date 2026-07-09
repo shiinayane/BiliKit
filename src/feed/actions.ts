@@ -45,8 +45,32 @@ async function feedDislike(card: FeedCard, reasonId: number, cancel: boolean): P
     return { ok: json?.code === 0, message: json?.message || (json?.code === 0 ? '' : '失败') }
   } catch { return { ok: false, message: '网络错误' } }
 }
-export const dislikeVideo = (c: FeedCard, reasonId: number) => feedDislike(c, reasonId, false)
-export const undoDislikeVideo = (c: FeedCard, reasonId: number) => feedDislike(c, reasonId, true)
+// —— web 推荐的「我不想看」/ 撤销 ——（web 反馈接口；POST 到 api.bilibili.com，cookie + csrf）
+// 与 app 完全不同：reason 固定（内容不感兴趣=1、不想看此UP主=4），需 track_id + mid + csrf。参数抄 BewlyCat/Gate。
+async function webDislike(card: FeedCard, reasonId: number, cancel: boolean): Promise<Res> {
+  const csrf = biliJct()
+  if (!csrf) return { ok: false, message: '需网页登录后才能反馈' }
+  const path = cancel ? '/x/web-interface/feedback/dislike/cancel' : '/x/web-interface/feedback/dislike'
+  const body = new URLSearchParams({
+    app_id: '100', platform: '5', from_spmid: '', spmid: '333.1007.0.0',
+    goto: card.goto || 'av', id: card.aid || card.param, mid: card.mid || '0',
+    track_id: card.trackId || '', feedback_page: '1', reason_id: String(reasonId), csrf,
+  })
+  try {
+    const r = await fetch(`https://api.bilibili.com${path}`, {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: body.toString(),
+    })
+    const json = await r.json()
+    return { ok: json?.code === 0, message: json?.message || '' }
+  } catch { return { ok: false, message: '网络错误' } }
+}
+
+// 按数据源分派：app 卡走 app 反馈接口，web 卡走 web 反馈接口
+export const dislikeVideo = (c: FeedCard, reasonId: number) =>
+  c.source === 'web' ? webDislike(c, reasonId, false) : feedDislike(c, reasonId, false)
+export const undoDislikeVideo = (c: FeedCard, reasonId: number) =>
+  c.source === 'web' ? webDislike(c, reasonId, true) : feedDislike(c, reasonId, true)
 
 // —— 稍后再看 / 移除 ——（账户操作；优先 web-cookie，回退 access_key）
 async function toview(aid: string, del: boolean): Promise<Res> {

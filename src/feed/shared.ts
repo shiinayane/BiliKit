@@ -18,6 +18,28 @@ export function coverSized(u: string): { avif: string; webp: string; jpg: string
   return { avif: `${base}${p}.avif`, webp: `${base}${p}.webp`, jpg: `${base}${p}` }
 }
 
+// —— web 推荐流的原始数字 → 与 app 流一致的显示串 ——
+// app 流给的是现成串（"25.4万观看" / "13:02" / "6月11日"）；web 流给原始数字（stat.view / duration 秒 / pubdate 时间戳），
+// 这里补齐三个格式化器，产出对齐 app 的显示（数字不带单位，card 的 stripUnit 对二者都幂等）。
+export function fmtCount(n: number): string {
+  if (!isFinite(n) || n < 0) n = 0
+  if (n >= 1e8) return (n / 1e8).toFixed(1).replace(/\.0$/, '') + '亿'
+  if (n >= 1e4) return (n / 1e4).toFixed(1).replace(/\.0$/, '') + '万'
+  return String(n)
+}
+export function fmtDuration(sec: number): string {
+  if (!isFinite(sec) || sec < 0) sec = 0
+  sec = Math.floor(sec)
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60
+  const mm = h ? String(m).padStart(2, '0') : String(m)
+  return (h ? h + ':' : '') + mm + ':' + String(s).padStart(2, '0')
+}
+export function fmtDate(tsSec: number): string {
+  if (!tsSec) return ''
+  const d = new Date(tsSec * 1000)
+  return `${d.getMonth() + 1}月${d.getDate()}日`
+}
+
 // 读共享设置（与 Core 面板同一份 localStorage）。key 缺失/解析失败回落 fallback。
 export function readSetting<T>(key: string, fallback: T): T {
   try {
