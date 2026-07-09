@@ -57,7 +57,16 @@ function setupDrawerReveal(): void {
       else (document.querySelector('video') as HTMLElement | null)?.focus({ preventScroll: true })
     } catch { /* 忽略 */ }
   }
-  const onReady = (): void => { if (readyDone) return; readyDone = true; post('bk-drawer-ready'); focusPlayer() }
+  const onReady = (): void => {
+    if (readyDone) return
+    readyDone = true
+    post('bk-drawer-ready')
+    focusPlayer()
+    // 父页收到 ready 后会 focus() iframe 元素使本 frame 成为活动帧；那一下可能把内部焦点复位到 <body>，
+    // 且播放器容器偶尔略晚挂载——故再补两次，确保焦点稳稳落在播放器上（跨源从 search/space 打开时尤其需要）。
+    setTimeout(focusPlayer, 150)
+    setTimeout(focusPlayer, 400)
+  }
   const timer = setInterval(() => {
     if (!readyDone) {
       const v = document.querySelector('video') as HTMLVideoElement | null

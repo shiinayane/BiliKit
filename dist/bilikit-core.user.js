@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BiliKit Core
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.5.22
+// @version      0.5.23
 // @author       shiinayane
 // @description  B 站体验增强核心，一装到位：CDN 优选（救海外卡顿）· 免登录看评论/动态/1080p · 主题跟随系统深浅 · 评论显 IP 属地 · 播放不息屏——统一设置面板集中开关。Safari 友好、无需扩展、零外部依赖。
 // @license      MIT
@@ -2052,7 +2052,7 @@
       }
     })();
   }
-  const VERSION = "0.5.22";
+  const VERSION = "0.5.23";
   const PANEL_ID = "bilikit-panel-root";
   const FEED_ID = "__feed__";
   const OPEN_ID = "__open__";
@@ -4199,6 +4199,10 @@
     if (curWebFull && curImmersive && !gotWebfull) return;
     setLoading(false);
     try {
+      frame == null ? void 0 : frame.focus({ preventScroll: true });
+    } catch {
+    }
+    try {
       (_a = frameWin()) == null ? void 0 : _a.focus();
     } catch {
     }
@@ -4435,6 +4439,8 @@
       readyDone = true;
       post("bk-drawer-ready");
       focusPlayer();
+      setTimeout(focusPlayer, 150);
+      setTimeout(focusPlayer, 400);
     };
     const timer = setInterval(() => {
       if (!readyDone) {

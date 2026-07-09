@@ -54,9 +54,12 @@ function tryReveal(): void {
   if (!gotReady) return
   if (curWebFull && curImmersive && !gotWebfull) return
   setLoading(false)
-  // 把键盘焦点路由进 iframe——抽屉由父页点击打开，焦点本留在父页，keydown 到不了 iframe，
-  // 空格等播放器快捷键失效（还会滚动 iframe 内的视频页）。contentWindow.focus() 跨源也允许。
-  // iframe 内 Core 再把焦点落到播放器（见 entry-core），双管齐下。
+  // 把键盘焦点路由进 iframe——抽屉由父页点击打开，焦点本留在父页，keydown 到不了 iframe，空格等播放器
+  // 快捷键失效（还会滚动 iframe 内视频页）。从 search/space 等子域打开时父页与 iframe(www) **跨源**，
+  // WebKit 会忽略跨源的 `contentWindow.focus()`（故此前只有同源的首页生效、其它页失效）——先 focus()
+  // iframe **元素**（父页操作自己的 DOM，跨源同样奏效，把键盘焦点送进 frame），再 contentWindow.focus() 兜同源。
+  // iframe 内 Core 再把焦点具体落到播放器（见 entry-core），双管齐下。
+  try { frame?.focus({ preventScroll: true }) } catch { /* 忽略 */ }
   try { frameWin()?.focus() } catch { /* 忽略 */ }
 }
 
