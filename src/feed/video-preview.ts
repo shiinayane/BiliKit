@@ -54,6 +54,9 @@ export function setupVideoPreview(cover: HTMLElement, bvid: string, cid?: string
 
   const ensureEls = (): void => {
     if (video) return
+    // 挂 <video> 前给封面加 .hasvp → 触发 isolation:isolate（修圆角裁不住视频的 #77572）。
+    // 只在真有视频时才加，没视频的封面不必常驻层叠上下文/合成面（省图形内存）。teardown 会移除。
+    cover.classList.add('hasvp')
     video = document.createElement('video')
     video.className = `${NS}-vpreview`
     video.muted = true
@@ -125,6 +128,7 @@ export function setupVideoPreview(cover: HTMLElement, bvid: string, cid?: string
       try { video.remove() } catch { /* ignore */ }
       video = null
     }
+    cover.classList.remove('hasvp') // 视频已拆 → 撤 isolation，封面回到轻量态
   }
   const selfEntry = { teardown, isHovering: () => hovering }
   ;(cover as any).__bkTeardown = teardown

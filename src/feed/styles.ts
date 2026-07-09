@@ -16,11 +16,12 @@ export function injectStyle(): void {
        top 是纯绘制偏移（position:relative 已就位）：不建层、不触发邻卡任何变化，只重绘本卡区域。 */
     .${NS}-card{ cursor:pointer; top:0; transition:top .18s ease; }
     .${NS}-card:hover{ top:-4px; }
-    /* isolation:isolate 给封面建独立层叠上下文——修 WebKit #77572：overflow:hidden+border-radius 容器里
-       含硬件合成子层（尤其 hover 预览的 <video>，媒体合成面无视元素 border-radius）时，Safari 不把子层裁到
-       圆角、露缝；且因 stop() 保留 video 供秒回放，视频层常驻不走，缝就一直留着（移开也不恢复）。
-       建层叠上下文即让 Safari 正确裁剪。不用 -webkit-mask（那会每帧把播放中的视频重刷进遮罩缓冲、增功耗）。 */
-    .${NS}-cover{ position:relative; isolation:isolate; aspect-ratio:16/9; border-radius:8px; overflow:hidden; background:var(--bg2,#e3e5e7); transition:box-shadow .18s ease; }
+    .${NS}-cover{ position:relative; aspect-ratio:16/9; border-radius:8px; overflow:hidden; background:var(--bg2,#e3e5e7); transition:box-shadow .18s ease; }
+    /* isolation:isolate 修 WebKit #77572：overflow:hidden+border-radius 容器里含硬件合成子层（hover 预览的 <video>，
+       媒体合成面无视元素 border-radius）时 Safari 不把子层裁到圆角、露缝；建独立层叠上下文即正确裁剪。
+       **只在封面真的挂着 <video> 预览时才加**（.hasvp，由 video-preview 在创建/拆除时增删）——没视频时封面图靠
+       自身 border-radius 就够，不必让每张封面常驻一个层叠上下文/合成面，省图形内存。不用 -webkit-mask（增功耗）。 */
+    .${NS}-cover.hasvp{ isolation:isolate; }
     .${NS}-card:hover .${NS}-cover{ box-shadow:0 6px 20px rgba(0,0,0,.22); }
     .${NS}-cover img{ width:100%; height:100%; object-fit:cover; display:block; opacity:0; transition:opacity .35s ease; }
     .${NS}-cover.loaded img{ opacity:1; }
