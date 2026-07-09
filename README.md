@@ -1,4 +1,7 @@
-# BiliKit
+<div align="center">
+  <img src="assets/logo.svg" width="112" height="112" alt="BiliKit logo">
+  <h1>BiliKit</h1>
+</div>
 
 > 一套对 **macOS Safari** 友好的 B 站增强油猴脚本。无需浏览器扩展、零外部依赖，只用脚本管理器即可。
 

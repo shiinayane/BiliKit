@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite'
 import monkey from 'vite-plugin-monkey'
 import { FEED_VERSION } from './src/feed/version'
+import { ICON } from './icon'
 
 // BiliKit Feed：App 推荐 feed（把手机 App 的推荐流搬上首页）。
 // 需 GM.xmlHttpRequest 跨域拉 app.bilibili.com → Safari 下会被注入「隔离世界」，
@@ -17,6 +18,7 @@ export default defineConfig({
         description: 'B 站首页换成手机 App 的个性化推荐流。零框架纯原生实现（无 React/Vue、gzip 仅 ~22KB）+ 窗口化虚拟化，DOM 数量恒定、长时间刷不涨内存。点卡片在底部抽屉内播放、封面悬停「真视频」秒开预览（MSE，接近原生 App）。需配合 BiliKit Core（登录 / 设置）。',
         author: 'shiinayane',
         license: 'MIT',
+        icon: ICON,
         // 只接管首页；登录已移到 Core，Feed 不再需要全站注入，也不碰 passport
         match: [
           '*://www.bilibili.com/',

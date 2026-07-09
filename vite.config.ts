@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite'
 import monkey from 'vite-plugin-monkey'
 import { VERSION } from './src/core/version'
+import { ICON } from './icon'
 
 // BiliKit Core：@grant none（页面世界）——所有增强模块 + 统一设置面板打进一个 .user.js。
 // 不使用任何 GM_* API，vite-plugin-monkey 会自动输出 `// @grant none`，从而在 Safari
@@ -17,6 +18,7 @@ export default defineConfig({
         description: 'B 站体验增强核心，一装到位：CDN 优选（救海外卡顿）· 免登录看评论/动态/1080p · 主题跟随系统深浅 · 评论显 IP 属地 · 播放不息屏——统一设置面板集中开关。Safari 友好、无需扩展、零外部依赖。',
         author: 'shiinayane',
         license: 'MIT',
+        icon: ICON,
         // 全站匹配：theme-sync 本就全站换肤，cdn-pick 需覆盖 player.bilibili.com；
         // 其余模块靠自身 observer/轮询自适配页面类型，非相关页自动 no-op。
         match: [

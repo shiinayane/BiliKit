@@ -1,10 +1,11 @@
 // ==UserScript==
 // @name         BiliKit Core
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.5.21
+// @version      0.5.22
 // @author       shiinayane
 // @description  B 站体验增强核心，一装到位：CDN 优选（救海外卡顿）· 免登录看评论/动态/1080p · 主题跟随系统深浅 · 评论显 IP 属地 · 播放不息屏——统一设置面板集中开关。Safari 友好、无需扩展、零外部依赖。
 // @license      MIT
+// @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20512%20512%22%20width%3D%22512%22%20height%3D%22512%22%20role%3D%22img%22%20aria-label%3D%22BiliKit%22%3E%0A%20%20%3Ctitle%3EBiliKit%3C%2Ftitle%3E%0A%20%20%3Crect%20width%3D%22512%22%20height%3D%22512%22%20rx%3D%22116%22%20fill%3D%22%23FB7299%22%2F%3E%0A%20%20%3Cg%20stroke%3D%22%23fff%22%20stroke-width%3D%2226%22%20stroke-linecap%3D%22round%22%3E%0A%20%20%20%20%3Cline%20x1%3D%22212%22%20y1%3D%22182%22%20x2%3D%22166%22%20y2%3D%22104%22%2F%3E%0A%20%20%20%20%3Cline%20x1%3D%22300%22%20y1%3D%22182%22%20x2%3D%22346%22%20y2%3D%22104%22%2F%3E%0A%20%20%3C%2Fg%3E%0A%20%20%3Crect%20x%3D%22108%22%20y%3D%22176%22%20width%3D%22296%22%20height%3D%22236%22%20rx%3D%2254%22%20fill%3D%22%23fff%22%2F%3E%0A%20%20%3Cpath%20d%3D%22M234%20258%20302%20294%20234%20330%20Z%22%20fill%3D%22%2300AEEC%22%20stroke%3D%22%2300AEEC%22%20stroke-width%3D%2218%22%20stroke-linejoin%3D%22round%22%20stroke-linecap%3D%22round%22%2F%3E%0A%3C%2Fsvg%3E%0A
 // @match        *://*.bilibili.com/*
 // @grant        none
 // @run-at       document-start
@@ -2051,7 +2052,7 @@
       }
     })();
   }
-  const VERSION = "0.5.21";
+  const VERSION = "0.5.22";
   const PANEL_ID = "bilikit-panel-root";
   const FEED_ID = "__feed__";
   const OPEN_ID = "__open__";
@@ -3419,6 +3420,8 @@
       return;
     }
     window.__BILIKIT_NO_LOGIN__ = true;
+    showGuestNotice();
+    installLogoutIntercept();
     if (!/DedeUserID=/.test(document.cookie)) {
       try {
         document.cookie = `DedeUserID=${Math.floor(Math.random() * 2 ** 50)}; path=/; domain=.bilibili.com`;
@@ -3646,14 +3649,142 @@
     ];
     installNetHook(rules);
   }
+  const NOTICE_KEY = "bilikit:no-login.notified";
+  const NOTICE_CSS = `
+.bk-nl-toast{ position:fixed; left:50%; bottom:24px; transform:translateX(-50%) translateY(10px);
+  z-index:2147483000; display:flex; align-items:center; gap:10px; max-width:min(94vw,540px);
+  padding:11px 12px 11px 15px; border-radius:12px; background:rgba(22,23,28,.94); color:#e3e5e7;
+  border:1px solid rgba(255,255,255,.1); box-shadow:0 8px 32px rgba(0,0,0,.42);
+  -webkit-backdrop-filter:blur(8px); backdrop-filter:blur(8px);
+  font-family:-apple-system,"PingFang SC",sans-serif; font-size:13px; line-height:1.5;
+  opacity:0; transition:opacity .28s ease, transform .28s ease; }
+.bk-nl-toast.on{ opacity:1; transform:translateX(-50%) translateY(0); }
+.bk-nl-toast .bk-nl-txt{ flex:1; min-width:0; }
+.bk-nl-toast .bk-nl-txt b{ color:#fff; font-weight:600; }
+.bk-nl-toast .bk-nl-sub{ color:rgba(255,255,255,.5); font-size:11px; margin-top:2px; }
+.bk-nl-toast .bk-nl-btn{ flex:0 0 auto; height:30px; padding:0 13px; border-radius:8px; cursor:pointer; white-space:nowrap;
+  font-size:12.5px; font-weight:500; font-family:inherit; transition:background .15s ease, border-color .15s ease; }
+.bk-nl-toast .bk-nl-off{ border:1px solid rgba(255,255,255,.16); background:rgba(255,255,255,.06); color:#e3e5e7; }
+.bk-nl-toast .bk-nl-off:hover{ background:rgba(255,255,255,.13); }
+.bk-nl-toast .bk-nl-login{ border:1px solid transparent; background:#fb7299; color:#fff; }
+.bk-nl-toast .bk-nl-login:hover{ background:#fb8bab; }
+.bk-nl-toast .bk-nl-x{ flex:0 0 auto; width:22px; height:22px; padding:0; border:none; background:none;
+  color:rgba(255,255,255,.4); font-size:17px; line-height:1; cursor:pointer; transition:color .15s ease; }
+.bk-nl-toast .bk-nl-x:hover{ color:rgba(255,255,255,.75); }`;
+  function exitToLogin() {
+    clearFakeUid();
+    const login = "https://passport.bilibili.com/login?gourl=" + encodeURIComponent(location.href);
+    try {
+      (window.top || window).location.href = login;
+    } catch {
+      location.href = login;
+    }
+  }
+  function disableNoLogin() {
+    try {
+      setModuleEnabled("no-login", false);
+    } catch {
+    }
+    clearFakeUid();
+    try {
+      location.reload();
+    } catch {
+    }
+  }
+  function showGuestNotice() {
+    if (window.top !== window.self) return;
+    try {
+      if (localStorage.getItem(NOTICE_KEY)) return;
+    } catch {
+      return;
+    }
+    const run = () => {
+      var _a, _b, _c;
+      if (!document.body) return;
+      try {
+        localStorage.setItem(NOTICE_KEY, "1");
+      } catch {
+      }
+      try {
+        let dismiss = function() {
+          if (fadeTimer) {
+            clearTimeout(fadeTimer);
+            fadeTimer = null;
+          }
+          box.classList.remove("on");
+          setTimeout(() => {
+            try {
+              box.remove();
+            } catch {
+            }
+          }, 320);
+        };
+        const style = document.createElement("style");
+        style.textContent = NOTICE_CSS;
+        (document.head || document.documentElement).appendChild(style);
+        const box = document.createElement("div");
+        box.className = "bk-nl-toast";
+        box.innerHTML = '<div class="bk-nl-txt"><b>已开启免登录</b>——未登录也能看评论 / 1080p。<div class="bk-nl-sub">想用自己的账号点「我要登录」；不需要此功能点「关闭功能」。</div></div><button class="bk-nl-btn bk-nl-off" type="button">关闭功能</button><button class="bk-nl-btn bk-nl-login" type="button">我要登录</button><button class="bk-nl-x" type="button" aria-label="忽略">×</button>';
+        document.body.appendChild(box);
+        requestAnimationFrame(() => box.classList.add("on"));
+        let fadeTimer = setTimeout(dismiss, 8e3);
+        const stopFade = () => {
+          if (fadeTimer) {
+            clearTimeout(fadeTimer);
+            fadeTimer = null;
+          }
+        };
+        (_a = box.querySelector(".bk-nl-x")) == null ? void 0 : _a.addEventListener("click", dismiss);
+        (_b = box.querySelector(".bk-nl-off")) == null ? void 0 : _b.addEventListener("click", () => {
+          stopFade();
+          disableNoLogin();
+        });
+        (_c = box.querySelector(".bk-nl-login")) == null ? void 0 : _c.addEventListener("click", () => {
+          stopFade();
+          exitToLogin();
+        });
+      } catch {
+      }
+    };
+    if (document.body) run();
+    else document.addEventListener("DOMContentLoaded", run, { once: true });
+  }
+  function isLogoutClick(start) {
+    var _a;
+    let el2 = start;
+    for (let i = 0; el2 && i < 6; i++, el2 = el2.parentElement) {
+      const cls = typeof el2.className === "string" ? el2.className : "";
+      if (/(^|[\s_-])logout/i.test(cls)) return true;
+      const href = (_a = el2.getAttribute) == null ? void 0 : _a.call(el2, "href");
+      if (href && /login\/exit/i.test(href)) return true;
+      const txt = (el2.textContent || "").trim();
+      if (txt === "退出登录") return true;
+    }
+    return false;
+  }
+  function installLogoutIntercept() {
+    if (window.__BILIKIT_NL_LOGOUT__) return;
+    window.__BILIKIT_NL_LOGOUT__ = true;
+    document.addEventListener("click", (e) => {
+      try {
+        if (!isLogoutClick(e.target)) return;
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        exitToLogin();
+      } catch {
+      }
+    }, true);
+  }
   const noLogin = {
     id: "no-login",
     name: "免登录",
     description: "未登录也能看评论 / 他人动态 / 1080p（装它即可替代 beefreely，避免脚本冲突）",
-    note: "开启后未登录也能：看视频/动态下方<b>评论</b>、看他人<b>动态</b>、看 <b>1080p</b> 视频。装了它就能卸载 beefreely 等免登录脚本，避免多个脚本抢改请求导致的时好时坏。<br><b>取舍（务必知悉）</b>：① 纯<b>只读</b>——页面「以为」你已登录（显示假账号），但发评论/点赞/投币/收藏/历史同步等需真鉴权的操作都会失败；② <b>看不到评论 IP 属地</b>——评论走匿名请求，B 站服务端只对真登录返回属地字段，免登录下拿不到（与「评论属地」模块不可兼得）；③ 1080p 上限为官方<b>试看</b>，4K/HDR/大会员专享清晰度仍拿不到；④ 仅<b>未登录</b>时生效，检测到已登录会自动让路、不干扰真账号。",
+    note: "开启后未登录也能：看视频/动态下方<b>评论</b>、看他人<b>动态</b>、看 <b>1080p</b> 视频。装了它就能卸载 beefreely 等免登录脚本，避免多个脚本抢改请求导致的时好时坏。<br><b>取舍（务必知悉）</b>：① 纯<b>只读</b>——页面「以为」你已登录（显示假账号），但发评论/点赞/投币/收藏/历史同步等需真鉴权的操作都会失败；② <b>看不到评论 IP 属地</b>——评论走匿名请求，B 站服务端只对真登录返回属地字段，免登录下拿不到（与「评论属地」模块不可兼得）；③ 1080p 上限为官方<b>试看</b>，4K/HDR/大会员专享清晰度仍拿不到；④ 仅<b>未登录</b>时生效，检测到已登录会自动让路、不干扰真账号。<br><b>默认开启</b>：只在未登录时激活（已登录零影响），首次激活会在底部弹一次可关闭的提示。这样无痕/未登录浏览打开即 1080p，无需每次手动开。<br><b>想真正登录</b>：直接点顶栏用户菜单里的「退出登录」即可——会跳到登录页，登录后自动回到当前页面；免登录本身<b>不会被关掉</b>，下次未登录时照常自动生效。",
     category: "增强",
-    defaultEnabled: false,
-    // 侵入性功能，默认关
+    // 默认开：仅未登录时激活（已登录在 init 的 ckMd5 处即 return、零影响），首次激活弹一次性可关提示告知。
+    // 目的：无痕模式存不住任何页面侧开关（localStorage/cookie 关窗即清、@grant none 无法用 GM 存储跨会话），
+    // 唯一能让「无痕未登录时默认免登录」成立的就是把默认值设对；用一次性披露弹框换取透明、避免静默吓到人。
+    defaultEnabled: true,
     runAt: "start",
     init: init$1
   };

@@ -1,10 +1,11 @@
 // ==UserScript==
 // @name         BiliKit Feed
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.3.17
+// @version      0.3.18
 // @author       shiinayane
 // @description  B 站首页换成手机 App 的个性化推荐流。零框架纯原生实现（无 React/Vue、gzip 仅 ~22KB）+ 窗口化虚拟化，DOM 数量恒定、长时间刷不涨内存。点卡片在底部抽屉内播放、封面悬停「真视频」秒开预览（MSE，接近原生 App）。需配合 BiliKit Core（登录 / 设置）。
 // @license      MIT
+// @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20512%20512%22%20width%3D%22512%22%20height%3D%22512%22%20role%3D%22img%22%20aria-label%3D%22BiliKit%22%3E%0A%20%20%3Ctitle%3EBiliKit%3C%2Ftitle%3E%0A%20%20%3Crect%20width%3D%22512%22%20height%3D%22512%22%20rx%3D%22116%22%20fill%3D%22%23FB7299%22%2F%3E%0A%20%20%3Cg%20stroke%3D%22%23fff%22%20stroke-width%3D%2226%22%20stroke-linecap%3D%22round%22%3E%0A%20%20%20%20%3Cline%20x1%3D%22212%22%20y1%3D%22182%22%20x2%3D%22166%22%20y2%3D%22104%22%2F%3E%0A%20%20%20%20%3Cline%20x1%3D%22300%22%20y1%3D%22182%22%20x2%3D%22346%22%20y2%3D%22104%22%2F%3E%0A%20%20%3C%2Fg%3E%0A%20%20%3Crect%20x%3D%22108%22%20y%3D%22176%22%20width%3D%22296%22%20height%3D%22236%22%20rx%3D%2254%22%20fill%3D%22%23fff%22%2F%3E%0A%20%20%3Cpath%20d%3D%22M234%20258%20302%20294%20234%20330%20Z%22%20fill%3D%22%2300AEEC%22%20stroke%3D%22%2300AEEC%22%20stroke-width%3D%2218%22%20stroke-linejoin%3D%22round%22%20stroke-linecap%3D%22round%22%2F%3E%0A%3C%2Fsvg%3E%0A
 // @match        *://www.bilibili.com/
 // @match        *://www.bilibili.com/?*
 // @match        *://www.bilibili.com/index.html*
@@ -1653,7 +1654,7 @@
     markerIo = new IntersectionObserver((es) => fab.classList.toggle("scrolled", !es[0].isIntersecting));
     markerIo.observe(marker);
   }
-  const FEED_VERSION = "0.3.17";
+  const FEED_VERSION = "0.3.18";
   const seen = /* @__PURE__ */ new Set();
   let grid = null;
   let sentinel = null;

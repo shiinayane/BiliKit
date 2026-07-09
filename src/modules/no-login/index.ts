@@ -1,4 +1,5 @@
 import type { BiliKitModule, Cfg } from '../../core/module'
+import { setModuleEnabled } from '../../core/settings'
 import { installNetHook, type NetRule } from './net-hook'
 import { signQuery, warmKeys } from './wbi-core'
 import { playurlParams } from './playurl'
@@ -37,6 +38,14 @@ function init(_cfg: Cfg): void {
   // 个人数据页：不伪造，并清掉别处种下的假 cookie，让页面按未登录干净处理（跳登录/空列表），不重刷
   if (needsRealLogin()) { clearFakeUid(); return }
   ;(window as any).__BILIKIT_NO_LOGIN__ = true
+
+  // 免登录默认开、仅未登录时激活（已登录在上面 ckMd5 处已 return，走不到这）。首次真正激活时，底部弹**一次**
+  // 可关闭的知情提示——把「静默伪造登录态」变成「明确告知、想关一键关」。放在这（激活确认后）而非模块外层，
+  // 保证已登录用户永远看不到；只在顶层窗口弹（抽屉 iframe 不重复）。
+  showGuestNotice()
+  // 免登录伪造了登录态 → 顶栏真「登录」入口被假头像顶掉，想真登录无门；而假登录下点「退出登录」又没意义。
+  // 把用户最自然会点的「退出登录」重定向到登录页（清假 cookie 后跳转，不关模块——只是要登录一次）。
+  installLogoutIntercept()
 
   // 1) 伪造 DedeUserID cookie → 页面按登录态渲染（评论区/动态/播放器）
   if (!/DedeUserID=/.test(document.cookie)) {
@@ -218,6 +227,113 @@ function init(_cfg: Cfg): void {
   installNetHook(rules)
 }
 
+/* ---------------- 免登录激活的一次性知情提示 ---------------- */
+// 「弹过一次」标志存 localStorage：普通模式一次永逸；无痕的 localStorage 每会话清空 → 每个无痕会话弹一次
+// （小提示、会自动淡出，对「就想免登录」的用户反而是个安心的状态确认，不烦）。
+const NOTICE_KEY = 'bilikit:no-login.notified'
+const NOTICE_CSS = `
+.bk-nl-toast{ position:fixed; left:50%; bottom:24px; transform:translateX(-50%) translateY(10px);
+  z-index:2147483000; display:flex; align-items:center; gap:10px; max-width:min(94vw,540px);
+  padding:11px 12px 11px 15px; border-radius:12px; background:rgba(22,23,28,.94); color:#e3e5e7;
+  border:1px solid rgba(255,255,255,.1); box-shadow:0 8px 32px rgba(0,0,0,.42);
+  -webkit-backdrop-filter:blur(8px); backdrop-filter:blur(8px);
+  font-family:-apple-system,"PingFang SC",sans-serif; font-size:13px; line-height:1.5;
+  opacity:0; transition:opacity .28s ease, transform .28s ease; }
+.bk-nl-toast.on{ opacity:1; transform:translateX(-50%) translateY(0); }
+.bk-nl-toast .bk-nl-txt{ flex:1; min-width:0; }
+.bk-nl-toast .bk-nl-txt b{ color:#fff; font-weight:600; }
+.bk-nl-toast .bk-nl-sub{ color:rgba(255,255,255,.5); font-size:11px; margin-top:2px; }
+.bk-nl-toast .bk-nl-btn{ flex:0 0 auto; height:30px; padding:0 13px; border-radius:8px; cursor:pointer; white-space:nowrap;
+  font-size:12.5px; font-weight:500; font-family:inherit; transition:background .15s ease, border-color .15s ease; }
+.bk-nl-toast .bk-nl-off{ border:1px solid rgba(255,255,255,.16); background:rgba(255,255,255,.06); color:#e3e5e7; }
+.bk-nl-toast .bk-nl-off:hover{ background:rgba(255,255,255,.13); }
+.bk-nl-toast .bk-nl-login{ border:1px solid transparent; background:#fb7299; color:#fff; }
+.bk-nl-toast .bk-nl-login:hover{ background:#fb8bab; }
+.bk-nl-toast .bk-nl-x{ flex:0 0 auto; width:22px; height:22px; padding:0; border:none; background:none;
+  color:rgba(255,255,255,.4); font-size:17px; line-height:1; cursor:pointer; transition:color .15s ease; }
+.bk-nl-toast .bk-nl-x:hover{ color:rgba(255,255,255,.75); }`
+
+// 「我要登录」：清假 cookie 后跳登录页（gourl 登录后回跳当前页）。**不关免登录**——只是要登录一次；
+// 真登录后 ckMd5 在，模块自动让路。顶层导航避免在抽屉 iframe 里被 passport 的 X-Frame 拦。
+function exitToLogin(): void {
+  clearFakeUid() // 真登录会写入真 DedeUserID 覆盖，这里先清掉假的让登录页/回跳干净
+  const login = 'https://passport.bilibili.com/login?gourl=' + encodeURIComponent(location.href)
+  try { (window.top || window).location.href = login } catch { location.href = login }
+}
+// 「关闭功能」：显式记住关闭免登录 + 清假 cookie + 刷新，回到干净未登录态并留在当前页。
+function disableNoLogin(): void {
+  try { setModuleEnabled('no-login', false) } catch { /* ignore */ }
+  clearFakeUid()
+  try { location.reload() } catch { /* ignore */ }
+}
+
+function showGuestNotice(): void {
+  if (window.top !== window.self) return // 只在顶层弹（抽屉 iframe 不重复）
+  try { if (localStorage.getItem(NOTICE_KEY)) return } catch { return } // 弹过就不再弹
+  const run = (): void => {
+    if (!document.body) return
+    try { localStorage.setItem(NOTICE_KEY, '1') } catch { /* 无痕写失败也无妨，最多本会话多弹一次 */ }
+    try {
+      const style = document.createElement('style')
+      style.textContent = NOTICE_CSS
+      ;(document.head || document.documentElement).appendChild(style)
+      const box = document.createElement('div')
+      box.className = 'bk-nl-toast'
+      box.innerHTML =
+        '<div class="bk-nl-txt"><b>已开启免登录</b>——未登录也能看评论 / 1080p。' +
+        '<div class="bk-nl-sub">想用自己的账号点「我要登录」；不需要此功能点「关闭功能」。</div></div>' +
+        '<button class="bk-nl-btn bk-nl-off" type="button">关闭功能</button>' +
+        '<button class="bk-nl-btn bk-nl-login" type="button">我要登录</button>' +
+        '<button class="bk-nl-x" type="button" aria-label="忽略">×</button>'
+      document.body.appendChild(box)
+      requestAnimationFrame(() => box.classList.add('on'))
+      let fadeTimer: ReturnType<typeof setTimeout> | null = setTimeout(dismiss, 8000) // 无操作 8s 自动淡出（默认保持开启）
+      function dismiss(): void {
+        if (fadeTimer) { clearTimeout(fadeTimer); fadeTimer = null }
+        box.classList.remove('on')
+        setTimeout(() => { try { box.remove() } catch { /* ignore */ } }, 320)
+      }
+      const stopFade = (): void => { if (fadeTimer) { clearTimeout(fadeTimer); fadeTimer = null } }
+      box.querySelector('.bk-nl-x')?.addEventListener('click', dismiss)
+      box.querySelector('.bk-nl-off')?.addEventListener('click', () => { stopFade(); disableNoLogin() })
+      box.querySelector('.bk-nl-login')?.addEventListener('click', () => { stopFade(); exitToLogin() })
+    } catch { /* ignore */ }
+  }
+  if (document.body) run()
+  else document.addEventListener('DOMContentLoaded', run, { once: true })
+}
+
+/* ---------------- 「退出登录」→ 直奔登录页 ---------------- */
+// 假登录态下，顶栏用户菜单里的「退出登录」点了没意义（本就没真会话）；而想真登录又找不到入口（登录按钮被假头像顶掉）。
+// 拦住这个点击 → 清假 cookie + 跳登录页（gourl 回跳当前页）。**不关免登录**：登录后 ckMd5 在，模块自动让路；
+// 若没登录成功回到未登录，免登录照常自动生效——用户只是要登录一次，不该被顺手废掉功能。
+function isLogoutClick(start: Element | null): boolean {
+  let el: Element | null = start
+  for (let i = 0; el && i < 6; i++, el = el.parentElement) {
+    const cls = typeof el.className === 'string' ? el.className : ''
+    if (/(^|[\s_-])logout/i.test(cls)) return true // 默认顶栏登出项类名 .logout-item（见 Bilibili-Gate cookie.ts）
+    const href = el.getAttribute?.('href')
+    if (href && /login\/exit/i.test(href)) return true // 老版为 <a href=".../login/exit/v2">
+    const txt = (el.textContent || '').trim()
+    if (txt === '退出登录') return true // 兜底：类名/结构变了也能认（精确短文本，不误伤大容器）
+  }
+  return false
+}
+function installLogoutIntercept(): void {
+  if ((window as any).__BILIKIT_NL_LOGOUT__) return // 幂等
+  ;(window as any).__BILIKIT_NL_LOGOUT__ = true
+  // 捕获阶段：抢在 B 站自身的冒泡 @click（登出请求/跳转）之前拦下
+  document.addEventListener('click', (e) => {
+    try {
+      if (!isLogoutClick(e.target as Element)) return
+      e.preventDefault()
+      e.stopImmediatePropagation()
+      // 点「退出登录」的真实意图是「我要真登录」→ 跳登录页（不关免登录，同弹窗的「我要登录」）
+      exitToLogin()
+    } catch { /* ignore */ }
+  }, true)
+}
+
 export const noLogin: BiliKitModule = {
   id: 'no-login',
   name: '免登录',
@@ -228,9 +344,14 @@ export const noLogin: BiliKitModule = {
     '① 纯<b>只读</b>——页面「以为」你已登录（显示假账号），但发评论/点赞/投币/收藏/历史同步等需真鉴权的操作都会失败；' +
     '② <b>看不到评论 IP 属地</b>——评论走匿名请求，B 站服务端只对真登录返回属地字段，免登录下拿不到（与「评论属地」模块不可兼得）；' +
     '③ 1080p 上限为官方<b>试看</b>，4K/HDR/大会员专享清晰度仍拿不到；' +
-    '④ 仅<b>未登录</b>时生效，检测到已登录会自动让路、不干扰真账号。',
+    '④ 仅<b>未登录</b>时生效，检测到已登录会自动让路、不干扰真账号。<br>' +
+    '<b>默认开启</b>：只在未登录时激活（已登录零影响），首次激活会在底部弹一次可关闭的提示。这样无痕/未登录浏览打开即 1080p，无需每次手动开。<br>' +
+    '<b>想真正登录</b>：直接点顶栏用户菜单里的「退出登录」即可——会跳到登录页，登录后自动回到当前页面；免登录本身<b>不会被关掉</b>，下次未登录时照常自动生效。',
   category: '增强',
-  defaultEnabled: false, // 侵入性功能，默认关
+  // 默认开：仅未登录时激活（已登录在 init 的 ckMd5 处即 return、零影响），首次激活弹一次性可关提示告知。
+  // 目的：无痕模式存不住任何页面侧开关（localStorage/cookie 关窗即清、@grant none 无法用 GM 存储跨会话），
+  // 唯一能让「无痕未登录时默认免登录」成立的就是把默认值设对；用一次性披露弹框换取透明、避免静默吓到人。
+  defaultEnabled: true,
   runAt: 'start',
   init,
 }

@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="BiliKit">
+  <title>BiliKit</title>
+  <rect width="512" height="512" rx="116" fill="#FB7299"/>
+  <g stroke="#fff" stroke-width="26" stroke-linecap="round">
+    <line x1="212" y1="182" x2="166" y2="104"/>
+    <line x1="300" y1="182" x2="346" y2="104"/>
+  </g>
+  <rect x="108" y="176" width="296" height="236" rx="54" fill="#fff"/>
+  <path d="M234 258 302 294 234 330 Z" fill="#00AEEC" stroke="#00AEEC" stroke-width="18" stroke-linejoin="round" stroke-linecap="round"/>
+</svg>
