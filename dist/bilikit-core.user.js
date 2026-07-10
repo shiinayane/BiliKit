@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BiliKit Core
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.5.24
+// @version      0.5.25
 // @author       shiinayane
 // @description  B 站体验增强核心，一装到位：CDN 优选（救海外卡顿）· 免登录看评论/动态/1080p · 主题跟随系统深浅 · 评论显 IP 属地 · 播放不息屏——统一设置面板集中开关。Safari 友好、无需扩展、零外部依赖。
 // @license      MIT
@@ -2052,7 +2052,7 @@
       }
     })();
   }
-  const VERSION = "0.5.24";
+  const VERSION = "0.5.25";
   const PANEL_ID = "bilikit-panel-root";
   const FEED_ID = "__feed__";
   const OPEN_ID = "__open__";
@@ -3713,7 +3713,7 @@
     ];
     installNetHook(rules);
   }
-  const NOTICE_KEY = "bilikit:no-login.notified";
+  const NOTICE_KEY = "no-login.notified";
   const NOTICE_CSS = `
 .bk-nl-toast{ position:fixed; left:50%; bottom:24px; transform:translateX(-50%) translateY(10px);
   z-index:2147483000; display:flex; align-items:center; gap:10px; max-width:min(94vw,540px);
@@ -3757,18 +3757,11 @@
   }
   function showGuestNotice() {
     if (window.top !== window.self) return;
-    try {
-      if (localStorage.getItem(NOTICE_KEY)) return;
-    } catch {
-      return;
-    }
+    if (get(NOTICE_KEY, false)) return;
     const run = () => {
       var _a, _b, _c;
       if (!document.body) return;
-      try {
-        localStorage.setItem(NOTICE_KEY, "1");
-      } catch {
-      }
+      set(NOTICE_KEY, true);
       try {
         let dismiss = function() {
           if (fadeTimer) {

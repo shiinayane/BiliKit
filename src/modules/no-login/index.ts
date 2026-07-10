@@ -1,5 +1,5 @@
 import type { BiliKitModule, Cfg } from '../../core/module'
-import { setModuleEnabled } from '../../core/settings'
+import { setModuleEnabled, get, set } from '../../core/settings'
 import { installNetHook, type NetRule } from './net-hook'
 import { signQuery, warmKeys, ensureKeys } from './wbi-core'
 import { playurlParams } from './playurl'
@@ -239,9 +239,10 @@ function init(_cfg: Cfg): void {
 }
 
 /* ---------------- 免登录激活的一次性知情提示 ---------------- */
-// 「弹过一次」标志存 localStorage：普通模式一次永逸；无痕的 localStorage 每会话清空 → 每个无痕会话弹一次
-// （小提示、会自动淡出，对「就想免登录」的用户反而是个安心的状态确认，不烦）。
-const NOTICE_KEY = 'bilikit:no-login.notified'
+// 「弹过一次」标志走**设置系统**（get/set → 镜像到 .bilibili.com cookie），**跨子域共享**：在 www 弹过后，
+// search/space 等子域不再重复弹（localStorage 按子域隔离，早先存 localStorage 会每个子域各弹一次——已修）。
+// 普通模式一次永逸；无痕的 cookie 每会话清空 → 每个无痕会话（跨子域）只弹一次。
+const NOTICE_KEY = 'no-login.notified'
 const NOTICE_CSS = `
 .bk-nl-toast{ position:fixed; left:50%; bottom:24px; transform:translateX(-50%) translateY(10px);
   z-index:2147483000; display:flex; align-items:center; gap:10px; max-width:min(94vw,540px);
@@ -280,10 +281,10 @@ function disableNoLogin(): void {
 
 function showGuestNotice(): void {
   if (window.top !== window.self) return // 只在顶层弹（抽屉 iframe 不重复）
-  try { if (localStorage.getItem(NOTICE_KEY)) return } catch { return } // 弹过就不再弹
+  if (get(NOTICE_KEY, false)) return // 弹过就不再弹（跨子域共享，见 NOTICE_KEY 注释）
   const run = (): void => {
     if (!document.body) return
-    try { localStorage.setItem(NOTICE_KEY, '1') } catch { /* 无痕写失败也无妨，最多本会话多弹一次 */ }
+    set(NOTICE_KEY, true) // 记「已弹」→ 镜像到 .bilibili.com cookie，其它子域读得到（无痕写失败也无妨，最多多弹一次）
     try {
       const style = document.createElement('style')
       style.textContent = NOTICE_CSS
