@@ -1,7 +1,7 @@
 import type { BiliKitModule, Cfg } from '../../core/module'
 import { setModuleEnabled } from '../../core/settings'
 import { installNetHook, type NetRule } from './net-hook'
-import { signQuery, warmKeys } from './wbi-core'
+import { signQuery, warmKeys, ensureKeys } from './wbi-core'
 import { playurlParams } from './playurl'
 
 /**
@@ -214,12 +214,23 @@ function init(_cfg: Cfg): void {
     // + fourk=1，让服务端按桌面策略放行 1080p 试看（桌面本就这套，零风险；iPad 靠 MSE 放 DASH）。
     {
       match: (u) => u.includes('/x/player/wbi/playurl'),
+      // 快路径：key 已缓存 → 同步签名，零延迟
       rewriteRequest: (u) => {
         try {
           const { base, params } = playurlParams(u) // 纯参数改写在 ./playurl
           const signed = signQuery(params)
-          if (!signed) return // 拿不到 wbi key → 维持原请求，不强改（下次导航 key 就绪再升）
+          if (!signed) return // 拿不到 wbi key → 交给下面 awaitRewrite 等 key
           return { url: `${base}?${signed}` }
+        } catch { return }
+      },
+      // 慢路径：无痕会话**首个视频** key 还没暖好 → 等 nav 拉到 key（≤1.5s）再签名发出，
+      // 否则首帧只能 480p、要刷新一次才 1080p（issue #? 追加反馈的根因）。等到即 1080p，超时则原样发。
+      awaitRewrite: async (u) => {
+        try {
+          if (!(await ensureKeys(pureFetch, 1500))) return
+          const { base, params } = playurlParams(u)
+          const signed = signQuery(params)
+          return signed ? { url: `${base}?${signed}` } : undefined
         } catch { return }
       },
     },

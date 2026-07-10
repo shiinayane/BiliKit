@@ -14,6 +14,12 @@ export interface NetRule {
   match: (url: string) => boolean
   /** 改请求：返回新 url / credentials（都可选，不返回则不改） */
   rewriteRequest?: (url: string) => { url?: string; credentials?: RequestCredentials } | undefined
+  /**
+   * 异步改请求（仅 XHR 路支持）：当同步 rewriteRequest 没拿到新 url（如 playurl 的 wbi key 还没暖好）时，
+   * send() 会**推迟真正发送**、await 本函数拿到最终改写再发。拿不到（返回 undefined/超时）则按原始请求发出。
+   * 用于「无痕会话首个视频 key 未就绪 → 首帧 480p」这类竞态：等 key 到了再签名，首个视频也能 1080p。
+   */
+  awaitRewrite?: (url: string) => Promise<{ url?: string; credentials?: RequestCredentials } | undefined>
   /** 改响应：拿到解析后的 JSON，返回变形后的对象（原地改或换新都行） */
   rewriteResponse?: (json: any, url: string) => any
 }
@@ -77,19 +83,43 @@ export function installNetHook(rules: NetRule[]): void {
   if (OX) {
     class X extends OX {
       private __nlUrl = ''
+      private __nlMethod = 'GET'
       private __nlRule: NetRule | undefined
       private __nlRw: { url?: string; credentials?: RequestCredentials } | undefined
+      private __nlHeaders: [string, string][] = [] // 记录请求头，供慢路径重开后回放（重开会清空请求头）
       open(method: any, url: any, ...rest: any[]) {
         this.__nlUrl = String(url)
+        this.__nlMethod = String(method)
+        this.__nlHeaders = []
         this.__nlRule = rules.find((r) => r.match(this.__nlUrl))
         // rewriteRequest 只算一次（playurl 会重签 wbi，二次调用会用不同 wts 得到不同 w_rid）；结果挂实例供 send 复用
         this.__nlRw = this.__nlRule?.rewriteRequest?.(this.__nlUrl)
         return super.open(method, this.__nlRw?.url || url, ...(rest as [any, any, any]))
       }
-      send(body?: any) {
-        const c = this.__nlRw?.credentials
+      setRequestHeader(name: string, value: string) {
+        try { this.__nlHeaders.push([name, value]) } catch { /* ignore */ }
+        return super.setRequestHeader(name, value)
+      }
+      private __nlApplyCreds(c?: RequestCredentials) {
         if (c === 'omit') this.withCredentials = false // 跨源不带 cookie = 匿名
         else if (c) this.withCredentials = true
+      }
+      send(body?: any) {
+        // 慢路径：规则支持异步改写、且同步没拿到 url（如 playurl 的 wbi key 未就绪）→ 推迟发送，等改写就绪。
+        if (this.__nlRule?.awaitRewrite && !this.__nlRw?.url) {
+          this.__nlRule.awaitRewrite(this.__nlUrl).then((rw) => {
+            try {
+              if (rw?.url) {
+                super.open(this.__nlMethod, rw.url) // 重开到签名后的 url（重开会清请求头 → 下面回放）
+                for (const h of this.__nlHeaders) { try { super.setRequestHeader(h[0], h[1]) } catch { /* ignore */ } }
+              }
+              this.__nlApplyCreds(rw?.credentials)
+            } catch { /* ignore */ }
+            try { super.send(body) } catch { /* ignore */ }
+          }, () => { try { super.send(body) } catch { /* ignore */ } }) // 异步改写失败 → 按原始请求发
+          return // 本次 send 已托管给上面的 promise，别再往下同步发
+        }
+        this.__nlApplyCreds(this.__nlRw?.credentials)
         return super.send(body)
       }
       get responseText(): string {

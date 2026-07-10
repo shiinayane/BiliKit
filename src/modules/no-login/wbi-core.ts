@@ -49,19 +49,36 @@ function readKeys(): { img: string; sub: string } | null {
   return null
 }
 
-/** 用捕获的原生 fetch 打一次 nav 拿 key（匿名即可），存自家缓存。key 缺失时后台预热，不阻塞。 */
+// 一次 nav 预热的在途 promise（去重）：warmKeys 后台触发、ensureKeys 也复用同一次，不重复打 nav。
+let warmInFlight: Promise<void> | null = null
+function doWarm(pureFetch: typeof fetch): Promise<void> {
+  if (warmInFlight) return warmInFlight
+  warmInFlight = pureFetch('https://api.bilibili.com/x/web-interface/nav', { credentials: 'omit' })
+    .then((r) => r.json())
+    .then((j) => {
+      const w = j?.data?.wbi_img
+      const img = keyFromUrl(w?.img_url || ''), sub = keyFromUrl(w?.sub_url || '')
+      if (img && sub) { cache = { img, sub, day: today() }; try { localStorage.setItem(LS, JSON.stringify(cache)) } catch { /* ignore */ } }
+    })
+    .catch(() => { /* ignore */ })
+    .finally(() => { warmInFlight = null })
+  return warmInFlight
+}
+
+/** 用捕获的原生 fetch 打一次 nav 拿 key（匿名即可），存自家缓存。后台预热，不阻塞。 */
 export function warmKeys(pureFetch: typeof fetch): void {
   if (readKeys()) return
-  try {
-    pureFetch('https://api.bilibili.com/x/web-interface/nav', { credentials: 'omit' })
-      .then((r) => r.json())
-      .then((j) => {
-        const w = j?.data?.wbi_img
-        const img = keyFromUrl(w?.img_url || ''), sub = keyFromUrl(w?.sub_url || '')
-        if (img && sub) { cache = { img, sub, day: today() }; try { localStorage.setItem(LS, JSON.stringify(cache)) } catch { /* ignore */ } }
-      })
-      .catch(() => { /* ignore */ })
-  } catch { /* ignore */ }
+  doWarm(pureFetch)
+}
+
+/**
+ * 等 wbi key 就绪（有界）：已就绪立即 true；否则等预热 nav 回来或超时，最终以是否拿到 key 为准。
+ * 供 playurl 改写走「慢路径」——无痕会话首个视频 key 还没暖好时，等一下再签名，避免首帧只能 480p。
+ */
+export function ensureKeys(pureFetch: typeof fetch, timeoutMs = 1500): Promise<boolean> {
+  if (readKeys()) return Promise.resolve(true)
+  const timed = new Promise<void>((res) => setTimeout(res, timeoutMs))
+  return Promise.race([doWarm(pureFetch), timed]).then(() => !!readKeys())
 }
 
 /**

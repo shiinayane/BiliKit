@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BiliKit Core
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.5.23
+// @version      0.5.24
 // @author       shiinayane
 // @description  B 站体验增强核心，一装到位：CDN 优选（救海外卡顿）· 免登录看评论/动态/1080p · 主题跟随系统深浅 · 评论显 IP 属地 · 播放不息屏——统一设置面板集中开关。Safari 友好、无需扩展、零外部依赖。
 // @license      MIT
@@ -2052,7 +2052,7 @@
       }
     })();
   }
-  const VERSION = "0.5.23";
+  const VERSION = "0.5.24";
   const PANEL_ID = "bilikit-panel-root";
   const FEED_ID = "__feed__";
   const OPEN_ID = "__open__";
@@ -3213,19 +3213,60 @@
         constructor() {
           super(...arguments);
           this.__nlUrl = "";
+          this.__nlMethod = "GET";
+          this.__nlHeaders = [];
         }
+        // 记录请求头，供慢路径重开后回放（重开会清空请求头）
         open(method, url, ...rest) {
           var _a, _b, _c;
           this.__nlUrl = String(url);
+          this.__nlMethod = String(method);
+          this.__nlHeaders = [];
           this.__nlRule = rules.find((r) => r.match(this.__nlUrl));
           this.__nlRw = (_b = (_a = this.__nlRule) == null ? void 0 : _a.rewriteRequest) == null ? void 0 : _b.call(_a, this.__nlUrl);
           return super.open(method, ((_c = this.__nlRw) == null ? void 0 : _c.url) || url, ...rest);
         }
-        send(body) {
-          var _a;
-          const c = (_a = this.__nlRw) == null ? void 0 : _a.credentials;
+        setRequestHeader(name, value) {
+          try {
+            this.__nlHeaders.push([name, value]);
+          } catch {
+          }
+          return super.setRequestHeader(name, value);
+        }
+        __nlApplyCreds(c) {
           if (c === "omit") this.withCredentials = false;
           else if (c) this.withCredentials = true;
+        }
+        send(body) {
+          var _a, _b, _c;
+          if (((_a = this.__nlRule) == null ? void 0 : _a.awaitRewrite) && !((_b = this.__nlRw) == null ? void 0 : _b.url)) {
+            this.__nlRule.awaitRewrite(this.__nlUrl).then((rw) => {
+              try {
+                if (rw == null ? void 0 : rw.url) {
+                  super.open(this.__nlMethod, rw.url);
+                  for (const h of this.__nlHeaders) {
+                    try {
+                      super.setRequestHeader(h[0], h[1]);
+                    } catch {
+                    }
+                  }
+                }
+                this.__nlApplyCreds(rw == null ? void 0 : rw.credentials);
+              } catch {
+              }
+              try {
+                super.send(body);
+              } catch {
+              }
+            }, () => {
+              try {
+                super.send(body);
+              } catch {
+              }
+            });
+            return;
+          }
+          this.__nlApplyCreds((_c = this.__nlRw) == null ? void 0 : _c.credentials);
           return super.send(body);
         }
         get responseText() {
@@ -3362,24 +3403,34 @@
     }
     return null;
   }
+  let warmInFlight = null;
+  function doWarm(pureFetch) {
+    if (warmInFlight) return warmInFlight;
+    warmInFlight = pureFetch("https://api.bilibili.com/x/web-interface/nav", { credentials: "omit" }).then((r) => r.json()).then((j) => {
+      var _a;
+      const w = (_a = j == null ? void 0 : j.data) == null ? void 0 : _a.wbi_img;
+      const img = keyFromUrl((w == null ? void 0 : w.img_url) || ""), sub = keyFromUrl((w == null ? void 0 : w.sub_url) || "");
+      if (img && sub) {
+        cache = { img, sub, day: today() };
+        try {
+          localStorage.setItem(LS, JSON.stringify(cache));
+        } catch {
+        }
+      }
+    }).catch(() => {
+    }).finally(() => {
+      warmInFlight = null;
+    });
+    return warmInFlight;
+  }
   function warmKeys(pureFetch) {
     if (readKeys()) return;
-    try {
-      pureFetch("https://api.bilibili.com/x/web-interface/nav", { credentials: "omit" }).then((r) => r.json()).then((j) => {
-        var _a;
-        const w = (_a = j == null ? void 0 : j.data) == null ? void 0 : _a.wbi_img;
-        const img = keyFromUrl((w == null ? void 0 : w.img_url) || ""), sub = keyFromUrl((w == null ? void 0 : w.sub_url) || "");
-        if (img && sub) {
-          cache = { img, sub, day: today() };
-          try {
-            localStorage.setItem(LS, JSON.stringify(cache));
-          } catch {
-          }
-        }
-      }).catch(() => {
-      });
-    } catch {
-    }
+    doWarm(pureFetch);
+  }
+  function ensureKeys(pureFetch, timeoutMs = 1500) {
+    if (readKeys()) return Promise.resolve(true);
+    const timed = new Promise((res) => setTimeout(res, timeoutMs));
+    return Promise.race([doWarm(pureFetch), timed]).then(() => !!readKeys());
   }
   function signQuery(params) {
     const keys = readKeys();
@@ -3635,12 +3686,25 @@
       // + fourk=1，让服务端按桌面策略放行 1080p 试看（桌面本就这套，零风险；iPad 靠 MSE 放 DASH）。
       {
         match: (u) => u.includes("/x/player/wbi/playurl"),
+        // 快路径：key 已缓存 → 同步签名，零延迟
         rewriteRequest: (u) => {
           try {
             const { base, params } = playurlParams(u);
             const signed = signQuery(params);
             if (!signed) return;
             return { url: `${base}?${signed}` };
+          } catch {
+            return;
+          }
+        },
+        // 慢路径：无痕会话**首个视频** key 还没暖好 → 等 nav 拉到 key（≤1.5s）再签名发出，
+        // 否则首帧只能 480p、要刷新一次才 1080p（issue #? 追加反馈的根因）。等到即 1080p，超时则原样发。
+        awaitRewrite: async (u) => {
+          try {
+            if (!await ensureKeys(pureFetch, 1500)) return;
+            const { base, params } = playurlParams(u);
+            const signed = signQuery(params);
+            return signed ? { url: `${base}?${signed}` } : void 0;
           } catch {
             return;
           }
