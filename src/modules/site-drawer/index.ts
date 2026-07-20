@@ -1,6 +1,12 @@
 import { openDrawer, preconnect } from '../../core/drawer'
 import { get } from '../../core/settings'
 import { isPlayPage } from '../../core/pages'
+import {
+  DEFAULT_NEW_TAB_HISTORY_FLATTEN,
+  DEFAULT_OPEN_MODE,
+  NEW_TAB_HISTORY_FLATTEN_KEY,
+  openBiliKitVideoTab,
+} from '../../core/new-tab'
 
 /**
  * 全站抽屉：在任意 B 站页面（首页 / 搜索 / 收藏 / 历史 / 稍后看 / 别人空间 / 动态…）点视频，
@@ -48,7 +54,7 @@ export function installSiteDrawer(): void {
     // 播放页内点视频（相关推荐 / 播放列表下一个）一律放行走原生 SPA：既喂给「回程」建栈，又避免抽屉叠抽屉。
     // 按点击时的 pathname 现判——B 站 SPA 跳转会改 location 不重载，install 时定死会错。与回程站上的边界同源。
     if (isPlayPage()) return
-    const mode = get<string>('feed.openMode', 'drawer')
+    const mode = get<string>('feed.openMode', DEFAULT_OPEN_MODE)
     if (mode === 'current') return // 当前页 = 原生行为，不拦
     // 修饰键 / 中键 / 已被处理 → 放行（用户想要新标签 / 站点已接管）
     if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
@@ -56,7 +62,13 @@ export function installSiteDrawer(): void {
     if (!hit) return
     e.preventDefault()
     e.stopImmediatePropagation() // 抢在站点 SPA 路由之前完全接管这次点击，避免底层又导航一遍
-    if (mode === 'newtab') { window.open(hit.url, '_blank', 'noopener'); return }
+    if (mode === 'newtab') {
+      openBiliKitVideoTab(
+        hit.url,
+        get<boolean>(NEW_TAB_HISTORY_FLATTEN_KEY, DEFAULT_NEW_TAB_HISTORY_FLATTEN),
+      )
+      return
+    }
     const web = mode === 'drawer-web'
     openDrawer(hit.url, hit.cover, web, web && get<boolean>('feed.drawerImmersive', true))
   }, true) // capture：先于站点自身 handler
@@ -64,7 +76,7 @@ export function installSiteDrawer(): void {
   // 悬停视频链接预连接（省点开握手）：drawer 内部 12s 节流
   document.addEventListener('mouseover', (e) => {
     if (isPlayPage()) return // 播放页不接管 → 预连接纯属浪费
-    const mode = get<string>('feed.openMode', 'drawer')
+    const mode = get<string>('feed.openMode', DEFAULT_OPEN_MODE)
     if (mode !== 'drawer' && mode !== 'drawer-web') return
     if (resolve(e.target as HTMLElement)) preconnect()
   }, true)

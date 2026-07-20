@@ -2,6 +2,12 @@ import { get, set, isModuleEnabled, setModuleEnabled, getField, setField } from 
 import { getModules, type BiliKitModule, type SettingField } from './module'
 import { startTvLogin } from './tv-login'
 import { VERSION } from './version'
+import {
+  DEFAULT_NEW_TAB_HISTORY_FLATTEN,
+  DEFAULT_OPEN_MODE,
+  NEW_TAB_HISTORY_FLATTEN_KEY,
+  isSafariUserAgent,
+} from './new-tab'
 
 /**
  * 设置面板：右下悬浮齿轮（有 Feed 则并入其 FAB）→ 居中模态，Shadow DOM 隔离。
@@ -408,7 +414,7 @@ function renderOpenDetail(d: HTMLElement): void {
     o.textContent = label
     modeSel.appendChild(o)
   }
-  modeSel.value = get<string>('feed.openMode', 'drawer')
+  modeSel.value = get<string>('feed.openMode', DEFAULT_OPEN_MODE)
   modeRow.appendChild(modeSel)
   fields.appendChild(modeRow)
 
@@ -418,11 +424,35 @@ function renderOpenDetail(d: HTMLElement): void {
   immHead.append(el('span', 'flabel', '隐藏切换过程'), switchEl(get<boolean>('feed.drawerImmersive', true), (on) => set('feed.drawerImmersive', on)))
   immRow.append(immHead, el('div', 'hint', '开：等播放器铺满后再显示，看不到从普通页切到全屏的过程（加载稍久一点）。关：先显示、再当场铺满，会瞥见这下切换。'))
   fields.appendChild(immRow)
-  const syncImm = (): void => { immRow.style.display = modeSel.value === 'drawer-web' ? '' : 'none' }
-  syncImm()
-  modeSel.addEventListener('change', () => { set('feed.openMode', modeSel.value); syncImm() })
 
-  fields.appendChild(callout('作用于「浏览 / 列表」页（首页 / 搜索 / 收藏 / 历史 / 空间 / 动态…）点视频，就地打开、不丢当前列表。<br><b>抽屉</b>：视频从底部滑出、内嵌整页播放，弹幕评论都在，点缝 / 关闭键 / Esc 关闭。<br><b>抽屉 · 网页全屏</b>：同样的抽屉，但播放器自动铺满、只看视频，更沉浸。<br><b>新标签页 / 当前页</b>：跳转到视频页打开（当前页=不拦、走原生）。<br><b>视频播放页内</b>点相关视频始终走原生跳转，配合左下角「回程」胶囊一键跳回。'))
+  // Safari 新标签专属：只压扁 BiliKit 自动打开的子标签中的跨视频 SPA 历史。
+  // 普通标签、当前页和抽屉不带一次性 window.name 标记，永远不会受这个开关影响。
+  const flattenRow = el('div', 'field')
+  const flattenHead = el('div', 'toggle-head')
+  flattenHead.append(
+    el('span', 'flabel', 'Safari 左滑回到来源页'),
+    switchEl(
+      get<boolean>(NEW_TAB_HISTORY_FLATTEN_KEY, DEFAULT_NEW_TAB_HISTORY_FLATTEN),
+      (on) => set(NEW_TAB_HISTORY_FLATTEN_KEY, on),
+    ),
+  )
+  const safari = isSafariUserAgent(navigator.userAgent, navigator.vendor)
+  flattenRow.append(
+    flattenHead,
+    el('div', 'hint', safari
+      ? '实验性：保留来源关系并把子标签里的跨视频 SPA 历史压成一层，让 Safari 两指左滑关闭视频标签并回到来源页。分 P、整页跳转仍保留原生历史。'
+      : '仅 Safari 生效；Chrome、Edge、Firefox不会改变历史。实验性开关默认关闭。'),
+  )
+  fields.appendChild(flattenRow)
+
+  const syncModeRows = (): void => {
+    immRow.style.display = modeSel.value === 'drawer-web' ? '' : 'none'
+    flattenRow.style.display = modeSel.value === 'newtab' ? '' : 'none'
+  }
+  syncModeRows()
+  modeSel.addEventListener('change', () => { set('feed.openMode', modeSel.value); syncModeRows() })
+
+  fields.appendChild(callout('作用于「浏览 / 列表」页（首页 / 搜索 / 收藏 / 历史 / 空间 / 动态…）点视频。<br><b>新标签页（默认）</b>：首页原样保留，关掉视频标签即可完整结束这一播放上下文。<br><b>当前页</b>：顶层导航最利于回收；返回后恢复 Feed 卡片、游标和滚动位置。<br><b>抽屉</b>：不离开列表、切换最快，但会常驻最后一个完整视频文档。<br><b>视频播放页内</b>点相关视频走原生跳转，配合左下角「回程」胶囊一键跳回。'))
   d.appendChild(fields)
 }
 

@@ -3,6 +3,12 @@ import { setupHoverPreview } from './hover-preview'
 import { setupVideoPreview } from './video-preview'
 import { watchLaterAdd, watchLaterDel, dislikeVideo, undoDislikeVideo, toast } from './actions'
 import type { FeedCard, DislikeReason } from './app-api'
+import {
+  DEFAULT_NEW_TAB_HISTORY_FLATTEN,
+  DEFAULT_OPEN_MODE,
+  NEW_TAB_HISTORY_FLATTEN_KEY,
+  openBiliKitVideoTab,
+} from '../core/new-tab'
 
 // 封面遮罩的播放/弹幕图标（跟随 currentColor=白）
 const PLAY_SVG = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>'
@@ -159,11 +165,14 @@ export function makeCard(c: FeedCard, beforeCurrentNavigation?: () => void): HTM
     // 本 handler 不会执行到这）。走到这里 = 当前页模式，或 Core 缺失/太旧未接管 → 按 openMode 兜底打开，绝不「点了没反应」。
     if (c.bvid) {
       const url = `https://www.bilibili.com/video/${c.bvid}`
-      if (readSetting<string>('feed.openMode', 'drawer') === 'current') {
+      if (readSetting<string>('feed.openMode', DEFAULT_OPEN_MODE) === 'current') {
         beforeCurrentNavigation?.()
         location.href = url
       }
-      else window.open(url, '_blank', 'noopener')
+      else openBiliKitVideoTab(
+        url,
+        readSetting<boolean>(NEW_TAB_HISTORY_FLATTEN_KEY, DEFAULT_NEW_TAB_HISTORY_FLATTEN),
+      )
       return
     }
     // 非视频卡（直播 / 文章等，只有 uri）：直接新标签打开

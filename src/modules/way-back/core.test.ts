@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { videoIdOf, cleanTitle, dedupeArrival, type Entry } from './core'
+import { videoIdOf, cleanTitle, dedupeArrival, shouldFlattenVideoNavigation, type Entry } from './core'
 
 const e = (url: string): Entry => ({ url, title: '', t: 0 })
 
@@ -29,6 +29,23 @@ describe('cleanTitle', () => {
     expect(cleanTitle('番剧名字_番剧_bilibili')).toBe('番剧名字')
     expect(cleanTitle('纯标题不带后缀')).toBe('纯标题不带后缀')
     expect(cleanTitle('')).toBe('')
+  })
+})
+
+describe('shouldFlattenVideoNavigation', () => {
+  const a = 'https://www.bilibili.com/video/BV1AA?p=1'
+
+  it('只压扁同源播放页之间的跨视频导航', () => {
+    expect(shouldFlattenVideoNavigation(a, '/video/BV1BB')).toBe(true)
+    expect(shouldFlattenVideoNavigation(a, '/bangumi/play/ep123')).toBe(true)
+    expect(shouldFlattenVideoNavigation('https://www.bilibili.com/bangumi/play/ss1', '/bangumi/play/ep1')).toBe(true)
+  })
+
+  it('同视频 query / 分 P、非播放页与跨源导航不压扁', () => {
+    expect(shouldFlattenVideoNavigation(a, '/video/BV1AA?p=2')).toBe(false)
+    expect(shouldFlattenVideoNavigation(a, '/video/BV1AA?spm_id_from=x')).toBe(false)
+    expect(shouldFlattenVideoNavigation('https://www.bilibili.com/', '/video/BV1AA')).toBe(false)
+    expect(shouldFlattenVideoNavigation(a, 'https://example.com/video/BV1BB')).toBe(false)
   })
 })
 

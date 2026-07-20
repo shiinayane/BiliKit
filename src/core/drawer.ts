@@ -11,6 +11,12 @@ import {
   withDrawerRoute,
   type DrawerHistoryRoute,
 } from './drawer-history'
+import { get } from './settings'
+import {
+  DEFAULT_NEW_TAB_HISTORY_FLATTEN,
+  NEW_TAB_HISTORY_FLATTEN_KEY,
+  openBiliKitVideoTab,
+} from './new-tab'
 
 /**
  * 底部上滑抽屉（Core 版，全站可用）：同源 iframe 里打开视频页，从下往上滑出、顶部留一条缝。
@@ -545,7 +551,12 @@ function ensureDom(): void {
     `<button class="bk-newtab" title="在新标签页打开" aria-label="在新标签页打开">${NEWTAB_SVG}</button>` +
     `<button class="bk-close" title="关闭" aria-label="关闭">${CLOSE_SVG}</button>`
   ;(ctrls.querySelector('.bk-newtab') as HTMLElement).addEventListener('click', () => {
-    if (curUrl) window.open(curUrl, '_blank', 'noopener')
+    if (curUrl) {
+      openBiliKitVideoTab(
+        curUrl,
+        get<boolean>(NEW_TAB_HISTORY_FLATTEN_KEY, DEFAULT_NEW_TAB_HISTORY_FLATTEN),
+      )
+    }
     closeDrawer()
   })
   ;(ctrls.querySelector('.bk-close') as HTMLElement).addEventListener('click', closeDrawer)

@@ -18,6 +18,8 @@ import {
   safeDrawerVideoUrl,
   shouldReplaceDrawerDocument,
 } from './core/drawer-history'
+import { consumeHistoryFlattenTarget } from './core/new-tab'
+import { shouldFlattenVideoNavigation } from './modules/way-back/core'
 
 // iframe 的 window.name 跨同一 browsing context 的整页导航保留；比只靠 URL hash 稳定。
 // 新文档若被 B 站整页导航/重定向时丢了 marker，document-start 立即用 replaceState 补回，
@@ -33,6 +35,24 @@ if (drawerFrame && !drawerMark(location.hash)) {
 const inDrawer = window.top !== window.self && (!!drawerFrame || !!drawerMark(location.hash))
 const drawerToken = drawerFrame?.token || ''
 const drawerWebFull = drawerFrame?.webFull ?? (location.hash === DRAWER_WEB_MARK)
+
+// Safari 新标签实验：只有 openBiliKitVideoTab 留下的一次性 window.name 标记能进入这里。
+// 提升到 Core 启动层而不依赖可关闭的“回程”模块；回程稍后再包一层只负责记录来时路。
+// 不拦截 click、不处理分 P/整页导航，避免旧实现的双重加载与过度改写。
+function setupMarkedNewTabHistoryFlatten(): void {
+  if (!consumeHistoryFlattenTarget()) return
+  const originalPush = history.pushState.bind(history)
+  const originalReplace = history.replaceState.bind(history)
+  history.pushState = function (this: History, ...args: Parameters<History['pushState']>): void {
+    const target = args[2]
+    if (target != null && shouldFlattenVideoNavigation(location.href, String(target))) {
+      originalReplace(...args)
+      return
+    }
+    originalPush(...args)
+  }
+}
+setupMarkedNewTabHistoryFlatten()
 
 function postDrawer(type: string, extra: Record<string, unknown> = {}): void {
   if (!drawerToken) return

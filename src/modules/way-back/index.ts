@@ -1,16 +1,18 @@
 import type { BiliKitModule, Cfg } from '../../core/module'
 import { DRAWER_DOCUMENT_NAV_KEY } from '../../core/drawer-history'
+import { WAYBACK_STACK_KEY } from '../../core/new-tab'
 import { isPlayPage } from '../../core/pages'
 import { videoIdOf as videoIdOfBase, cleanTitle, dedupeArrival, type Entry } from './core'
 
 /**
  * 回程：视频页左下角「回退栈」胶囊——记住站内连续跳视频的「来时路」，点一下跳回上一个并续播。
- * 迁自独立脚本 way-back.user.js，**只保留回退栈**（历史压扁那半随全站抽屉登场已无意义，去掉）。
+ * 迁自独立脚本 way-back.user.js。普通标签只旁观记录；只有 BiliKit 自动打开且显式启用实验开关的
+ * Safari 新标签，才把跨视频 SPA pushState 改成 replaceState，让原生左滑关闭回到来源页。
  * 顶层窗口与 BiliKit 抽屉 iframe（#bk-drawer）都跑：抽屉里连续点相关视频也能就地回退。
- * 纯旁观记录：包一层 pushState 只记不改 + pagehide 兜底整页离开；栈存 sessionStorage（按标签页/frame 隔离）。
+ * 回退栈存 sessionStorage（按标签页/frame 隔离）；历史压扁只作用于一次性 window.name 标记的子标签。
  * 胶囊深浅色跟随系统；「正在播放」行带动画声波条。
  */
-const STACK_KEY = 'bilikit-wayback-stack'
+const STACK_KEY = WAYBACK_STACK_KEY
 const STACK_MAX = 20
 const NS = 'bwb'
 
@@ -112,7 +114,8 @@ function init(cfg: Cfg): void {
     if (rerender) renderChip(trimmed)
   }
 
-  // 包一层 pushState：视频页 → 另一个视频页时，把离开的这个记入栈（只记不改，导航照原样进行）
+  // 包一层 pushState 记录来时路。若这是标记过的 Safari 子标签，Core 外层 wrapper 会在本函数
+  // 调用 origPush 后把跨视频 push 改成 replace；记录层不需要知道真实 History 是否被压扁。
   const origPush = history.pushState.bind(history)
   history.pushState = function (this: History, ...args: any[]) {
     try {
@@ -120,10 +123,12 @@ function init(cfg: Cfg): void {
       if (url != null) {
         const prevId = videoIdOf(location.href)
         const curId = videoIdOf(new URL(url, location.href).href)
-        // ss→ep 是同一内容的 URL 规范化，不记；其余视频→视频才记
-        if (prevId && curId && prevId !== curId && !(prevId.startsWith('ss') && curId.startsWith('ep'))) {
-          recordEntry(location.href, document.title, departureTime())
-          lastPlayedT = 0 // 上一个视频的进度已消费，别泄漏给下一条
+        if (prevId && curId && prevId !== curId) {
+          // ss→ep 是同一内容的 URL 规范化，不记成一层人工来时路。
+          if (!(prevId.startsWith('ss') && curId.startsWith('ep'))) {
+            recordEntry(location.href, document.title, departureTime())
+            lastPlayedT = 0 // 上一个视频的进度已消费，别泄漏给下一条
+          }
         }
       }
       watchTitle() // 导航后 <title> 节点可能被 SPA 替换，重新获取观察对象（低频、便宜；补掉去掉 head 观察后的缺口）

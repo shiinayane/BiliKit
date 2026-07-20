@@ -77,13 +77,19 @@ Safari 上 `createMediaElementSource` 接管 B 站 MSE 视频后，`AnalyserNode
 - **Safari 顶层导航的释放最干净**：视频页进入独立 WebContent，返回首页后视频进程退出，首页进程保持原值。Chrome 本轮复用了同一个 Renderer，返回后的残留较 iframe 少，但不是零；
 - Safari 对高占用进程跑 `heap` 时还能看到旧 `WebCore::HTMLDocument` 由 `allScriptExecutionContextsMap`、`LocalDOMWindow`、渲染合成相关对象继续持有；`leaks` 只报约 28KB 传统泄漏。这更像 WebCore 生命周期/缓存和 allocator 驻留，而不是一个简单的 JS detached DOM 或视频缓冲泄漏。
 
+### 2026-07-21 补充观察：当前版本没有表现出更快的持续增长
+
+用户在同一台机器上追加观察：关闭全部脚本时，B 站网页稳定约 **1.2GB**，打开普通视频页约 **1.4GB**；开启当前 BiliKit 后虽然绝对值约稳定在 **1.6GB**、偶尔到 **2GB**，但峰值会回落，连续使用时反而没有原生页面增长得快。
+
+这组数据支持“当前实现是较高但有界的平台，而非按操作次数持续泄漏”，也与 Feed 窗口化、媒体有界释放和抽屉跨视频换 Document 的设计方向一致。但它不是严格匹配时长、推荐内容与操作序列的新一轮 A/B，不能据此宣称“脚本会降低 Safari 内存”；更稳妥的结论是：**绝对 footprint 与增长斜率是两件事，当前没有观察到 BiliKit 导致更快的单调增长。**
+
 **采用的架构：单 iframe 元素 + 每个不同视频一个新 Document。** 整个顶层标签页的 DOM 始终至多一个抽屉 iframe；关闭时通过 `suspend → ack`（消息丢失会重试）暂停子页媒体，再用 3 秒短守卫压住异步 autoplay，结束可见合成并隐藏面板，但不移除 browsing context。打开不同视频时先等旧文档确认暂停（子页脚本缺失时最多等 350ms），随后由子页在同一 iframe 内 `location.replace`，让旧 Vue 应用、播放器、评论树和媒体文档完整走 `pagehide/unload`；抽屉内部点击会在捕获阶段先于 Vue Router 接管，`pushState/replaceState` 包装与 500ms 内容 ID 检查再兜程序化跳转。已覆盖普通视频、番剧/课程、分 P，以及带 `bvid/aid/oid` 的列表/活动播放 URL；无法提取稳定内容 ID 的特殊活动 URL 保守放行，仍是已知边界。每个 Document 使用独立 nonce，拒绝旧文档迟到的 ready/location 消息。新文档先保持暂停，首帧就绪后严格按「撤遮罩 → 恢复播放」排序；浏览器 Forward 重开同一视频时才直接复用原文档。若 replace 已接受但 15 秒仍无新 nonce 握手，或未 ready 文档连 suspend 都无确认，会先移除旧 iframe 再以初始导航顺序重建一个；这是错误页/断网的有界恢复路径，不会让新旧 iframe 并存。这样接受“首页 + 最后一个完整视频页”的数百 MB 驻留，但避免把多个视频世代堆在一个 SPA 文档里。若目标是「关闭抽屉就显著回收」，常驻 iframe 仍做不到，需要使用下述顶层导航或独立标签/窗口。
 
 **顶层导航落地：** Feed 的「当前页」模式现会在离开前把卡片数据、推荐游标与滚动位置存入标签页级 `sessionStorage`，返回首页后一次性恢复；不保活 DOM/媒体上下文。对 B 站当前视频包的逆向确认，相关推荐 SPA 是只在视频页应用壳内创建的私有 Vue Router，首页没有可复用的全局入口；强行复用必须自行搬运整个视频应用，反而会把首页与视频重量留在同一 WebContent。详见 [首页 → 视频的顶层导航与状态恢复](RESEARCH-top-level-navigation.md)。
 
 **已做的缓解：** 抽屉采用唯一 iframe 元素 + 不同视频强制换 Document + 关闭/换片前可靠 suspend；不再尝试跨视频复用 B 站 SPA。Feed 使用真·窗口化（DOM 节点有界）+ 封面屏外卸载 + hover 预览并发上限。（注：封面 `isolation:isolate` 曾于 0.3.17 改为「仅预览时按需加」以省合成面，但按需增删会 churn 合成层致邻卡露缝，0.3.19 已改回常驻——详见 `src/feed/styles.ts` 里 `.bk-feed-cover` 的注释。）这些控制的是脚本自身和跨视频 SPA 的无界增长，但**动不了 B 站自身与最后一个完整视频页的内存地板**。
 
-**一句话：B 站本身提供了很高的内存地板；BiliKit 接受唯一完整视频 iframe 的稳定驻留，以复用防止继续爬升，真正回收则使用「当前页」顶层导航。**
+**一句话：B 站本身提供了很高的内存地板；新安装默认使用独立新标签（Safari 可选[历史压扁](RESEARCH-new-tab-history.md)），抽屉则接受唯一完整视频 iframe 的稳定驻留并以复用防止继续爬升；追求同标签回收时使用「当前页」顶层导航。**
 
 **排查方法留档**（便于以后复现，不必重走弯路）：
 - 内存分区看构成：`footprint <pid>` 或 `vmmap --summary <pid>`（pid 从活动监视器取 `com.apple.WebKit.WebContent`）；重点看 `media`（视频）与 `WebKit malloc / graphics / JS`（站点堆）的占比；

@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         BiliKit Feed
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.3.22
+// @version      0.3.23
 // @author       shiinayane
-// @description  B 站首页换成手机 App 的个性化推荐流。零框架纯原生实现（无 React/Vue、gzip 约 29KB）+ 窗口化虚拟化，约束 DOM、封面与预览媒体的常驻资源。点卡片在底部抽屉内播放、封面悬停「真视频」秒开预览（MSE，接近原生 App）。需配合 BiliKit Core（登录 / 设置）。
+// @description  B 站首页换成手机 App 的个性化推荐流。零框架纯原生实现（无 React/Vue、gzip 约 29KB）+ 窗口化虚拟化，约束 DOM、封面与预览媒体的常驻资源。视频默认开新标签页，也可选当前页或底部抽屉；封面悬停「真视频」秒开预览（MSE，接近原生 App）。需配合 BiliKit Core（登录 / 设置）。
 // @license      MIT
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20512%20512%22%3E%3Crect%20width%3D%22512%22%20height%3D%22512%22%20rx%3D%22116%22%20fill%3D%22%23FB7299%22%2F%3E%3Cg%20stroke%3D%22%23fff%22%20stroke-width%3D%2226%22%20stroke-linecap%3D%22round%22%3E%3Cline%20x1%3D%22212%22%20y1%3D%22182%22%20x2%3D%22166%22%20y2%3D%22104%22%2F%3E%3Cline%20x1%3D%22300%22%20y1%3D%22182%22%20x2%3D%22346%22%20y2%3D%22104%22%2F%3E%3C%2Fg%3E%3Crect%20x%3D%22108%22%20y%3D%22176%22%20width%3D%22296%22%20height%3D%22236%22%20rx%3D%2254%22%20fill%3D%22%23fff%22%2F%3E%3Cpath%20d%3D%22M234%20258%20302%20294%20234%20330Z%22%20fill%3D%22%2300AEEC%22%20stroke%3D%22%2300AEEC%22%20stroke-width%3D%2218%22%20stroke-linejoin%3D%22round%22%20stroke-linecap%3D%22round%22%2F%3E%3C%2Fsvg%3E
 // @match        *://www.bilibili.com/
@@ -1524,6 +1524,49 @@
     if (toastTimer) clearTimeout(toastTimer);
     toastTimer = setTimeout(() => toastEl == null ? void 0 : toastEl.classList.remove("on"), 2200);
   }
+  const DEFAULT_OPEN_MODE = "newtab";
+  const NEW_TAB_HISTORY_FLATTEN_KEY = "feed.newTabHistoryFlatten";
+  const DEFAULT_NEW_TAB_HISTORY_FLATTEN = false;
+  const WAYBACK_STACK_KEY = "bilikit-wayback-stack";
+  const NEW_TAB_TARGET_PREFIX = "bilikit-newtab-flatten-";
+  function isSafariUserAgent(userAgent, vendor) {
+    return /Safari/i.test(userAgent) && /Apple Computer/i.test(vendor) && !/(?:Chrome|Chromium|CriOS|Edg|EdgiOS|Firefox|FxiOS|OPiOS)/i.test(userAgent);
+  }
+  function shouldUseSafariHistoryFlatten(enabled, userAgent, vendor) {
+    return enabled && isSafariUserAgent(userAgent, vendor);
+  }
+  function newToken() {
+    try {
+      return crypto.randomUUID();
+    } catch {
+      return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+    }
+  }
+  function newHistoryFlattenTargetName(token = newToken()) {
+    return `${NEW_TAB_TARGET_PREFIX}${token}`;
+  }
+  function openBiliKitVideoTab(url, enableHistoryFlatten) {
+    const flatten = shouldUseSafariHistoryFlatten(
+      enableHistoryFlatten,
+      navigator.userAgent,
+      navigator.vendor
+    );
+    if (!flatten) return window.open(url, "_blank", "noopener");
+    let previousStack = null;
+    try {
+      previousStack = sessionStorage.getItem(WAYBACK_STACK_KEY);
+      if (previousStack != null) sessionStorage.removeItem(WAYBACK_STACK_KEY);
+    } catch {
+    }
+    try {
+      return window.open(url, newHistoryFlattenTargetName());
+    } finally {
+      try {
+        if (previousStack != null) sessionStorage.setItem(WAYBACK_STACK_KEY, previousStack);
+      } catch {
+      }
+    }
+  }
   const PLAY_SVG = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
   const DM_SVG = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 4h16a1.5 1.5 0 0 1 1.5 1.5v9A1.5 1.5 0 0 1 20 16H9l-5 4V5.5A1.5 1.5 0 0 1 5.5 4z"/></svg>';
   const WL_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 12a7.5 7.5 0 1 0 1.95-5.05"/><path d="M4 3.5V7h3.5"/><path d="M10.5 9l4.3 3-4.3 3z" fill="currentColor" stroke="none"/></svg>';
@@ -1639,10 +1682,13 @@
       }
       if (c.bvid) {
         const url = `https://www.bilibili.com/video/${c.bvid}`;
-        if (readSetting("feed.openMode", "drawer") === "current") {
+        if (readSetting("feed.openMode", DEFAULT_OPEN_MODE) === "current") {
           beforeCurrentNavigation == null ? void 0 : beforeCurrentNavigation();
           location.href = url;
-        } else window.open(url, "_blank", "noopener");
+        } else openBiliKitVideoTab(
+          url,
+          readSetting(NEW_TAB_HISTORY_FLATTEN_KEY, DEFAULT_NEW_TAB_HISTORY_FLATTEN)
+        );
         return;
       }
       if (c.uri && /^https?:\/\//i.test(c.uri)) window.open(c.uri, "_blank", "noopener");
@@ -1713,7 +1759,7 @@
     markerIo = new IntersectionObserver((es) => fab.classList.toggle("scrolled", !es[0].isIntersecting));
     markerIo.observe(marker);
   }
-  const FEED_VERSION = "0.3.22";
+  const FEED_VERSION = "0.3.23";
   const KEY = "bilikit:feed.return-session";
   const VERSION = 1;
   const MAX_AGE_MS = 24 * 60 * 60 * 1e3;

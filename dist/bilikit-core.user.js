@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BiliKit Core
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.5.31
+// @version      0.5.32
 // @author       shiinayane
 // @description  B 站体验增强核心，一装到位：CDN 优选（救海外卡顿）· 免登录看评论/动态/1080p · 主题跟随系统深浅 · 评论显性别/IP 属地 · 播放不息屏——统一设置面板集中开关。Safari 友好、无需扩展、零外部依赖。
 // @license      MIT
@@ -2052,7 +2052,63 @@
       }
     })();
   }
-  const VERSION = "0.5.31";
+  const VERSION = "0.5.32";
+  const DEFAULT_OPEN_MODE = "newtab";
+  const NEW_TAB_HISTORY_FLATTEN_KEY = "feed.newTabHistoryFlatten";
+  const DEFAULT_NEW_TAB_HISTORY_FLATTEN = false;
+  const WAYBACK_STACK_KEY = "bilikit-wayback-stack";
+  const NEW_TAB_TARGET_PREFIX = "bilikit-newtab-flatten-";
+  const NEW_TAB_TOKEN = /^[0-9a-z-]{8,}$/i;
+  function isSafariUserAgent(userAgent, vendor) {
+    return /Safari/i.test(userAgent) && /Apple Computer/i.test(vendor) && !/(?:Chrome|Chromium|CriOS|Edg|EdgiOS|Firefox|FxiOS|OPiOS)/i.test(userAgent);
+  }
+  function shouldUseSafariHistoryFlatten(enabled, userAgent, vendor) {
+    return enabled && isSafariUserAgent(userAgent, vendor);
+  }
+  function newToken() {
+    try {
+      return crypto.randomUUID();
+    } catch {
+      return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+    }
+  }
+  function newHistoryFlattenTargetName(token = newToken()) {
+    return `${NEW_TAB_TARGET_PREFIX}${token}`;
+  }
+  function isHistoryFlattenTargetName(name) {
+    if (!name.startsWith(NEW_TAB_TARGET_PREFIX)) return false;
+    return NEW_TAB_TOKEN.test(name.slice(NEW_TAB_TARGET_PREFIX.length));
+  }
+  function openBiliKitVideoTab(url, enableHistoryFlatten) {
+    const flatten = shouldUseSafariHistoryFlatten(
+      enableHistoryFlatten,
+      navigator.userAgent,
+      navigator.vendor
+    );
+    if (!flatten) return window.open(url, "_blank", "noopener");
+    let previousStack = null;
+    try {
+      previousStack = sessionStorage.getItem(WAYBACK_STACK_KEY);
+      if (previousStack != null) sessionStorage.removeItem(WAYBACK_STACK_KEY);
+    } catch {
+    }
+    try {
+      return window.open(url, newHistoryFlattenTargetName());
+    } finally {
+      try {
+        if (previousStack != null) sessionStorage.setItem(WAYBACK_STACK_KEY, previousStack);
+      } catch {
+      }
+    }
+  }
+  function consumeHistoryFlattenTarget() {
+    if (window.top !== window.self || !isHistoryFlattenTargetName(window.name)) return false;
+    try {
+      window.name = "";
+    } catch {
+    }
+    return true;
+  }
   const PANEL_ID = "bilikit-panel-root";
   const FEED_ID = "__feed__";
   const OPEN_ID = "__open__";
@@ -2445,7 +2501,7 @@
       o.textContent = label;
       modeSel.appendChild(o);
     }
-    modeSel.value = get("feed.openMode", "drawer");
+    modeSel.value = get("feed.openMode", DEFAULT_OPEN_MODE);
     modeRow.appendChild(modeSel);
     fields.appendChild(modeRow);
     const immRow = el("div", "field");
@@ -2453,15 +2509,31 @@
     immHead.append(el("span", "flabel", "隐藏切换过程"), switchEl(get("feed.drawerImmersive", true), (on) => set("feed.drawerImmersive", on)));
     immRow.append(immHead, el("div", "hint", "开：等播放器铺满后再显示，看不到从普通页切到全屏的过程（加载稍久一点）。关：先显示、再当场铺满，会瞥见这下切换。"));
     fields.appendChild(immRow);
-    const syncImm = () => {
+    const flattenRow = el("div", "field");
+    const flattenHead = el("div", "toggle-head");
+    flattenHead.append(
+      el("span", "flabel", "Safari 左滑回到来源页"),
+      switchEl(
+        get(NEW_TAB_HISTORY_FLATTEN_KEY, DEFAULT_NEW_TAB_HISTORY_FLATTEN),
+        (on) => set(NEW_TAB_HISTORY_FLATTEN_KEY, on)
+      )
+    );
+    const safari = isSafariUserAgent(navigator.userAgent, navigator.vendor);
+    flattenRow.append(
+      flattenHead,
+      el("div", "hint", safari ? "实验性：保留来源关系并把子标签里的跨视频 SPA 历史压成一层，让 Safari 两指左滑关闭视频标签并回到来源页。分 P、整页跳转仍保留原生历史。" : "仅 Safari 生效；Chrome、Edge、Firefox不会改变历史。实验性开关默认关闭。")
+    );
+    fields.appendChild(flattenRow);
+    const syncModeRows = () => {
       immRow.style.display = modeSel.value === "drawer-web" ? "" : "none";
+      flattenRow.style.display = modeSel.value === "newtab" ? "" : "none";
     };
-    syncImm();
+    syncModeRows();
     modeSel.addEventListener("change", () => {
       set("feed.openMode", modeSel.value);
-      syncImm();
+      syncModeRows();
     });
-    fields.appendChild(callout("作用于「浏览 / 列表」页（首页 / 搜索 / 收藏 / 历史 / 空间 / 动态…）点视频，就地打开、不丢当前列表。<br><b>抽屉</b>：视频从底部滑出、内嵌整页播放，弹幕评论都在，点缝 / 关闭键 / Esc 关闭。<br><b>抽屉 · 网页全屏</b>：同样的抽屉，但播放器自动铺满、只看视频，更沉浸。<br><b>新标签页 / 当前页</b>：跳转到视频页打开（当前页=不拦、走原生）。<br><b>视频播放页内</b>点相关视频始终走原生跳转，配合左下角「回程」胶囊一键跳回。"));
+    fields.appendChild(callout("作用于「浏览 / 列表」页（首页 / 搜索 / 收藏 / 历史 / 空间 / 动态…）点视频。<br><b>新标签页（默认）</b>：首页原样保留，关掉视频标签即可完整结束这一播放上下文。<br><b>当前页</b>：顶层导航最利于回收；返回后恢复 Feed 卡片、游标和滚动位置。<br><b>抽屉</b>：不离开列表、切换最快，但会常驻最后一个完整视频文档。<br><b>视频播放页内</b>点相关视频走原生跳转，配合左下角「回程」胶囊一键跳回。"));
     d.appendChild(fields);
   }
   function renderPreviewDetail(d) {
@@ -4087,6 +4159,18 @@
       return "";
     }
   }
+  function shouldFlattenVideoNavigation(current, target) {
+    try {
+      const fromUrl = new URL(current);
+      const toUrl = new URL(target, fromUrl);
+      if (fromUrl.origin !== toUrl.origin) return false;
+      const from = videoIdOf(fromUrl.href, fromUrl.href);
+      const to = videoIdOf(toUrl.href, fromUrl.href);
+      return !!from && !!to && from !== to;
+    } catch {
+      return false;
+    }
+  }
   function cleanTitle(raw) {
     return (raw || "").replace(TITLE_SUFFIX, "").trim();
   }
@@ -4102,7 +4186,7 @@
     while (n && videoIdOf(s[n - 1].url, base) === curId) n--;
     return n !== s.length ? s.slice(0, n) : s;
   }
-  const STACK_KEY = "bilikit-wayback-stack";
+  const STACK_KEY = WAYBACK_STACK_KEY;
   const STACK_MAX = 20;
   const NS$1 = "bwb";
   function init(cfg) {
@@ -4207,9 +4291,11 @@
         if (url != null) {
           const prevId = videoIdOf$1(location.href);
           const curId = videoIdOf$1(new URL(url, location.href).href);
-          if (prevId && curId && prevId !== curId && !(prevId.startsWith("ss") && curId.startsWith("ep"))) {
-            recordEntry(location.href, document.title, departureTime());
-            lastPlayedT = 0;
+          if (prevId && curId && prevId !== curId) {
+            if (!(prevId.startsWith("ss") && curId.startsWith("ep"))) {
+              recordEntry(location.href, document.title, departureTime());
+              lastPlayedT = 0;
+            }
           }
         }
         watchTitle();
@@ -4948,7 +5034,12 @@
     ctrls.className = `${NS}-dctrls`;
     ctrls.innerHTML = `<button class="bk-newtab" title="在新标签页打开" aria-label="在新标签页打开">${NEWTAB_SVG}</button><button class="bk-close" title="关闭" aria-label="关闭">${CLOSE_SVG}</button>`;
     ctrls.querySelector(".bk-newtab").addEventListener("click", () => {
-      if (curUrl) window.open(curUrl, "_blank", "noopener");
+      if (curUrl) {
+        openBiliKitVideoTab(
+          curUrl,
+          get(NEW_TAB_HISTORY_FLATTEN_KEY, DEFAULT_NEW_TAB_HISTORY_FLATTEN)
+        );
+      }
       closeDrawer();
     });
     ctrls.querySelector(".bk-close").addEventListener("click", closeDrawer);
@@ -5101,7 +5192,7 @@
     window.__BILIKIT_SITE_DRAWER__ = true;
     document.addEventListener("click", (e) => {
       if (isPlayPage()) return;
-      const mode = get("feed.openMode", "drawer");
+      const mode = get("feed.openMode", DEFAULT_OPEN_MODE);
       if (mode === "current") return;
       if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
       const hit = resolve(e.target);
@@ -5109,7 +5200,10 @@
       e.preventDefault();
       e.stopImmediatePropagation();
       if (mode === "newtab") {
-        window.open(hit.url, "_blank", "noopener");
+        openBiliKitVideoTab(
+          hit.url,
+          get(NEW_TAB_HISTORY_FLATTEN_KEY, DEFAULT_NEW_TAB_HISTORY_FLATTEN)
+        );
         return;
       }
       const web = mode === "drawer-web";
@@ -5117,7 +5211,7 @@
     }, true);
     document.addEventListener("mouseover", (e) => {
       if (isPlayPage()) return;
-      const mode = get("feed.openMode", "drawer");
+      const mode = get("feed.openMode", DEFAULT_OPEN_MODE);
       if (mode !== "drawer" && mode !== "drawer-web") return;
       if (resolve(e.target)) preconnect();
     }, true);
@@ -5134,6 +5228,20 @@
   const inDrawer = window.top !== window.self && (!!drawerFrame || !!drawerMark(location.hash));
   const drawerToken = (drawerFrame == null ? void 0 : drawerFrame.token) || "";
   const drawerWebFull = (drawerFrame == null ? void 0 : drawerFrame.webFull) ?? location.hash === DRAWER_WEB_MARK;
+  function setupMarkedNewTabHistoryFlatten() {
+    if (!consumeHistoryFlattenTarget()) return;
+    const originalPush = history.pushState.bind(history);
+    const originalReplace = history.replaceState.bind(history);
+    history.pushState = function(...args) {
+      const target = args[2];
+      if (target != null && shouldFlattenVideoNavigation(location.href, String(target))) {
+        originalReplace(...args);
+        return;
+      }
+      originalPush(...args);
+    };
+  }
+  setupMarkedNewTabHistoryFlatten();
   function postDrawer(type, extra = {}) {
     if (!drawerToken) return;
     try {

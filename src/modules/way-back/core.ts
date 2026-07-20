@@ -18,6 +18,20 @@ export function videoIdOf(href: string, base = 'https://www.bilibili.com'): stri
   } catch { return '' }
 }
 
+/** 仅同源播放页 A→B 算跨视频 SPA 导航；同视频 query / 分 P 与非播放页保留原生历史。 */
+export function shouldFlattenVideoNavigation(current: string, target: string): boolean {
+  try {
+    const fromUrl = new URL(current)
+    const toUrl = new URL(target, fromUrl)
+    if (fromUrl.origin !== toUrl.origin) return false
+    const from = videoIdOf(fromUrl.href, fromUrl.href)
+    const to = videoIdOf(toUrl.href, fromUrl.href)
+    return !!from && !!to && from !== to
+  } catch {
+    return false
+  }
+}
+
 // 剥掉标题串尾的站点后缀段（SPA 后 B 站会把 title 改成「_哔哩哔哩bilibili」等）
 export function cleanTitle(raw: string): string {
   return (raw || '').replace(TITLE_SUFFIX, '').trim()
