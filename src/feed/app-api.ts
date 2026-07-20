@@ -25,27 +25,44 @@ function gmXhr(): any {
  * GM 抓二进制字节（带 Range）。MSE 预览用：upos 流无 CORS，fetch() 会被拦，只能走 GM 特权跨域拿 arraybuffer。
  * range 传 [start,end]（含端点，对应 HTTP `bytes=start-end`）。
  */
-export function gmRequestBinary(url: string, range?: { start: number; end: number }): Promise<ArrayBuffer> {
+export function gmRequestBinary(url: string, range?: { start: number; end: number }, signal?: AbortSignal): Promise<ArrayBuffer> {
   const xhr = gmXhr()
   if (!xhr) return Promise.reject(new Error('GM.xmlHttpRequest 不可用'))
+  const abortError = () => Object.assign(new Error('请求已中止'), { name: 'AbortError' })
+  if (signal?.aborted) return Promise.reject(signal.reason || abortError())
   const headers: Record<string, string> = { Referer: 'https://www.bilibili.com/' }
   if (range) headers.Range = `bytes=${range.start}-${range.end}`
   return new Promise((resolve, reject) => {
-    xhr({
+    let done = false
+    let req: any = null
+    const finish = (fn: () => void) => {
+      if (done) return
+      done = true
+      signal?.removeEventListener('abort', onSignalAbort)
+      fn()
+    }
+    const onSignalAbort = () => {
+      try { req?.abort?.() } catch { /* ignore */ }
+      finish(() => reject(signal?.reason || abortError()))
+    }
+    try { req = xhr({
       method: 'GET', url, headers, responseType: 'arraybuffer', timeout: 15000,
       onload: (r: any) => {
         // Range 请求成功必须是 206 Partial Content；镜像 403/错误页会是 200/403 + 小 body，
         // 若不判 status 就会把 282 字节的错误页当有效数据 append 进去 → 花屏/不播。判 206 → 逐个换候选主机。
         const okStatus = range ? r.status === 206 : (r.status >= 200 && r.status < 300)
-        if (!okStatus) { reject(new Error('HTTP ' + r.status)); return }
+        if (!okStatus) { finish(() => reject(new Error('HTTP ' + r.status))); return }
         const buf = r.response
-        if (buf instanceof ArrayBuffer && buf.byteLength) resolve(buf)
-        else reject(new Error('空/非二进制响应 status=' + r.status))
+        if (buf instanceof ArrayBuffer && buf.byteLength) finish(() => resolve(buf))
+        else finish(() => reject(new Error('空/非二进制响应 status=' + r.status)))
       },
-      onerror: (r: any) => reject(new Error('网络错误 ' + (r && r.status))),
-      ontimeout: () => reject(new Error('超时')),
-      onabort: () => reject(new Error('中止')),
-    })
+      onerror: (r: any) => finish(() => reject(new Error('网络错误 ' + (r && r.status)))),
+      ontimeout: () => finish(() => reject(new Error('超时'))),
+      onabort: () => finish(() => reject(abortError())),
+    }) } catch (e) { finish(() => reject(e)) }
+    if (!done) signal?.addEventListener('abort', onSignalAbort, { once: true })
+    // xhr() 与 signal 监听之间若恰好发生 abort，补查一次封住竞态。
+    if (!done && signal?.aborted) onSignalAbort()
   })
 }
 

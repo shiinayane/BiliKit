@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BiliKit Core
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.5.26
+// @version      0.5.28
 // @author       shiinayane
 // @description  B 站体验增强核心，一装到位：CDN 优选（救海外卡顿）· 免登录看评论/动态/1080p · 主题跟随系统深浅 · 评论显性别/IP 属地 · 播放不息屏——统一设置面板集中开关。Safari 友好、无需扩展、零外部依赖。
 // @license      MIT
@@ -2052,7 +2052,7 @@
       }
     })();
   }
-  const VERSION = "0.5.26";
+  const VERSION = "0.5.28";
   const PANEL_ID = "bilikit-panel-root";
   const FEED_ID = "__feed__";
   const OPEN_ID = "__open__";
@@ -2636,16 +2636,34 @@
   }
   const UPOS_RE = /^(?:https?:)?\/\/[^/]*\.(?:bilivideo\.com|acgvideo\.(?:com|cn))\//;
   const isUpos = (u) => typeof u === "string" && UPOS_RE.test(u);
-  const swapHost = (u, host) => u.replace(/^(?:https?:)?\/\/[^/]+\//, `https://${host}/`);
+  const CDN_SUFFIXES = ["bilivideo.com", "acgvideo.com", "acgvideo.cn"];
+  const HOST_LABEL_RE = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+  function normalizeCdnHost(value) {
+    if (typeof value !== "string") return null;
+    const host = value.trim().toLowerCase();
+    if (!host || host.length > 253) return null;
+    const suffix = CDN_SUFFIXES.find((s) => host.endsWith(`.${s}`));
+    if (!suffix) return null;
+    const prefix = host.slice(0, -(suffix.length + 1));
+    if (!prefix || !prefix.split(".").every((label) => HOST_LABEL_RE.test(label))) return null;
+    return host;
+  }
+  function swapHost(u, host) {
+    const safeHost = normalizeCdnHost(host);
+    return safeHost ? u.replace(/^(?:https?:)?\/\/[^/]+\//, `https://${safeHost}/`) : u;
+  }
   function fixEntry(e, targetHost, backupHosts) {
     if (!e || typeof e !== "object") return false;
+    const safeTarget = normalizeCdnHost(targetHost);
+    if (!safeTarget) return false;
+    const safeBackups = backupHosts.map(normalizeCdnHost).filter((h) => !!h);
     const cands = [];
     for (const k of ["baseUrl", "base_url", "url"]) if (typeof e[k] === "string") cands.push(e[k]);
     for (const k of ["backupUrl", "backup_url"]) if (Array.isArray(e[k])) cands.push(...e[k].filter((x) => typeof x === "string"));
     const upos = cands.find(isUpos);
     if (!upos) return false;
-    const primary = swapHost(upos, targetHost);
-    const backups = backupHosts.map((h) => swapHost(upos, h));
+    const primary = swapHost(upos, safeTarget);
+    const backups = safeBackups.map((h) => swapHost(upos, h));
     for (const k of ["baseUrl", "base_url", "url"]) if (typeof e[k] === "string") e[k] = primary;
     if (Array.isArray(e.backupUrl)) e.backupUrl = [primary, ...backups];
     if (Array.isArray(e.backup_url)) e.backup_url = [primary, ...backups];
@@ -2674,11 +2692,13 @@
   function init$5(cfg) {
     if (window.__BILIKIT_CDN_PICK__) return;
     window.__BILIKIT_CDN_PICK__ = true;
-    const TARGET_HOST = cfg.get("targetHost");
+    const configuredHost = cfg.get("targetHost");
+    const TARGET_HOST = configuredHost ? normalizeCdnHost(configuredHost) : null;
     const BACKUP_HOSTS = ["upos-sz-upcdnbda2.bilivideo.com", "upos-sz-mirrorhw.bilivideo.com"];
     const log = (...a) => {
     };
     if (!TARGET_HOST) {
+      if (configuredHost) console.warn("[BiliKit] CDN 优选已禁用：自定义节点必须是 bilivideo/acgvideo 受信后缀下的纯主机名。");
       return;
     }
     const rewritePlayurl$1 = (root2) => rewritePlayurl(root2, TARGET_HOST, BACKUP_HOSTS);
@@ -3040,15 +3060,35 @@
       walk(sr);
     }
     let current = null;
+    let currentApp = null;
+    let appObserver = null;
+    function releaseCommentTree() {
+      for (const o of observers) o.disconnect();
+      observers = [];
+      if (rafId) {
+        cancelAnimationFrame(rafId);
+        rafId = 0;
+      }
+      current = null;
+      topRoot = null;
+    }
     function tryBind() {
-      const c = document.querySelector("#commentapp bili-comments");
+      const c = currentApp == null ? void 0 : currentApp.querySelector("bili-comments");
       if (c && c !== current && c.shadowRoot) {
         current = c;
         bind(c);
       }
     }
-    function watch(app2) {
-      new MutationObserver(tryBind).observe(app2, {
+    function watch(app) {
+      if (app === currentApp && appObserver) {
+        tryBind();
+        return;
+      }
+      appObserver == null ? void 0 : appObserver.disconnect();
+      releaseCommentTree();
+      currentApp = app;
+      appObserver = new MutationObserver(tryBind);
+      appObserver.observe(app, {
         childList: true,
         subtree: true,
         attributes: true,
@@ -3056,19 +3096,22 @@
       });
       tryBind();
     }
-    const app = document.querySelector("#commentapp");
-    if (app) {
-      watch(app);
-    } else {
-      let tries = 0;
-      const t = setInterval(() => {
-        const a = document.querySelector("#commentapp");
-        if (a) {
-          clearInterval(t);
-          watch(a);
-        } else if (++tries > 40) clearInterval(t);
-      }, 500);
+    function ensureApp() {
+      if (currentApp == null ? void 0 : currentApp.isConnected) return;
+      if (currentApp) {
+        appObserver == null ? void 0 : appObserver.disconnect();
+        appObserver = null;
+        currentApp = null;
+        releaseCommentTree();
+      }
+      const app = document.querySelector("#commentapp");
+      if (app) watch(app);
     }
+    ensureApp();
+    setInterval(() => {
+      if (currentApp == null ? void 0 : currentApp.isConnected) return;
+      ensureApp();
+    }, 2e3);
   }
   const commentLocation = {
     id: "comment-location",
@@ -3082,6 +3125,9 @@
     ],
     init: init$3
   };
+  function isWakeLockIgnoredVideo(v) {
+    return v.classList.contains("bk-feed-vpreview");
+  }
   function init$2() {
     const nav = navigator;
     if (!("wakeLock" in navigator)) return;
@@ -3163,6 +3209,7 @@
       "playing",
       (e) => {
         if (!(e.target instanceof HTMLVideoElement)) return;
+        if (isWakeLockIgnoredVideo(e.target)) return;
         bindVideo(e.target);
         requestWakeLock();
       },
@@ -3249,18 +3296,26 @@
         constructor() {
           super(...arguments);
           this.__nlUrl = "";
-          this.__nlMethod = "GET";
+          this.__nlOpenArgs = ["GET", ""];
           this.__nlHeaders = [];
+          this.__nlGeneration = 0;
+          this.__nlAborted = false;
         }
-        // 记录请求头，供慢路径重开后回放（重开会清空请求头）
         open(method, url, ...rest) {
           var _a, _b, _c;
+          this.__nlGeneration++;
+          this.__nlAborted = false;
           this.__nlUrl = String(url);
-          this.__nlMethod = String(method);
+          this.__nlOpenArgs = [method, url, ...rest];
           this.__nlHeaders = [];
           this.__nlRule = rules.find((r) => r.match(this.__nlUrl));
           this.__nlRw = (_b = (_a = this.__nlRule) == null ? void 0 : _a.rewriteRequest) == null ? void 0 : _b.call(_a, this.__nlUrl);
           return super.open(method, ((_c = this.__nlRw) == null ? void 0 : _c.url) || url, ...rest);
+        }
+        abort() {
+          this.__nlAborted = true;
+          this.__nlGeneration++;
+          return super.abort();
         }
         setRequestHeader(name, value) {
           try {
@@ -3276,11 +3331,17 @@
         send(body) {
           var _a, _b, _c;
           if (((_a = this.__nlRule) == null ? void 0 : _a.awaitRewrite) && !((_b = this.__nlRw) == null ? void 0 : _b.url)) {
-            this.__nlRule.awaitRewrite(this.__nlUrl).then((rw) => {
+            const generation = this.__nlGeneration;
+            const openArgs = [...this.__nlOpenArgs];
+            const headers = [...this.__nlHeaders];
+            const stillCurrent = () => !this.__nlAborted && this.__nlGeneration === generation;
+            const sendCurrent = (rw) => {
+              if (!stillCurrent()) return;
               try {
                 if (rw == null ? void 0 : rw.url) {
-                  super.open(this.__nlMethod, rw.url);
-                  for (const h of this.__nlHeaders) {
+                  const [method, _oldUrl, ...rest] = openArgs;
+                  super.open(method, rw.url, ...rest);
+                  for (const h of headers) {
                     try {
                       super.setRequestHeader(h[0], h[1]);
                     } catch {
@@ -3290,16 +3351,15 @@
                 this.__nlApplyCreds(rw == null ? void 0 : rw.credentials);
               } catch {
               }
+              if (!stillCurrent()) return;
               try {
                 super.send(body);
               } catch {
               }
-            }, () => {
-              try {
-                super.send(body);
-              } catch {
-              }
-            });
+            };
+            this.__nlRule.awaitRewrite(this.__nlUrl).then((rw) => {
+              sendCurrent(rw);
+            }, () => sendCurrent());
             return;
           }
           this.__nlApplyCreds((_c = this.__nlRw) == null ? void 0 : _c.credentials);
@@ -3919,10 +3979,10 @@
     if (window.__BILIKIT_WAY_BACK__) return;
     window.__BILIKIT_WAY_BACK__ = true;
     const resumeTime = cfg.get("resumeTime") !== false;
-    const inDrawer = window.top !== window.self;
-    const drawerMark = (location.hash.match(/#bk-drawer(?:-web)?/) || [""])[0] || (inDrawer ? "#bk-drawer" : "");
+    const inDrawer2 = window.top !== window.self;
+    const drawerMark2 = (location.hash.match(/#bk-drawer(?:-web)?/) || [""])[0] || (inDrawer2 ? "#bk-drawer" : "");
     const JUMP_FLAG = "bilikit-wb-jump";
-    if (inDrawer) {
+    if (inDrawer2) {
       try {
         if (sessionStorage.getItem(JUMP_FLAG)) sessionStorage.removeItem(JUMP_FLAG);
         else sessionStorage.removeItem(STACK_KEY);
@@ -3946,9 +4006,11 @@
     };
     const titleById = /* @__PURE__ */ new Map();
     const noteTitle = () => {
-      const id = videoIdOf$1(location.href);
-      const t = cleanTitle(document.title);
-      if (id && t) titleById.set(id, t);
+      const id = videoIdOf$1(location.href), t = cleanTitle(document.title);
+      if (!id || !t) return;
+      titleById.delete(id);
+      titleById.set(id, t);
+      while (titleById.size > STACK_MAX * 2) titleById.delete(titleById.keys().next().value);
     };
     let titleEl = null;
     const titleMo = new MutationObserver(() => {
@@ -3963,6 +4025,7 @@
     function watchTitle() {
       const el2 = document.querySelector("title");
       if (el2 && el2 !== titleEl) {
+        titleMo.disconnect();
         titleEl = el2;
         titleMo.observe(el2, { childList: true, characterData: true, subtree: true });
         noteTitle();
@@ -4037,8 +4100,8 @@
         href = u.href;
       } catch {
       }
-      if (drawerMark) {
-        if (!href.includes("#")) href += drawerMark;
+      if (drawerMark2) {
+        if (!href.includes("#")) href += drawerMark2;
         try {
           sessionStorage.setItem(JUMP_FLAG, "1");
         } catch {
@@ -4246,11 +4309,79 @@
     ],
     init
   };
+  const DRAWER_HISTORY_KEY = "__bilikitDrawer";
+  const DRAWER_ORIGIN_KEY = "__bilikitDrawerOrigin";
+  const DRAWER_FRAME_PREFIX = "bilikit-drawer:";
+  const DRAWER_MARK = "#bk-drawer";
+  const DRAWER_WEB_MARK = "#bk-drawer-web";
+  function drawerFrameName(route) {
+    return `${DRAWER_FRAME_PREFIX}${route.token}:${route.webFull ? "web" : "plain"}`;
+  }
+  function readDrawerFrameName(name) {
+    if (!name.startsWith(DRAWER_FRAME_PREFIX)) return null;
+    const rest = name.slice(DRAWER_FRAME_PREFIX.length);
+    const split = rest.lastIndexOf(":");
+    if (split <= 0) return null;
+    const token = rest.slice(0, split);
+    const mode = rest.slice(split + 1);
+    if (!/^[0-9a-z-]{8,}$/i.test(token) || mode !== "web" && mode !== "plain") return null;
+    return { token, webFull: mode === "web" };
+  }
+  function drawerMark(hash) {
+    if (hash === DRAWER_MARK) return DRAWER_MARK;
+    if (hash === DRAWER_WEB_MARK) return DRAWER_WEB_MARK;
+    return null;
+  }
+  function safeDrawerVideoUrl(target, expectedOrigin) {
+    try {
+      const next = new URL(target);
+      if (next.origin !== expectedOrigin || !/(^|\.)bilibili\.com$/i.test(next.hostname)) return null;
+      if (!/^\/(?:video\/(?:BV[0-9A-Za-z]+|av\d+)|bangumi\/play\/(?:ep|ss)\d+|cheese\/play\/(?:ep|ss)\d+|list\/|festival\/)/i.test(next.pathname)) return null;
+      if (drawerMark(next.hash)) next.hash = "";
+      return next.href;
+    } catch {
+      return null;
+    }
+  }
+  function drawerDisplayUrl(target, currentHref) {
+    try {
+      const current = new URL(currentHref);
+      const next = new URL(target, current);
+      if (next.origin !== current.origin) return null;
+      if (drawerMark(next.hash)) next.hash = "";
+      return next.href;
+    } catch {
+      return null;
+    }
+  }
+  function withDrawerRoute(state, route) {
+    const base = state && typeof state === "object" && !Array.isArray(state) ? state : {};
+    const out = { ...base, [DRAWER_HISTORY_KEY]: route };
+    delete out[DRAWER_ORIGIN_KEY];
+    return out;
+  }
+  function withDrawerOrigin(state, token) {
+    const base = state && typeof state === "object" && !Array.isArray(state) ? state : {};
+    const out = { ...base, [DRAWER_ORIGIN_KEY]: token };
+    delete out[DRAWER_HISTORY_KEY];
+    return out;
+  }
+  function readDrawerOrigin(state) {
+    if (!state || typeof state !== "object") return null;
+    const token = state[DRAWER_ORIGIN_KEY];
+    return typeof token === "string" ? token : null;
+  }
+  function readDrawerRoute(state) {
+    if (!state || typeof state !== "object") return null;
+    const route = state[DRAWER_HISTORY_KEY];
+    if (!route || typeof route !== "object") return null;
+    const r = route;
+    if (typeof r.token !== "string" || !r.token || typeof r.url !== "string" || typeof r.cover !== "string" || typeof r.webFull !== "boolean" || typeof r.immersive !== "boolean") return null;
+    return r;
+  }
   const NS = "bk";
   const NEWTAB_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>';
   const CLOSE_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
-  const MARK = "#bk-drawer";
-  const MARK_WEB = "#bk-drawer-web";
   const CSS = `
 /* 按钮体**跟随页面主题**（--bg1/--text2）：浅色页浅按钮、深色页深按钮。
    凸显靠**阴影随主题反相**：浅色→黑色投影压出立体，深色→白色辉光(halo)把深按钮从暗遮罩里托起来（见 @media dark）。 */
@@ -4286,6 +4417,98 @@
   let curImmersive = false;
   let gotReady = false;
   let gotWebfull = false;
+  let historyActive = false;
+  let historyOwned = false;
+  let historyClosing = false;
+  let historyOriginUrl = "";
+  let historyOriginState = null;
+  let activeRoute = null;
+  let historyCloseFallback = null;
+  let pendingOpen = null;
+  let disposingFrame = null;
+  const nativePushState = History.prototype.pushState;
+  const nativeReplaceState = History.prototype.replaceState;
+  function newHistoryToken() {
+    try {
+      return crypto.randomUUID();
+    } catch {
+      return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+    }
+  }
+  function displayUrlFor(route) {
+    return drawerDisplayUrl(route.url, location.href) || location.href;
+  }
+  function replaceDrawerHistory(route) {
+    try {
+      const state = withDrawerRoute(history.state, route);
+      nativeReplaceState.call(history, state, "", displayUrlFor(route));
+      activeRoute = route;
+      historyActive = true;
+      historyOwned = true;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  function pushDrawerHistory(route) {
+    historyOriginUrl = location.href;
+    historyOriginState = history.state;
+    try {
+      nativeReplaceState.call(history, withDrawerOrigin(historyOriginState, route.token), "", historyOriginUrl);
+      nativePushState.call(history, withDrawerRoute(historyOriginState, route), "", displayUrlFor(route));
+      activeRoute = route;
+      historyActive = true;
+      historyOwned = true;
+      return true;
+    } catch {
+      try {
+        nativeReplaceState.call(history, historyOriginState, "", historyOriginUrl);
+      } catch {
+      }
+      historyActive = false;
+      historyOwned = false;
+      return false;
+    }
+  }
+  function syncDrawerHistory(url) {
+    if (!historyActive || !activeRoute) return;
+    const expectedOrigin = new URL(activeRoute.url, location.href).origin;
+    const publicUrl = safeDrawerVideoUrl(url, expectedOrigin);
+    if (!publicUrl) return;
+    curUrl = publicUrl;
+    replaceDrawerHistory({ ...activeRoute, url: publicUrl });
+  }
+  function finishHistoryClose() {
+    if (historyCloseFallback) {
+      clearTimeout(historyCloseFallback);
+      historyCloseFallback = null;
+    }
+    historyClosing = false;
+    historyActive = false;
+    try {
+      nativeReplaceState.call(history, historyOriginState, "", historyOriginUrl);
+    } catch {
+    }
+    const next = pendingOpen;
+    pendingOpen = null;
+    if (next) queueMicrotask(() => openDrawer(next.url, next.cover, next.webFull, next.immersive));
+  }
+  function consumeDrawerHistory() {
+    if (!historyOwned || !historyActive || !activeRoute || historyClosing) return;
+    historyClosing = true;
+    replaceDrawerHistory(activeRoute);
+    try {
+      history.back();
+    } catch {
+      finishHistoryClose();
+      return;
+    }
+    historyCloseFallback = setTimeout(() => {
+      if (!historyClosing) return;
+      historyOwned = false;
+      finishHistoryClose();
+    }, 1200);
+  }
   function tryReveal() {
     var _a;
     if (!gotReady) return;
@@ -4305,6 +4528,30 @@
       return (frame == null ? void 0 : frame.contentWindow) || null;
     } catch {
       return null;
+    }
+  }
+  function finishFrameDispose(source) {
+    const pending = disposingFrame;
+    if (!pending || source && source !== pending.frame.contentWindow) return;
+    clearTimeout(pending.timer);
+    pending.frame.remove();
+    disposingFrame = null;
+  }
+  function beginFrameDispose(f, route) {
+    var _a;
+    if (disposingFrame) finishFrameDispose();
+    const token = (route == null ? void 0 : route.token) || "";
+    let origin = "";
+    try {
+      if (route) origin = new URL(route.url, location.href).origin;
+    } catch {
+    }
+    const timer = setTimeout(() => finishFrameDispose(), 160);
+    disposingFrame = { frame: f, token, origin, timer };
+    if (!token || !origin) return;
+    try {
+      (_a = f.contentWindow) == null ? void 0 : _a.postMessage({ type: "bk-drawer-dispose", token }, origin);
+    } catch {
     }
   }
   function setLoading(on) {
@@ -4335,18 +4582,90 @@
     mask.className = `${NS}-dmask`;
     panel = document.createElement("div");
     panel.className = `${NS}-drawer`;
-    frame = createFrame();
     window.addEventListener("message", (e) => {
+      var _a;
+      const disposing = disposingFrame;
+      if (disposing && e.source === disposing.frame.contentWindow && ((_a = e.data) == null ? void 0 : _a.type) === "bk-drawer-disposed" && e.data.token === disposing.token && e.origin === disposing.origin) {
+        finishFrameDispose(e.source);
+        return;
+      }
       if (e.source !== frameWin()) return;
-      if (e.data === "bk-drawer-ready") {
+      const route = activeRoute;
+      if (!route || !e.data || typeof e.data !== "object" || e.data.token !== route.token) return;
+      let expectedOrigin;
+      try {
+        expectedOrigin = new URL(route.url, location.href).origin;
+      } catch {
+        return;
+      }
+      if (e.origin !== expectedOrigin) return;
+      if (e.data.type === "bk-drawer-ready") {
         gotReady = true;
         tryReveal();
-      } else if (e.data === "bk-drawer-webfull") {
+      } else if (e.data.type === "bk-drawer-webfull") {
         gotWebfull = true;
         tryReveal();
-      } else if (e.data === "bk-drawer-close") closeDrawer();
+      } else if (e.data.type === "bk-drawer-close") closeDrawer();
+      else if (e.data.type === "bk-drawer-location" && typeof e.data.url === "string") syncDrawerHistory(e.data.url);
     });
-    panel.appendChild(frame);
+    window.addEventListener("popstate", (e) => {
+      const stateRoute = readDrawerRoute(e.state);
+      const token = (activeRoute == null ? void 0 : activeRoute.token) || "";
+      const route = (stateRoute == null ? void 0 : stateRoute.token) === token ? stateRoute : null;
+      const atOrigin = !!token && (readDrawerOrigin(e.state) === token || !route && location.href === historyOriginUrl);
+      if (historyClosing) {
+        e.stopImmediatePropagation();
+        if (atOrigin) {
+          finishHistoryClose();
+          return;
+        }
+        try {
+          history.back();
+        } catch {
+          finishHistoryClose();
+        }
+        return;
+      }
+      if (route) {
+        e.stopImmediatePropagation();
+        historyActive = true;
+        historyOwned = true;
+        activeRoute = route;
+        showDrawer(route);
+        return;
+      }
+      if (!historyActive && historyOwned && activeRoute) {
+        const display = drawerDisplayUrl(activeRoute.url, historyOriginUrl);
+        if (display === location.href) {
+          e.stopImmediatePropagation();
+          replaceDrawerHistory(activeRoute);
+          showDrawer(activeRoute);
+          return;
+        }
+      }
+      if (historyActive && historyOwned) {
+        e.stopImmediatePropagation();
+        historyActive = false;
+        try {
+          nativeReplaceState.call(history, historyOriginState, "", historyOriginUrl);
+        } catch {
+        }
+        hideDrawer();
+        return;
+      }
+      if (panel == null ? void 0 : panel.classList.contains("on")) {
+        queueMicrotask(() => {
+          activeRoute = null;
+          hideDrawer();
+        });
+      }
+    }, true);
+    setInterval(() => {
+      var _a;
+      if (!historyActive || historyClosing || !activeRoute) return;
+      if (((_a = readDrawerRoute(history.state)) == null ? void 0 : _a.token) === activeRoute.token) return;
+      replaceDrawerHistory(activeRoute);
+    }, 500);
     const load2 = document.createElement("div");
     load2.className = `${NS}-dload`;
     loadCover = document.createElement("div");
@@ -4369,29 +4688,29 @@
     });
     document.body.append(mask, panel, ctrls);
   }
-  function openDrawer(url, cover = "", webFull = false, immersive = false) {
+  function showDrawer(route) {
     ensureDom();
     if (closeTimer) {
       clearTimeout(closeTimer);
       closeTimer = null;
     }
-    if (!frame) {
-      frame = createFrame();
-      panel.insertBefore(frame, panel.firstChild);
-    }
-    curUrl = url;
-    curWebFull = webFull;
-    curImmersive = immersive;
-    const marked = url.split("#")[0] + (webFull ? MARK_WEB : MARK);
+    curUrl = route.url;
+    curWebFull = route.webFull;
+    curImmersive = route.immersive;
+    const marked = route.url.split("#")[0] + (route.webFull ? DRAWER_WEB_MARK : DRAWER_MARK);
+    const fresh = !frame;
+    if (!frame) frame = createFrame();
+    frame.name = drawerFrameName(route);
     if (frame.src !== marked) {
       gotReady = false;
       gotWebfull = false;
-      if (loadCover) loadCover.style.backgroundImage = cover ? `url("${cover}")` : "";
+      if (loadCover) loadCover.style.backgroundImage = route.cover ? `url("${route.cover}")` : "";
       setLoading(true);
       frame.src = marked;
     } else {
       setLoading(false);
     }
+    if (fresh) panel.insertBefore(frame, panel.firstChild);
     document.documentElement.style.overflow = "hidden";
     requestAnimationFrame(() => {
       mask.classList.add("on");
@@ -4399,7 +4718,28 @@
       ctrls.classList.add("on");
     });
   }
-  function closeDrawer() {
+  function openDrawer(url, cover = "", webFull = false, immersive = false) {
+    if (historyClosing) {
+      pendingOpen = { url, cover, webFull, immersive };
+      return;
+    }
+    const existing = historyActive ? activeRoute : null;
+    const route = {
+      token: (existing == null ? void 0 : existing.token) || newHistoryToken(),
+      url,
+      cover,
+      webFull,
+      immersive
+    };
+    if (existing) {
+      replaceDrawerHistory(route);
+    } else {
+      activeRoute = route;
+      pushDrawerHistory(route);
+    }
+    showDrawer(route);
+  }
+  function hideDrawer() {
     if (!panel || !mask || !ctrls) return;
     mask.classList.remove("on");
     panel.classList.remove("on");
@@ -4409,18 +4749,15 @@
     closeTimer = setTimeout(() => {
       if (!frame || (panel == null ? void 0 : panel.classList.contains("on"))) return;
       const f = frame;
-      f.src = "about:blank";
-      requestAnimationFrame(() => {
-        var _a;
-        if (panel == null ? void 0 : panel.classList.contains("on")) return;
-        try {
-          (_a = f.contentWindow) == null ? void 0 : _a.close();
-        } catch {
-        }
-        f.remove();
-        if (frame === f) frame = null;
-      });
+      const route = activeRoute;
+      frame = null;
+      beginFrameDispose(f, route);
     }, 340);
+  }
+  function closeDrawer() {
+    hideDrawer();
+    if (historyOwned && historyActive) consumeDrawerHistory();
+    else activeRoute = null;
   }
   const PC_HOSTS = ["https://api.bilibili.com", "https://s1.hdslb.com", "https://i0.hdslb.com", "https://i1.hdslb.com", "https://i2.hdslb.com"];
   const PC_WINDOW = 12e3;
@@ -4489,13 +4826,32 @@
       if (resolve(e.target)) preconnect();
     }, true);
   }
+  const drawerFrame = window.top !== window.self ? readDrawerFrameName(window.name) : null;
+  if (drawerFrame && !drawerMark(location.hash)) {
+    try {
+      const url = new URL(location.href);
+      url.hash = drawerFrame.webFull ? DRAWER_WEB_MARK : DRAWER_MARK;
+      History.prototype.replaceState.call(history, history.state, "", url.href);
+    } catch {
+    }
+  }
+  const inDrawer = window.top !== window.self && (!!drawerFrame || !!drawerMark(location.hash));
+  const drawerToken = (drawerFrame == null ? void 0 : drawerFrame.token) || "";
+  const drawerWebFull = (drawerFrame == null ? void 0 : drawerFrame.webFull) ?? location.hash === DRAWER_WEB_MARK;
+  function postDrawer(type, extra = {}) {
+    if (!drawerToken) return;
+    try {
+      window.parent.postMessage({ type, token: drawerToken, ...extra }, "*");
+    } catch {
+    }
+  }
   syncSharedSettings();
   try {
     localStorage.setItem("bilikit:alive.core", String(Date.now()));
   } catch {
   }
   function hideDrawerChrome() {
-    if (window.top === window.self || !location.hash.includes("bk-drawer")) return;
+    if (!inDrawer) return;
     const ads = [".ad-report", ".video-page-special-card-small", ".video-page-game-card-small", ".slide-ad-exp", ".activity-m-v1", ".pop-live-small-mode", ".right-bottom-banner", ".eva-banner", ".gg-floor-module", ".video-card-ad-small"];
     const s = document.createElement("style");
     s.textContent = `#biliMainHeader,.bili-header,.fixed-header,.international-header{display:none!important}` + ads.join(",") + `{display:none!important}`;
@@ -4503,7 +4859,7 @@
   }
   hideDrawerChrome();
   function setupDrawerEscape() {
-    if (window.top === window.self || !location.hash.includes("bk-drawer")) return;
+    if (!inDrawer) return;
     window.addEventListener("keydown", (e) => {
       if (e.key !== "Escape" && e.code !== "Escape" || e.isComposing) return;
       if (document.fullscreenElement || document.webkitFullscreenElement) return;
@@ -4511,22 +4867,52 @@
       if (editing) return;
       e.preventDefault();
       e.stopPropagation();
-      try {
-        window.parent.postMessage("bk-drawer-close", "*");
-      } catch {
-      }
+      postDrawer("bk-drawer-close");
     }, true);
   }
   setupDrawerEscape();
-  function setupDrawerReveal() {
-    if (window.top === window.self || !location.hash.includes("bk-drawer")) return;
-    const wantWeb = location.hash.includes("bk-drawer-web");
-    const post = (m) => {
+  function setupDrawerLocationSync() {
+    if (!inDrawer) return;
+    let lastUrl = "";
+    const mark = drawerWebFull ? DRAWER_WEB_MARK : DRAWER_MARK;
+    const notify = () => {
+      const url = new URL(location.href);
+      if (drawerMark(url.hash)) url.hash = "";
+      const href = url.href;
+      if (href === lastUrl) return;
+      lastUrl = href;
+      postDrawer("bk-drawer-location", { url: href });
+    };
+    const originalReplace = history.replaceState.bind(history);
+    const markedUrl = (raw) => {
+      if (raw == null) return raw;
       try {
-        window.parent.postMessage(m, "*");
+        const url = new URL(String(raw), location.href);
+        if (url.origin === location.origin) url.hash = mark;
+        return url.href;
       } catch {
+        return raw;
       }
     };
+    history.pushState = ((state, unused, url) => {
+      const result = originalReplace(state, unused, markedUrl(url));
+      queueMicrotask(notify);
+      return result;
+    });
+    history.replaceState = ((state, unused, url) => {
+      const result = originalReplace(state, unused, markedUrl(url));
+      queueMicrotask(notify);
+      return result;
+    });
+    window.addEventListener("popstate", notify);
+    window.addEventListener("hashchange", notify);
+    setInterval(notify, 500);
+    notify();
+  }
+  setupDrawerLocationSync();
+  function setupDrawerReveal() {
+    if (!inDrawer) return;
+    const wantWeb = drawerWebFull;
     let readyDone = false;
     let webDone = !wantWeb;
     let bound = false;
@@ -4546,7 +4932,7 @@
     const onReady = () => {
       if (readyDone) return;
       readyDone = true;
-      post("bk-drawer-ready");
+      postDrawer("bk-drawer-ready");
       focusPlayer();
       setTimeout(focusPlayer, 150);
       setTimeout(focusPlayer, 400);
@@ -4566,7 +4952,7 @@
       if (!webDone) {
         if (document.querySelector('.bpx-player-container[data-screen="web"]')) {
           webDone = true;
-          post("bk-drawer-webfull");
+          postDrawer("bk-drawer-webfull");
         } else if (!clicked) {
           const btn = document.querySelector(".bpx-player-ctrl-web");
           if (btn) {
@@ -4580,7 +4966,7 @@
   }
   setupDrawerReveal();
   function teardownVideoOnLeave() {
-    if (window.top === window.self || !location.hash.includes("bk-drawer")) return;
+    if (!inDrawer) return;
     let done = false;
     const cleanup = () => {
       if (done) return;
@@ -4597,6 +4983,12 @@
     };
     window.addEventListener("pagehide", cleanup);
     window.addEventListener("unload", cleanup);
+    window.addEventListener("message", (e) => {
+      var _a;
+      if (e.source !== window.parent || ((_a = e.data) == null ? void 0 : _a.type) !== "bk-drawer-dispose" || e.data.token !== drawerToken) return;
+      cleanup();
+      postDrawer("bk-drawer-disposed");
+    });
   }
   teardownVideoOnLeave();
   register(

@@ -83,18 +83,27 @@ export function installNetHook(rules: NetRule[]): void {
   if (OX) {
     class X extends OX {
       private __nlUrl = ''
-      private __nlMethod = 'GET'
+      private __nlOpenArgs: [any, any, ...any[]] = ['GET', '']
       private __nlRule: NetRule | undefined
       private __nlRw: { url?: string; credentials?: RequestCredentials } | undefined
       private __nlHeaders: [string, string][] = [] // 记录请求头，供慢路径重开后回放（重开会清空请求头）
+      private __nlGeneration = 0 // 每次 open/abort 递增；异步改写回来时只认发起它的同一代请求
+      private __nlAborted = false
       open(method: any, url: any, ...rest: any[]) {
+        this.__nlGeneration++ // 原生 open 会取消同一 XHR 上一次请求；同步作废尚在等待的异步改写
+        this.__nlAborted = false
         this.__nlUrl = String(url)
-        this.__nlMethod = String(method)
+        this.__nlOpenArgs = [method, url, ...rest]
         this.__nlHeaders = []
         this.__nlRule = rules.find((r) => r.match(this.__nlUrl))
         // rewriteRequest 只算一次（playurl 会重签 wbi，二次调用会用不同 wts 得到不同 w_rid）；结果挂实例供 send 复用
         this.__nlRw = this.__nlRule?.rewriteRequest?.(this.__nlUrl)
         return super.open(method, this.__nlRw?.url || url, ...(rest as [any, any, any]))
+      }
+      abort() {
+        this.__nlAborted = true
+        this.__nlGeneration++ // Promise 稍后返回也不得重新 open/send，避免复活已取消的旧视频请求
+        return super.abort()
       }
       setRequestHeader(name: string, value: string) {
         try { this.__nlHeaders.push([name, value]) } catch { /* ignore */ }
@@ -107,16 +116,26 @@ export function installNetHook(rules: NetRule[]): void {
       send(body?: any) {
         // 慢路径：规则支持异步改写、且同步没拿到 url（如 playurl 的 wbi key 未就绪）→ 推迟发送，等改写就绪。
         if (this.__nlRule?.awaitRewrite && !this.__nlRw?.url) {
-          this.__nlRule.awaitRewrite(this.__nlUrl).then((rw) => {
+          const generation = this.__nlGeneration
+          const openArgs = [...this.__nlOpenArgs] as [any, any, ...any[]]
+          const headers = [...this.__nlHeaders]
+          const stillCurrent = () => !this.__nlAborted && this.__nlGeneration === generation
+          const sendCurrent = (rw?: { url?: string; credentials?: RequestCredentials }) => {
+            if (!stillCurrent()) return
             try {
               if (rw?.url) {
-                super.open(this.__nlMethod, rw.url) // 重开到签名后的 url（重开会清请求头 → 下面回放）
-                for (const h of this.__nlHeaders) { try { super.setRequestHeader(h[0], h[1]) } catch { /* ignore */ } }
+                const [method, _oldUrl, ...rest] = openArgs
+                super.open(method, rw.url, ...(rest as [any, any, any])) // 完整保留 async/user/password
+                for (const h of headers) { try { super.setRequestHeader(h[0], h[1]) } catch { /* ignore */ } }
               }
               this.__nlApplyCreds(rw?.credentials)
             } catch { /* ignore */ }
+            if (!stillCurrent()) return
             try { super.send(body) } catch { /* ignore */ }
-          }, () => { try { super.send(body) } catch { /* ignore */ } }) // 异步改写失败 → 按原始请求发
+          }
+          this.__nlRule.awaitRewrite(this.__nlUrl).then((rw) => {
+            sendCurrent(rw)
+          }, () => sendCurrent()) // 异步改写失败 → 仅当仍是当前请求时按原始 URL 发
           return // 本次 send 已托管给上面的 promise，别再往下同步发
         }
         this.__nlApplyCreds(this.__nlRw?.credentials)

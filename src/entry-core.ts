@@ -8,6 +8,27 @@ import { wakeLock } from './modules/wake-lock'
 import { noLogin } from './modules/no-login'
 import { wayBack } from './modules/way-back'
 import { installSiteDrawer } from './modules/site-drawer'
+import { DRAWER_MARK, DRAWER_WEB_MARK, drawerMark, readDrawerFrameName } from './core/drawer-history'
+
+// iframe 的 window.name 跨同一 browsing context 的整页导航保留；比只靠 URL hash 稳定。
+// 新文档若被 B 站整页导航/重定向时丢了 marker，document-start 立即用 replaceState 补回，
+// 这样下方各 Core 模块（包括仍按 hash 判断的 way-back）仍会把它认作同一个抽屉。
+const drawerFrame = window.top !== window.self ? readDrawerFrameName(window.name) : null
+if (drawerFrame && !drawerMark(location.hash)) {
+  try {
+    const url = new URL(location.href)
+    url.hash = drawerFrame.webFull ? DRAWER_WEB_MARK : DRAWER_MARK
+    History.prototype.replaceState.call(history, history.state, '', url.href)
+  } catch { /* ignore */ }
+}
+const inDrawer = window.top !== window.self && (!!drawerFrame || !!drawerMark(location.hash))
+const drawerToken = drawerFrame?.token || ''
+const drawerWebFull = drawerFrame?.webFull ?? (location.hash === DRAWER_WEB_MARK)
+
+function postDrawer(type: string, extra: Record<string, unknown> = {}): void {
+  if (!drawerToken) return
+  try { window.parent.postMessage({ type, token: drawerToken, ...extra }, '*') } catch { /* ignore */ }
+}
 
 // 跨子域对齐设置：把 .bilibili.com cookie 里的共享设置并回本域 localStorage（www/search/space 用同一份），
 // 老用户则反向种一次 cookie。必须在任何模块读设置（runAll）之前。
@@ -20,7 +41,7 @@ try { localStorage.setItem('bilikit:alive.core', String(Date.now())) } catch { /
 // 只在「子框架 + 标记」时生效；Core @run-at document-start，注入的样式先于渲染就位，不闪。
 // 广告选择器沿用原 float 脚本的清单。
 function hideDrawerChrome(): void {
-  if (window.top === window.self || !location.hash.includes('bk-drawer')) return
+  if (!inDrawer) return
   const ads = ['.ad-report', '.video-page-special-card-small', '.video-page-game-card-small', '.slide-ad-exp', '.activity-m-v1', '.pop-live-small-mode', '.right-bottom-banner', '.eva-banner', '.gg-floor-module', '.video-card-ad-small']
   const s = document.createElement('style')
   s.textContent =
@@ -34,7 +55,7 @@ hideDrawerChrome()
 // 用 postMessage 请求父页关闭；父页还会核对 event.source===当前 iframe，外部页面无法伪造。
 // 编辑器内的 Esc 留给输入法/输入框，浏览器真全屏也先让 Safari 自己退出。
 function setupDrawerEscape(): void {
-  if (window.top === window.self || !location.hash.includes('bk-drawer')) return
+  if (!inDrawer) return
   window.addEventListener('keydown', (e) => {
     if ((e.key !== 'Escape' && e.code !== 'Escape') || e.isComposing) return
     if (document.fullscreenElement || (document as any).webkitFullscreenElement) return
@@ -44,10 +65,53 @@ function setupDrawerEscape(): void {
     if (editing) return
     e.preventDefault()
     e.stopPropagation()
-    try { window.parent.postMessage('bk-drawer-close', '*') } catch { /* 忽略 */ }
+    postDrawer('bk-drawer-close')
   }, true)
 }
 setupDrawerEscape()
+
+// 抽屉内 B 站点相关视频会走 SPA pushState；把子页的真实地址发给父页，
+// 让顶层地址栏与当前播放内容保持一致。History 包装走即时路径；B 站若后续覆盖包装，
+// 再用 500ms 一次的纯字符串比较兜底（iframe 销毁时定时器随浏览上下文一并释放）。
+function setupDrawerLocationSync(): void {
+  if (!inDrawer) return
+  let lastUrl = ''
+  const mark = drawerWebFull ? DRAWER_WEB_MARK : DRAWER_MARK
+  const notify = (): void => {
+    const url = new URL(location.href)
+    if (drawerMark(url.hash)) url.hash = ''
+    const href = url.href
+    if (href === lastUrl) return
+    lastUrl = href
+    postDrawer('bk-drawer-location', { url: href })
+  }
+  const originalReplace = history.replaceState.bind(history)
+  const markedUrl = (raw: string | URL | null | undefined): string | URL | null | undefined => {
+    if (raw == null) return raw
+    try {
+      const url = new URL(String(raw), location.href)
+      if (url.origin === location.origin) url.hash = mark
+      return url.href
+    } catch { return raw }
+  }
+  // 抽屉自己的“回程”栈已经记录视频来路，因此 iframe 的原生 SPA 历史应压成 replace：
+  // 避免嵌套 browsing context 的 joint session history 抢在顶层 drawer entry 前面，确保 Back 一次关抽屉。
+  history.pushState = ((state: unknown, unused: string, url?: string | URL | null) => {
+    const result = originalReplace(state, unused, markedUrl(url))
+    queueMicrotask(notify)
+    return result
+  }) as typeof history.pushState
+  history.replaceState = ((state: unknown, unused: string, url?: string | URL | null) => {
+    const result = originalReplace(state, unused, markedUrl(url))
+    queueMicrotask(notify)
+    return result
+  }) as typeof history.replaceState
+  window.addEventListener('popstate', notify)
+  window.addEventListener('hashchange', notify)
+  setInterval(notify, 500)
+  notify()
+}
+setupDrawerLocationSync()
 
 // 抽屉内（父页打 #bk-drawer / #bk-drawer-web）：单个轮询循环同时干两件揭幕相关的事，跑完即停：
 //   ① 首帧就绪 → postMessage('bk-drawer-ready')：Feed 据此撤加载遮罩。以 readyState≥2(HAVE_CURRENT_DATA)
@@ -57,11 +121,10 @@ setupDrawerEscape()
 //      绝不再点——否则再点一次会把网页全屏切回去、来回横跳。
 // 合成一个 interval（而非两个并发）省掉重复 querySelector；ready 与 web 都完成或超时即 clearInterval，不留常驻定时器。
 function setupDrawerReveal(): void {
-  if (window.top === window.self || !location.hash.includes('bk-drawer')) return
-  const wantWeb = location.hash.includes('bk-drawer-web')
+  if (!inDrawer) return
+  const wantWeb = drawerWebFull
   // targetOrigin 用 '*'：抽屉从 search/space 等子域打开时，父页 origin 与本 iframe(www) 不同，
   // 用 location.origin 会导致信号被浏览器丢弃 → 父页收不到、只能等 6s 兜底（揭幕很晚）。信号非敏感，'*' 即可。
-  const post = (m: string): void => { try { window.parent.postMessage(m, '*') } catch { /* 忽略 */ } }
   let readyDone = false
   let webDone = !wantWeb // 普通抽屉无需铺满，直接算完成
   let bound = false
@@ -79,7 +142,7 @@ function setupDrawerReveal(): void {
   const onReady = (): void => {
     if (readyDone) return
     readyDone = true
-    post('bk-drawer-ready')
+    postDrawer('bk-drawer-ready')
     focusPlayer()
     // 父页收到 ready 后会 focus() iframe 元素使本 frame 成为活动帧；那一下可能把内部焦点复位到 <body>，
     // 且播放器容器偶尔略晚挂载——故再补两次，确保焦点稳稳落在播放器上（跨源从 search/space 打开时尤其需要）。
@@ -95,7 +158,7 @@ function setupDrawerReveal(): void {
       }
     }
     if (!webDone) {
-      if (document.querySelector('.bpx-player-container[data-screen="web"]')) { webDone = true; post('bk-drawer-webfull') } // 已铺满
+      if (document.querySelector('.bpx-player-container[data-screen="web"]')) { webDone = true; postDrawer('bk-drawer-webfull') } // 已铺满
       else if (!clicked) { const btn = document.querySelector('.bpx-player-ctrl-web') as HTMLElement | null; if (btn) { btn.click(); clicked = true } } // 只点一次
     }
     if ((readyDone && webDone) || ++tries > 60) clearInterval(timer) // 都完成或 ~9s 兜底（父页遮罩超时另有保底）
@@ -103,14 +166,14 @@ function setupDrawerReveal(): void {
 }
 setupDrawerReveal()
 
-// 抽屉关闭时，父页会把本 iframe 导去 about:blank 再整体移出 DOM（见 core/drawer.ts closeDrawer）。
-// 导航到 about:blank 会先对本文档触发 pagehide——赶在文档被拆之前，主动放掉视频解码资源
+// 抽屉关闭时，父页先发显式 dispose 消息，然后整体移出 iframe。赶在文档被拆之前，
+// 主动放掉视频解码资源
 // （pause + 清 src + load()）。这是缓解（非根治）iOS Safari 对 <video>/MSE 内存回收不及时的
 // 已知手法：见 WebKit bug 11683（iframe 内存泄漏，需先 about:blank 再移除）与社区对视频元素
 // 反复换源导致内存增长的报告（如 aws/amazon-chime-sdk-component-library-react#771）——显式清理
 // 能降低增长但不保证根除，故仍配合父页销毁 iframe 元素双管齐下。
 function teardownVideoOnLeave(): void {
-  if (window.top === window.self || !location.hash.includes('bk-drawer')) return
+  if (!inDrawer) return
   let done = false
   const cleanup = (): void => {
     if (done) return
@@ -128,6 +191,11 @@ function teardownVideoOnLeave(): void {
   // 抢在文档被拆之前把视频解码资源放掉。整页导航离开也同样受益。
   window.addEventListener('pagehide', cleanup)
   window.addEventListener('unload', cleanup)
+  window.addEventListener('message', (e) => {
+    if (e.source !== window.parent || e.data?.type !== 'bk-drawer-dispose' || e.data.token !== drawerToken) return
+    cleanup()
+    postDrawer('bk-drawer-disposed')
+  })
 }
 teardownVideoOnLeave()
 

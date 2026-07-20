@@ -148,30 +148,53 @@ function init(cfg: Cfg): void {
 
   // 引导：等 #commentapp 里的 bili-comments 出现；SPA 换视频后换宿主则重绑。
   let current: any = null
+  let currentApp: Element | null = null
+  let appObserver: MutationObserver | null = null
+
+  function releaseCommentTree(): void {
+    for (const o of observers) o.disconnect()
+    observers = []
+    if (rafId) { cancelAnimationFrame(rafId); rafId = 0 }
+    current = null
+    topRoot = null
+  }
+
   function tryBind(): void {
-    const c = document.querySelector('#commentapp bili-comments')
+    const c = currentApp?.querySelector('bili-comments')
     if (c && c !== current && (c as any).shadowRoot) { current = c; bind(c) }
   }
 
   function watch(app: Element): void {
-    new MutationObserver(tryBind).observe(app, {
+    if (app === currentApp && appObserver) { tryBind(); return }
+    appObserver?.disconnect()
+    releaseCommentTree()
+    currentApp = app
+    appObserver = new MutationObserver(tryBind)
+    appObserver.observe(app, {
       childList: true, subtree: true, attributes: true, attributeFilter: ['data-params'],
     })
     tryBind()
   }
 
-  const app = document.querySelector('#commentapp')
-  if (app) {
-    watch(app)
-  } else {
-    // #commentapp 尚未挂载：轻量轮询直到出现，找到即停
-    let tries = 0
-    const t = setInterval(() => {
-      const a = document.querySelector('#commentapp')
-      if (a) { clearInterval(t); watch(a) }
-      else if (++tries > 40) clearInterval(t) // ~20s 兜底放弃
-    }, 500)
+  function ensureApp(): void {
+    if (currentApp?.isConnected) return
+    if (currentApp) {
+      appObserver?.disconnect()
+      appObserver = null
+      currentApp = null
+      releaseCommentTree() // 整个 #commentapp 被 SPA 换掉：立即断开旧 Shadow 树并放弃强引用
+    }
+    const app = document.querySelector('#commentapp')
+    if (app) watch(app)
   }
+  ensureApp()
+  // Core 会跨 B 站 SPA 路由长期存活：在非视频页停留很久后仍可能无刷新进入视频页，
+  // 因此不能用“初始 20s 后永久停止”的引导。2s 一次只读 isConnected；缺宿主时才做一次
+  // querySelector，这比观察整个 document 低成本，也保证整个 #commentapp 被替换后最迟 2s 释放旧 Shadow 树。
+  setInterval(() => {
+    if (currentApp?.isConnected) return
+    ensureApp()
+  }, 2000)
 
   log('已启动')
 }

@@ -22,18 +22,20 @@ const isMMS = (): boolean => !!(window as any).ManagedMediaSource
 
 // 逐候选主机抓一段字节（Range 含端点）。优先浏览器 fetch（原生同法：CDN 认、冷门也 206；CORS 对本源放行）；
 // fetch 被 CORS/CSP 挡才退回 GM（GM 会被 CDN 反爬 403 掉冷门视频，只作兜底）。全失败才抛。
-async function fetchRange(urls: string[], start: number, end: number): Promise<ArrayBuffer> {
+async function fetchRange(urls: string[], start: number, end: number, signal: AbortSignal): Promise<ArrayBuffer> {
   const range = `bytes=${start}-${end}`
   let last: unknown
   for (const u of urls) {
+    if (signal.aborted) throw signal.reason || new DOMException('Aborted', 'AbortError')
     try {
-      const r = await fetch(u, { headers: { Range: range }, credentials: 'omit', cache: 'no-store' })
+      const r = await fetch(u, { headers: { Range: range }, credentials: 'omit', cache: 'no-store', signal })
       if (r.status === 206) return await r.arrayBuffer()
       last = new Error('fetch HTTP ' + r.status)
-    } catch (e) { last = e }
+    } catch (e) { if (signal.aborted) throw e; last = e }
   }
   for (const u of urls) {
-    try { return await gmRequestBinary(u, { start, end }) } catch (e) { last = e }
+    if (signal.aborted) throw signal.reason || new DOMException('Aborted', 'AbortError')
+    try { return await gmRequestBinary(u, { start, end }, signal) } catch (e) { if (signal.aborted) throw e; last = e }
   }
   throw last || new Error('all urls failed')
 }
@@ -65,13 +67,25 @@ function parseSidx(sidxBuf: ArrayBuffer): number[] | null {
   } catch { return null }
 }
 
-function appendWait(sb: any, buf: ArrayBuffer): Promise<void> {
+function appendWait(sb: any, buf: ArrayBuffer, signal: AbortSignal): Promise<void> {
   return new Promise((res, rej) => {
-    const ok = () => { sb.removeEventListener('updateend', ok); sb.removeEventListener('error', er); res() }
-    const er = () => { sb.removeEventListener('updateend', ok); sb.removeEventListener('error', er); rej(new Error('append error')) }
+    const clean = () => {
+      sb.removeEventListener('updateend', ok)
+      sb.removeEventListener('error', er)
+      signal.removeEventListener('abort', onAbort)
+    }
+    const ok = () => { clean(); res() }
+    const er = () => { clean(); rej(new Error('append error')) }
+    const onAbort = () => {
+      clean()
+      try { if (sb.updating) sb.abort() } catch { /* ignore */ }
+      rej(signal.reason || new DOMException('Aborted', 'AbortError'))
+    }
+    if (signal.aborted) { onAbort(); return }
     sb.addEventListener('updateend', ok)
     sb.addEventListener('error', er)
-    try { sb.appendBuffer(buf) } catch (e) { sb.removeEventListener('updateend', ok); sb.removeEventListener('error', er); rej(e) }
+    signal.addEventListener('abort', onAbort, { once: true })
+    try { sb.appendBuffer(buf) } catch (e) { clean(); rej(e) }
   })
 }
 
@@ -85,6 +99,7 @@ export function attachMse(video: HTMLVideoElement, dash: DashPreview): Promise<b
   return new Promise<boolean>((resolve) => {
     let settled = false, dead = false, objUrl = ''
     let ms: any = null, sb: any = null
+    const aborter = new AbortController()
     let openGuard: ReturnType<typeof setTimeout> | null = setTimeout(() => finish(false), OPEN_GUARD)
     let playWatch: ReturnType<typeof setTimeout> | null = null
     const pumpListeners: Array<[string, EventListener]> = []
@@ -98,7 +113,10 @@ export function attachMse(video: HTMLVideoElement, dash: DashPreview): Promise<b
 
     // 完整拆除：停补拉、摘所有监听、暂停、撤源、释放 objectURL。窗口化移除卡片时由外部经 video.__mseCleanup 调用；失败时内部调用。
     function dispose(): void {
+      const resolvePending = !settled
+      if (resolvePending) settled = true
       dead = true
+      aborter.abort()
       if (openGuard) { clearTimeout(openGuard); openGuard = null }
       if (playWatch) { clearTimeout(playWatch); playWatch = null }
       for (const [ev, h] of pumpListeners) video.removeEventListener(ev, h)
@@ -109,6 +127,8 @@ export function attachMse(video: HTMLVideoElement, dash: DashPreview): Promise<b
       try { video.removeAttribute('src'); video.load() } catch { /* ignore */ }
       try { if (objUrl) URL.revokeObjectURL(objUrl) } catch { /* ignore */ }
       objUrl = ''
+      // 外部 teardown 可能发生在 attachMse 尚未起播、调用方仍 await 的阶段；清理后必须结算 Promise。
+      if (resolvePending) resolve(false)
     }
     ;(video as any).__mseCleanup = dispose
 
@@ -132,19 +152,19 @@ export function attachMse(video: HTMLVideoElement, dash: DashPreview): Promise<b
       ms.addEventListener('sourceopen', async () => {
         if (openGuard) { clearTimeout(openGuard); openGuard = null }
         try {
-          const header = await fetchRange(dash.urls, 0, dash.indexEnd) // init + sidx 一把取
+          const header = await fetchRange(dash.urls, 0, dash.indexEnd, aborter.signal) // init + sidx 一把取
           if (dead) return
           const sizes = parseSidx(header.slice(dash.indexStart, dash.indexEnd + 1))
           sb = ms.addSourceBuffer(`video/mp4; codecs="${dash.codecs}"`)
-          await appendWait(sb, header.slice(0, dash.initEnd + 1)) // init 段
+          await appendWait(sb, header.slice(0, dash.initEnd + 1), aborter.signal) // init 段
           if (dead) return
           const mediaBase = dash.indexEnd + 1
 
           if (!sizes) {
             // 兜底：sidx 解析不出 → 抓固定单窗，endOfStream + loop
-            const media = await fetchRange(dash.urls, mediaBase, mediaBase + 600_000)
+            const media = await fetchRange(dash.urls, mediaBase, mediaBase + 600_000, aborter.signal)
             if (dead) return
-            await appendWait(sb, media)
+            await appendWait(sb, media, aborter.signal)
             safeEnd()
           } else {
             // 连续：按 fragment 顺序补拉，缓冲低就补、够了就停，拉满上限或整段拉完 endOfStream
@@ -161,11 +181,12 @@ export function attachMse(video: HTMLVideoElement, dash: DashPreview): Promise<b
               try {
                 let n = 0, bytes = 0
                 while (fi + n < sizes.length && bytes < BATCH_BYTES) { bytes += sizes[fi + n]; n++ }
-                const data = await fetchRange(dash.urls, mediaBase + offsets[fi], mediaBase + offsets[fi] + bytes - 1)
+                const data = await fetchRange(dash.urls, mediaBase + offsets[fi], mediaBase + offsets[fi] + bytes - 1, aborter.signal)
                 if (dead) return
-                await appendWait(sb, data) // 先 append 成功
+                await appendWait(sb, data, aborter.signal) // 先 append 成功
                 fi += n; fetched += data.byteLength // 再推进游标（append 失败不越过未喂的 fragment）
               } catch (e) {
+                if (dead) return
                 console.debug('[BiliKit Feed] MSE 补拉失败：', (e as Error)?.message) // 已缓冲部分仍可播/loop
                 ended = true; safeEnd()
               } finally { pumping = false }
@@ -185,6 +206,7 @@ export function attachMse(video: HTMLVideoElement, dash: DashPreview): Promise<b
           video.play().catch((e) => console.debug('[BiliKit Feed] MSE play() rej', (e as Error)?.name))
           playWatch = setTimeout(() => { console.debug('[BiliKit Feed] MSE 起播看门狗超时 rs=', video.readyState); finish(false) }, PLAY_WATCH)
         } catch (e) {
+          if (dead) return
           console.debug('[BiliKit Feed] MSE 装载失败：', (e as Error)?.message || e)
           finish(false)
         }

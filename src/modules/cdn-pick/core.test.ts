@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { isUpos, swapHost, fixEntry, rewritePlayurl } from './core'
+import { isUpos, normalizeCdnHost, swapHost, fixEntry, rewritePlayurl } from './core'
 
 const TARGET = 'upos-sz-mirrorhwb.bilivideo.com'
 const BACKUPS = ['upos-sz-upcdnbda2.bilivideo.com', 'upos-sz-mirrorhw.bilivideo.com']
@@ -17,6 +17,35 @@ describe('swapHost', () => {
   it('只换主机、保留路径与查询', () => {
     expect(swapHost('https://akam.bilivideo.com/upgc/x.m4s?a=1', TARGET)).toBe(`https://${TARGET}/upgc/x.m4s?a=1`)
   })
+
+  it('非法目标保持原签名 URL，不改写到第三方主机', () => {
+    const signed = 'https://x.bilivideo.com/upgc/x.m4s?deadline=1&token=SECRET'
+    expect(swapHost(signed, 'evil.example')).toBe(signed)
+    expect(swapHost(signed, 'x.bilivideo.com@evil.example')).toBe(signed)
+  })
+})
+
+describe('normalizeCdnHost', () => {
+  it('接受 bilivideo/acgvideo 受信后缀下的纯 hostname，并规范大小写与空白', () => {
+    expect(normalizeCdnHost('  UPOS-SZ-MIRRORHWB.BILIVIDEO.COM ')).toBe('upos-sz-mirrorhwb.bilivideo.com')
+    expect(normalizeCdnHost('xy.acgvideo.com')).toBe('xy.acgvideo.com')
+    expect(normalizeCdnHost('xy.acgvideo.cn')).toBe('xy.acgvideo.cn')
+  })
+
+  it.each([
+    'evil.example',
+    'bilivideo.com',
+    'https://x.bilivideo.com',
+    'x.bilivideo.com:443',
+    'x.bilivideo.com/path',
+    'user@x.bilivideo.com',
+    'x.bilivideo.com.evil.example',
+    'x..bilivideo.com',
+    '-x.bilivideo.com',
+    'x-.bilivideo.com',
+  ])('拒绝非纯主机名或非受信后缀：%s', (host) => {
+    expect(normalizeCdnHost(host)).toBeNull()
+  })
 })
 
 describe('fixEntry', () => {
@@ -30,6 +59,17 @@ describe('fixEntry', () => {
     const e: any = { baseUrl: 'https://foo.akamaized.net/x.m4s', backupUrl: ['https://bar.akamaized.net/x.m4s'] }
     expect(fixEntry(e, TARGET, BACKUPS)).toBe(false)
     expect(e.baseUrl).toBe('https://foo.akamaized.net/x.m4s')
+  })
+  it('目标非法 → 整条不动，签名 URL 不泄露', () => {
+    const original = 'https://x.bilivideo.com/x.m4s?token=SECRET'
+    const e: any = { baseUrl: original, backupUrl: [original] }
+    expect(fixEntry(e, 'evil.example', BACKUPS)).toBe(false)
+    expect(e).toEqual({ baseUrl: original, backupUrl: [original] })
+  })
+  it('丢弃非法备用主机', () => {
+    const e: any = { baseUrl: 'https://x.bilivideo.com/x.m4s', backupUrl: [] }
+    expect(fixEntry(e, TARGET, ['evil.example', BACKUPS[0]])).toBe(true)
+    expect(e.backupUrl).toEqual([`https://${TARGET}/x.m4s`, `https://${BACKUPS[0]}/x.m4s`])
   })
 })
 

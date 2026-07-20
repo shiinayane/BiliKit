@@ -30,6 +30,9 @@ let feedGen = 0 // 代际令牌：每次重新接管/刷新自增；在途 loadM
 // P1 阶段 render() 仍全量渲染（等价现状）；P2 起改为只渲染可视窗口。
 const items: FeedCard[] = []
 const nodes = new Map<number, HTMLElement>()
+// FeedCard 数据比 DOM/媒体轻很多，但仍不应在数小时会话里无界增长。
+// 2000 张已远超正常单次浏览量；触顶后保留完整的向上回滚，用刷新开新会话。
+const MAX_ITEMS = 2000
 let cachedCols = 1 // 上次量到的有效列数（getComputedStyle 偶发返回未解析值时回落用）
 // 布局量缓存：纯滚动时列数/行高/grid 顶偏移都不变，缓存后免得每帧 getComputedStyle + offsetHeight + BCR。
 // resize / 重建 grid / 插提示条时经 invalidateLayout() 置脏重量。
@@ -103,6 +106,17 @@ function teardownCard(el: HTMLElement): void {
   ;(cover as any)?.__bkTeardown?.()
 }
 
+// SPA 重接管会整块移除旧 grid；移除前必须逐卡走媒体 teardown，不能只 nodes.clear()。
+// 否则脱离 DOM 不会触发 mouseleave，已挂的 video/MSE/objectURL 仍可能继续播放和补拉。
+function teardownRenderedCards(): void {
+  for (const el of nodes.values()) {
+    cardIo?.unobserve(el)
+    teardownCard(el)
+    el.remove()
+  }
+  nodes.clear()
+}
+
 // 窗口化渲染：只保留「可视 ±1.5 屏」范围内的卡片节点，范围外移除；上下占位撑起未渲染区高度。
 // 按 item 下标 key、只在窗口边缘增删（绝不中途拿一个节点换内容）→ 无封面重载/闪烁。
 function render(): void {
@@ -167,8 +181,7 @@ function scheduleRender(): void {
 // 清空全部已渲染卡片与数据（刷新/重新接管时用）
 function clearAll(): void {
   if (cardIo) cardIo.disconnect() // 解除对旧卡的观察，避免 observer 持有已删除节点（泄漏）
-  for (const el of nodes.values()) { teardownCard(el); el.remove() }
-  nodes.clear()
+  teardownRenderedCards()
   items.length = 0
   if (topSpacer) topSpacer.style.height = '0px'
   if (bottomSpacer) bottomSpacer.style.height = '0px'
@@ -220,7 +233,7 @@ async function loadMore(): Promise<void> {
     // 至少强制拉一页（first）：骨架占位会撑高哨兵，若只看 sentinelInView 窄视口下可能一页都不拉。
     // 之后再按「哨兵是否仍在加载区」决定是否继续，直到填满或连续 3 页无新内容（匿名池耗尽）。
     let first = true
-    while ((first || sentinelInView()) && emptyStreak < 3) {
+    while ((first || sentinelInView()) && emptyStreak < 3 && items.length < MAX_ITEMS) {
       first = false
       // 按当前源分派：app 无状态、web 递增 fresh_idx（先自增再拉，保证每页页码不同）
       const { code, message, cards } = source === 'web'
@@ -235,14 +248,17 @@ async function loadMore(): Promise<void> {
       for (const c of cards) {
         if (!c.bvid || seen.has(c.bvid)) continue
         seen.add(c.bvid)
-        if (seen.size > 2000) seen.delete(seen.values().next().value as string) // 上限 2000，超出淘汰最老（防长会话无限增长）
         items.push(c)
         addedThisPage++
+        if (items.length >= MAX_ITEMS) break
       }
       if (addedThisPage) render()
       emptyStreak = addedThisPage === 0 ? emptyStreak + 1 : 0
     }
-    if (emptyStreak >= 3) {
+    if (items.length >= MAX_ITEMS) {
+      exhausted = true
+      showTip(`本次已加载 ${MAX_ITEMS} 条，为限制长会话内存已暂停追加；刷新内容可继续。`)
+    } else if (emptyStreak >= 3) {
       // 只有「app 源 + 匿名」才是固定内容池、会真刷完 → 锁死提示；web 源或已登录多为瞬时空/重复页，退避重试即可
       if (source === 'app' && !getAccessKey()) {
         exhausted = true
@@ -317,10 +333,11 @@ function takeover(): boolean {
   if (gridRo) { gridRo.disconnect(); gridRo = null }
   if (cardIo) cardIo.disconnect()
   if (sentinelIo) sentinelIo.disconnect()
+  if (renderRaf) { cancelAnimationFrame(renderRaf); renderRaf = 0 }
+  teardownRenderedCards()
   document.querySelectorAll(`.${NS}`).forEach((g) => g.remove()) // 移除旧/孤儿 grid，防止重复网格
   feedGen++ // 作废在途的 loadMore（SPA 重入撞上在途加载时的竞态）
   loading = false
-  nodes.clear() // 旧节点随旧 grid 已移除，清掉映射与数据（新 grid 从空开始）
   items.length = 0
   seen.clear()
   exhausted = false
@@ -421,6 +438,7 @@ export function mountFeed(): void {
   if (window.top !== window.self) return
   const beat = () => { try { localStorage.setItem('bilikit:alive.feed', String(Date.now())) } catch { /* 隐私模式忽略 */ } } // 心跳，供 Core 探测
   beat()
+  let lastHeartbeatAt = Date.now()
   try { localStorage.setItem('bilikit:feed.version', FEED_VERSION) } catch { /* 隐私模式忽略 */ } // 供 Core「关于」页显示 Feed 版本
   // 窗口化：滚动/改窗都重算可视范围（rAF 节流；render 内部有 grid 空判）。resize 还要作废布局缓存。
   window.addEventListener('scroll', scheduleRender, { passive: true })
@@ -437,13 +455,14 @@ export function mountFeed(): void {
   const tick = () => { if (onHome()) { hideNativeChrome(); takeover() } }
   tick()
   setTimeout(() => { if (onHome()) checkCore() }, 2500) // 延迟等 Core 心跳就位后再判断是否缺失
-  // 轮询只保留「SPA 重入补挂」这一必需项；心跳降到每 5s（Core 判定阈值 15s，足够），主题已移交 observer。
-  let tries = 0
-  const t = setInterval(() => {
+  // 低频常驻：Feed userscript 从首页进入后会跨 SPA 路由继续存活，故不能在 10 分钟后停掉；
+  // 否则心跳会让 Core 误报「未安装」，后续首页 DOM 重建也无法补挂。2s 一次只做 pathname/单例早退，
+  // 首页每约 6s 写一次心跳（Core 判定阈值 15s），非首页只做一次字符串判断。
+  setInterval(() => {
     if (!onHome()) return
-    if (tries % 5 === 0) beat() // 每 5s 一次心跳
+    const now = Date.now()
+    if (now - lastHeartbeatAt >= 5000) { beat(); lastHeartbeatAt = now }
     hideNativeChrome()
     takeover() // 挂上了继续轮询以应对 SPA 重建
-    if (++tries > 600) clearInterval(t) // ~10min 后停轮询兜底
-  }, 1000)
+  }, 2000)
 }

@@ -1,5 +1,10 @@
 import type { BiliKitModule } from '../../core/module'
 
+/** Feed 的静音悬停预览不是用户正在观看的主播放器，不应让屏幕常亮。 */
+export function isWakeLockIgnoredVideo(v: Pick<HTMLVideoElement, 'classList'>): boolean {
+  return v.classList.contains('bk-feed-vpreview')
+}
+
 /**
  * 防睡眠：播放视频时申请 screen wake lock，阻止 Safari 休眠/屏保。
  * 迁移自 scripts/wake-lock.user.js（逻辑不变，去掉头与 IIFE）。
@@ -111,6 +116,7 @@ function init(): void {
     'playing',
     (e) => {
       if (!(e.target instanceof HTMLVideoElement)) return
+      if (isWakeLockIgnoredVideo(e.target)) return
       bindVideo(e.target)
       requestWakeLock()
     },

@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         BiliKit Feed
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.3.20
+// @version      0.3.21
 // @author       shiinayane
-// @description  B 站首页换成手机 App 的个性化推荐流。零框架纯原生实现（无 React/Vue、gzip 仅 ~22KB）+ 窗口化虚拟化，DOM 数量恒定、长时间刷不涨内存。点卡片在底部抽屉内播放、封面悬停「真视频」秒开预览（MSE，接近原生 App）。需配合 BiliKit Core（登录 / 设置）。
+// @description  B 站首页换成手机 App 的个性化推荐流。零框架纯原生实现（无 React/Vue、gzip 约 29KB）+ 窗口化虚拟化，约束 DOM、封面与预览媒体的常驻资源。点卡片在底部抽屉内播放、封面悬停「真视频」秒开预览（MSE，接近原生 App）。需配合 BiliKit Core（登录 / 设置）。
 // @license      MIT
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20512%20512%22%3E%3Crect%20width%3D%22512%22%20height%3D%22512%22%20rx%3D%22116%22%20fill%3D%22%23FB7299%22%2F%3E%3Cg%20stroke%3D%22%23fff%22%20stroke-width%3D%2226%22%20stroke-linecap%3D%22round%22%3E%3Cline%20x1%3D%22212%22%20y1%3D%22182%22%20x2%3D%22166%22%20y2%3D%22104%22%2F%3E%3Cline%20x1%3D%22300%22%20y1%3D%22182%22%20x2%3D%22346%22%20y2%3D%22104%22%2F%3E%3C%2Fg%3E%3Crect%20x%3D%22108%22%20y%3D%22176%22%20width%3D%22296%22%20height%3D%22236%22%20rx%3D%2254%22%20fill%3D%22%23fff%22%2F%3E%3Cpath%20d%3D%22M234%20258%20302%20294%20234%20330Z%22%20fill%3D%22%2300AEEC%22%20stroke%3D%22%2300AEEC%22%20stroke-width%3D%2218%22%20stroke-linejoin%3D%22round%22%20stroke-linecap%3D%22round%22%2F%3E%3C%2Fsvg%3E
 // @match        *://www.bilibili.com/
@@ -298,32 +298,56 @@
   function gmXhr() {
     return typeof GM !== "undefined" && GM && GM.xmlHttpRequest ? GM.xmlHttpRequest.bind(GM) : typeof GM_xmlhttpRequest !== "undefined" ? GM_xmlhttpRequest : null;
   }
-  function gmRequestBinary(url, range) {
+  function gmRequestBinary(url, range, signal) {
     const xhr = gmXhr();
     if (!xhr) return Promise.reject(new Error("GM.xmlHttpRequest 不可用"));
+    const abortError = () => Object.assign(new Error("请求已中止"), { name: "AbortError" });
+    if (signal == null ? void 0 : signal.aborted) return Promise.reject(signal.reason || abortError());
     const headers = { Referer: "https://www.bilibili.com/" };
     if (range) headers.Range = `bytes=${range.start}-${range.end}`;
     return new Promise((resolve, reject) => {
-      xhr({
-        method: "GET",
-        url,
-        headers,
-        responseType: "arraybuffer",
-        timeout: 15e3,
-        onload: (r) => {
-          const okStatus = range ? r.status === 206 : r.status >= 200 && r.status < 300;
-          if (!okStatus) {
-            reject(new Error("HTTP " + r.status));
-            return;
-          }
-          const buf = r.response;
-          if (buf instanceof ArrayBuffer && buf.byteLength) resolve(buf);
-          else reject(new Error("空/非二进制响应 status=" + r.status));
-        },
-        onerror: (r) => reject(new Error("网络错误 " + (r && r.status))),
-        ontimeout: () => reject(new Error("超时")),
-        onabort: () => reject(new Error("中止"))
-      });
+      let done = false;
+      let req = null;
+      const finish = (fn) => {
+        if (done) return;
+        done = true;
+        signal == null ? void 0 : signal.removeEventListener("abort", onSignalAbort);
+        fn();
+      };
+      const onSignalAbort = () => {
+        var _a;
+        try {
+          (_a = req == null ? void 0 : req.abort) == null ? void 0 : _a.call(req);
+        } catch {
+        }
+        finish(() => reject((signal == null ? void 0 : signal.reason) || abortError()));
+      };
+      try {
+        req = xhr({
+          method: "GET",
+          url,
+          headers,
+          responseType: "arraybuffer",
+          timeout: 15e3,
+          onload: (r) => {
+            const okStatus = range ? r.status === 206 : r.status >= 200 && r.status < 300;
+            if (!okStatus) {
+              finish(() => reject(new Error("HTTP " + r.status)));
+              return;
+            }
+            const buf = r.response;
+            if (buf instanceof ArrayBuffer && buf.byteLength) finish(() => resolve(buf));
+            else finish(() => reject(new Error("空/非二进制响应 status=" + r.status)));
+          },
+          onerror: (r) => finish(() => reject(new Error("网络错误 " + (r && r.status)))),
+          ontimeout: () => finish(() => reject(new Error("超时"))),
+          onabort: () => finish(() => reject(abortError()))
+        });
+      } catch (e) {
+        finish(() => reject(e));
+      }
+      if (!done) signal == null ? void 0 : signal.addEventListener("abort", onSignalAbort, { once: true });
+      if (!done && (signal == null ? void 0 : signal.aborted)) onSignalAbort();
     });
   }
   function gmRequest(opts) {
@@ -930,22 +954,26 @@
   const MAX_MEDIA_BYTES = 8e6;
   const MS_CTOR = () => window.ManagedMediaSource || window.MediaSource || null;
   const isMMS = () => !!window.ManagedMediaSource;
-  async function fetchRange(urls, start, end) {
+  async function fetchRange(urls, start, end, signal) {
     const range = `bytes=${start}-${end}`;
     let last;
     for (const u of urls) {
+      if (signal.aborted) throw signal.reason || new DOMException("Aborted", "AbortError");
       try {
-        const r = await fetch(u, { headers: { Range: range }, credentials: "omit", cache: "no-store" });
+        const r = await fetch(u, { headers: { Range: range }, credentials: "omit", cache: "no-store", signal });
         if (r.status === 206) return await r.arrayBuffer();
         last = new Error("fetch HTTP " + r.status);
       } catch (e) {
+        if (signal.aborted) throw e;
         last = e;
       }
     }
     for (const u of urls) {
+      if (signal.aborted) throw signal.reason || new DOMException("Aborted", "AbortError");
       try {
-        return await gmRequestBinary(u, { start, end });
+        return await gmRequestBinary(u, { start, end }, signal);
       } catch (e) {
+        if (signal.aborted) throw e;
         last = e;
       }
     }
@@ -988,25 +1016,40 @@
       return null;
     }
   }
-  function appendWait(sb, buf) {
+  function appendWait(sb, buf, signal) {
     return new Promise((res, rej) => {
-      const ok = () => {
+      const clean = () => {
         sb.removeEventListener("updateend", ok);
         sb.removeEventListener("error", er);
+        signal.removeEventListener("abort", onAbort);
+      };
+      const ok = () => {
+        clean();
         res();
       };
       const er = () => {
-        sb.removeEventListener("updateend", ok);
-        sb.removeEventListener("error", er);
+        clean();
         rej(new Error("append error"));
       };
+      const onAbort = () => {
+        clean();
+        try {
+          if (sb.updating) sb.abort();
+        } catch {
+        }
+        rej(signal.reason || new DOMException("Aborted", "AbortError"));
+      };
+      if (signal.aborted) {
+        onAbort();
+        return;
+      }
       sb.addEventListener("updateend", ok);
       sb.addEventListener("error", er);
+      signal.addEventListener("abort", onAbort, { once: true });
       try {
         sb.appendBuffer(buf);
       } catch (e) {
-        sb.removeEventListener("updateend", ok);
-        sb.removeEventListener("error", er);
+        clean();
         rej(e);
       }
     });
@@ -1020,6 +1063,7 @@
     return new Promise((resolve) => {
       let settled = false, dead = false, objUrl = "";
       let ms = null, sb = null;
+      const aborter = new AbortController();
       let openGuard = setTimeout(() => finish(false), OPEN_GUARD);
       let playWatch = null;
       const pumpListeners = [];
@@ -1034,7 +1078,10 @@
         }
       };
       function dispose() {
+        const resolvePending = !settled;
+        if (resolvePending) settled = true;
         dead = true;
+        aborter.abort();
         if (openGuard) {
           clearTimeout(openGuard);
           openGuard = null;
@@ -1061,6 +1108,7 @@
         } catch {
         }
         objUrl = "";
+        if (resolvePending) resolve(false);
       }
       video.__mseCleanup = dispose;
       function finish(ok) {
@@ -1091,17 +1139,17 @@
             openGuard = null;
           }
           try {
-            const header = await fetchRange(dash.urls, 0, dash.indexEnd);
+            const header = await fetchRange(dash.urls, 0, dash.indexEnd, aborter.signal);
             if (dead) return;
             const sizes = parseSidx(header.slice(dash.indexStart, dash.indexEnd + 1));
             sb = ms.addSourceBuffer(`video/mp4; codecs="${dash.codecs}"`);
-            await appendWait(sb, header.slice(0, dash.initEnd + 1));
+            await appendWait(sb, header.slice(0, dash.initEnd + 1), aborter.signal);
             if (dead) return;
             const mediaBase = dash.indexEnd + 1;
             if (!sizes) {
-              const media = await fetchRange(dash.urls, mediaBase, mediaBase + 6e5);
+              const media = await fetchRange(dash.urls, mediaBase, mediaBase + 6e5, aborter.signal);
               if (dead) return;
-              await appendWait(sb, media);
+              await appendWait(sb, media, aborter.signal);
               safeEnd();
             } else {
               const offsets = [0];
@@ -1133,12 +1181,13 @@
                     bytes += sizes[fi + n];
                     n++;
                   }
-                  const data = await fetchRange(dash.urls, mediaBase + offsets[fi], mediaBase + offsets[fi] + bytes - 1);
+                  const data = await fetchRange(dash.urls, mediaBase + offsets[fi], mediaBase + offsets[fi] + bytes - 1, aborter.signal);
                   if (dead) return;
-                  await appendWait(sb, data);
+                  await appendWait(sb, data, aborter.signal);
                   fi += n;
                   fetched += data.byteLength;
                 } catch (e) {
+                  if (dead) return;
                   console.debug("[BiliKit Feed] MSE 补拉失败：", e == null ? void 0 : e.message);
                   ended = true;
                   safeEnd();
@@ -1169,6 +1218,7 @@
               finish(false);
             }, PLAY_WATCH);
           } catch (e) {
+            if (dead) return;
             console.debug("[BiliKit Feed] MSE 装载失败：", (e == null ? void 0 : e.message) || e);
             finish(false);
           }
@@ -1266,7 +1316,8 @@
         enterTimer = null;
       }
       if (!video || !video.classList.contains("on")) {
-        restoreCover();
+        if (video) teardown();
+        else restoreCover();
         return;
       }
       video.classList.remove("on");
@@ -1339,7 +1390,7 @@
           mode = "mse";
           ok = await attachMse(video, dash);
           if (!hovering || !cover.isConnected) {
-            stop();
+            teardown();
             return;
           }
           if (ok) console.debug(`[BiliKit Feed] MSE 起播 ${performance.now() - t0 | 0}ms ${bvid}`);
@@ -1660,7 +1711,7 @@
     markerIo = new IntersectionObserver((es) => fab.classList.toggle("scrolled", !es[0].isIntersecting));
     markerIo.observe(marker);
   }
-  const FEED_VERSION = "0.3.20";
+  const FEED_VERSION = "0.3.21";
   const seen = /* @__PURE__ */ new Set();
   let grid = null;
   let sentinel = null;
@@ -1675,6 +1726,7 @@
   let feedGen = 0;
   const items = [];
   const nodes = /* @__PURE__ */ new Map();
+  const MAX_ITEMS = 2e3;
   let cachedCols = 1;
   let cachedRowH = 0;
   let cachedGridTop = 0;
@@ -1742,6 +1794,14 @@
     var _a;
     const cover = el.querySelector(`.${NS}-cover`);
     (_a = cover == null ? void 0 : cover.__bkTeardown) == null ? void 0 : _a.call(cover);
+  }
+  function teardownRenderedCards() {
+    for (const el of nodes.values()) {
+      cardIo == null ? void 0 : cardIo.unobserve(el);
+      teardownCard(el);
+      el.remove();
+    }
+    nodes.clear();
   }
   function render() {
     if (!grid || !sentinel || !topSpacer || !bottomSpacer) return;
@@ -1812,11 +1872,7 @@
   }
   function clearAll() {
     if (cardIo) cardIo.disconnect();
-    for (const el of nodes.values()) {
-      teardownCard(el);
-      el.remove();
-    }
-    nodes.clear();
+    teardownRenderedCards();
     items.length = 0;
     if (topSpacer) topSpacer.style.height = "0px";
     if (bottomSpacer) bottomSpacer.style.height = "0px";
@@ -1861,7 +1917,7 @@
     try {
       let emptyStreak = 0;
       let first = true;
-      while ((first || sentinelInView()) && emptyStreak < 3) {
+      while ((first || sentinelInView()) && emptyStreak < 3 && items.length < MAX_ITEMS) {
         first = false;
         const { code, message, cards } = source === "web" ? await fetchWebFeed(webFreshIdx++) : await fetchAppFeed(getAccessKey());
         if (gen !== feedGen) return;
@@ -1876,14 +1932,17 @@
         for (const c of cards) {
           if (!c.bvid || seen.has(c.bvid)) continue;
           seen.add(c.bvid);
-          if (seen.size > 2e3) seen.delete(seen.values().next().value);
           items.push(c);
           addedThisPage++;
+          if (items.length >= MAX_ITEMS) break;
         }
         if (addedThisPage) render();
         emptyStreak = addedThisPage === 0 ? emptyStreak + 1 : 0;
       }
-      if (emptyStreak >= 3) {
+      if (items.length >= MAX_ITEMS) {
+        exhausted = true;
+        showTip(`本次已加载 ${MAX_ITEMS} 条，为限制长会话内存已暂停追加；刷新内容可继续。`);
+      } else if (emptyStreak >= 3) {
         if (source === "app" && !getAccessKey()) {
           exhausted = true;
           showTip("匿名推荐已刷完（B 站给匿名请求的是固定内容池）。配置 access_key 可看个性化、不重复的推荐。");
@@ -1948,10 +2007,14 @@
     }
     if (cardIo) cardIo.disconnect();
     if (sentinelIo) sentinelIo.disconnect();
+    if (renderRaf) {
+      cancelAnimationFrame(renderRaf);
+      renderRaf = 0;
+    }
+    teardownRenderedCards();
     document.querySelectorAll(`.${NS}`).forEach((g) => g.remove());
     feedGen++;
     loading = false;
-    nodes.clear();
     items.length = 0;
     seen.clear();
     exhausted = false;
@@ -2049,6 +2112,7 @@
       }
     };
     beat();
+    let lastHeartbeatAt = Date.now();
     try {
       localStorage.setItem("bilikit:feed.version", FEED_VERSION);
     } catch {
@@ -2081,14 +2145,16 @@
     setTimeout(() => {
       if (onHome()) checkCore();
     }, 2500);
-    let tries = 0;
-    const t = setInterval(() => {
+    setInterval(() => {
       if (!onHome()) return;
-      if (tries % 5 === 0) beat();
+      const now = Date.now();
+      if (now - lastHeartbeatAt >= 5e3) {
+        beat();
+        lastHeartbeatAt = now;
+      }
       hideNativeChrome();
       takeover();
-      if (++tries > 600) clearInterval(t);
-    }, 1e3);
+    }, 2e3);
   }
   mountFeed();
 

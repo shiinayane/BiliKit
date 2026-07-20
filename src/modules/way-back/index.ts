@@ -51,7 +51,12 @@ function init(cfg: Cfg): void {
 
   // 标题随 SPA 异步更新：盯 <title> 维护「视频 id → 已确认标题」，记录/展示按 id 取，杜绝张冠李戴
   const titleById = new Map<string, string>()
-  const noteTitle = (): void => { const id = videoIdOf(location.href); const t = cleanTitle(document.title); if (id && t) titleById.set(id, t) }
+  const noteTitle = (): void => {
+    const id = videoIdOf(location.href), t = cleanTitle(document.title)
+    if (!id || !t) return
+    titleById.delete(id); titleById.set(id, t) // 刷新插入顺序，做小 LRU
+    while (titleById.size > STACK_MAX * 2) titleById.delete(titleById.keys().next().value as string)
+  }
   let titleEl: Element | null = null
   // 只观察 <title> 节点本身（低频，仅标题文本变时触发）。**不再观察 document.head 的 childList**——
   // B 站播放页 head 里 style/link/preload 频繁增删，那个观察器会以 ~60 次/秒触发、是发热的主要 microtask 源。
@@ -63,7 +68,12 @@ function init(cfg: Cfg): void {
   })
   function watchTitle(): void {
     const el = document.querySelector('title')
-    if (el && el !== titleEl) { titleEl = el; titleMo.observe(el, { childList: true, characterData: true, subtree: true }); noteTitle() }
+    if (el && el !== titleEl) {
+      titleMo.disconnect() // MutationObserver 会同时强持有所有旧 target，换 title 前先断开避免积累 detached 节点
+      titleEl = el
+      titleMo.observe(el, { childList: true, characterData: true, subtree: true })
+      noteTitle()
+    }
   }
   watchTitle()
   document.addEventListener('DOMContentLoaded', () => watchTitle())

@@ -101,7 +101,14 @@ export function setupVideoPreview(cover: HTMLElement, bvid: string, cid?: string
   const stop = (): void => {
     hovering = false
     if (enterTimer) { clearTimeout(enterTimer); enterTimer = null }
-    if (!video || !video.classList.contains('on')) { restoreCover(); return } // 还没显示 → 直接复位
+    // video 已创建但尚未 show() = 正在等 dash/MSE 起播。此时只复位 UI 会留下一个未登记进
+    // activeOrder 的隐藏 MSE 实例；必须直接拆流。attachMse 的外部 dispose 会 resolve(false)，
+    // 因而下方 await 也能正常结束，不会再悬着闭包。
+    if (!video || !video.classList.contains('on')) {
+      if (video) teardown()
+      else restoreCover()
+      return
+    }
     video.classList.remove('on') // 触发淡出
     if (hideTimer) clearTimeout(hideTimer)
     hideTimer = setTimeout(() => {
@@ -149,7 +156,7 @@ export function setupVideoPreview(cover: HTMLElement, bvid: string, cid?: string
       if (dash && video) {
         mode = 'mse'
         ok = await attachMse(video, dash)
-        if (!hovering || !cover.isConnected) { stop(); return }
+        if (!hovering || !cover.isConnected) { teardown(); return }
         if (ok) console.debug(`[BiliKit Feed] MSE 起播 ${(performance.now() - t0) | 0}ms ${bvid}`)
       }
       // 2) 回退 durl <video src>

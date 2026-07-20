@@ -1,5 +1,5 @@
 import type { BiliKitModule, Cfg } from '../../core/module'
-import { rewritePlayurl as rewritePlayurlBase } from './core'
+import { normalizeCdnHost, rewritePlayurl as rewritePlayurlBase } from './core'
 
 /**
  * CDN 优选：把 B 站视频分片重定向到指定 CDN 镜像，绕开被分到的慢节点（海外 Akamai 等）。
@@ -12,14 +12,19 @@ function init(cfg: Cfg): void {
   ;(window as any).__BILIKIT_CDN_PICK__ = true
 
   // 想换的镜像主机（裸域名）。置空 '' = 关闭。来自设置面板（默认 hwb，日本实测首选）。
-  const TARGET_HOST = cfg.get<string>('targetHost')
+  const configuredHost = cfg.get<string>('targetHost')
+  const TARGET_HOST = configuredHost ? normalizeCdnHost(configuredHost) : null
   // 备用镜像：主镜像打嗝时回退，仍是大陆镜像、绝不回 akam/cosov。
   const BACKUP_HOSTS = ['upos-sz-upcdnbda2.bilivideo.com', 'upos-sz-mirrorhw.bilivideo.com']
 
   const DEBUG = false
   const log = (...a: unknown[]) => { if (DEBUG) console.log('[CDN优选]', ...a) }
 
-  if (!TARGET_HOST) { log('TARGET_HOST 为空，未启用'); return }
+  if (!TARGET_HOST) {
+    if (configuredHost) console.warn('[BiliKit] CDN 优选已禁用：自定义节点必须是 bilivideo/acgvideo 受信后缀下的纯主机名。')
+    else log('TARGET_HOST 为空，未启用')
+    return
+  }
 
   // 纯改写逻辑在 ./core；这里绑定 TARGET_HOST / BACKUP_HOSTS，下游调用点不变
   const rewritePlayurl = (root: any): boolean => rewritePlayurlBase(root, TARGET_HOST, BACKUP_HOSTS)
