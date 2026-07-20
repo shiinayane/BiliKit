@@ -98,6 +98,7 @@ function ensureDom(): void {
     if (e.source !== frameWin()) return
     if (e.data === 'bk-drawer-ready') { gotReady = true; tryReveal() }
     else if (e.data === 'bk-drawer-webfull') { gotWebfull = true; tryReveal() }
+    else if (e.data === 'bk-drawer-close') closeDrawer() // iframe 内获得焦点时，Esc 由子页桥接回来
   })
   panel.appendChild(frame)
   const load = document.createElement('div')

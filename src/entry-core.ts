@@ -30,6 +30,25 @@ function hideDrawerChrome(): void {
 }
 hideDrawerChrome()
 
+// 抽屉 iframe 获得焦点后，键盘事件不会冒泡到父文档。仿 BewlyCat：在子窗口捕获 Esc，
+// 用 postMessage 请求父页关闭；父页还会核对 event.source===当前 iframe，外部页面无法伪造。
+// 编辑器内的 Esc 留给输入法/输入框，浏览器真全屏也先让 Safari 自己退出。
+function setupDrawerEscape(): void {
+  if (window.top === window.self || !location.hash.includes('bk-drawer')) return
+  window.addEventListener('keydown', (e) => {
+    if ((e.key !== 'Escape' && e.code !== 'Escape') || e.isComposing) return
+    if (document.fullscreenElement || (document as any).webkitFullscreenElement) return
+    const editing = e.composedPath().some((n) => n instanceof HTMLElement && (
+      n.isContentEditable || n.matches('input,textarea,select')
+    ))
+    if (editing) return
+    e.preventDefault()
+    e.stopPropagation()
+    try { window.parent.postMessage('bk-drawer-close', '*') } catch { /* 忽略 */ }
+  }, true)
+}
+setupDrawerEscape()
+
 // 抽屉内（父页打 #bk-drawer / #bk-drawer-web）：单个轮询循环同时干两件揭幕相关的事，跑完即停：
 //   ① 首帧就绪 → postMessage('bk-drawer-ready')：Feed 据此撤加载遮罩。以 readyState≥2(HAVE_CURRENT_DATA)
 //      或 loadeddata/canplay 为准——比等真正开播(currentTime>0)更早，抢在出声前揭幕、声音不先于画面。

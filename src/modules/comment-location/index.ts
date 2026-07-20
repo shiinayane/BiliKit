@@ -1,8 +1,9 @@
 import type { BiliKitModule, Cfg } from '../../core/module'
+import { commentSexIconUrl, normalizeCommentSex } from './core'
 
 /**
- * 评论属地：在评论/回复的发布时间旁显示 IP 属地。
- * 迁移自 scripts/comment-location.user.js（逻辑逐字保留）。
+ * 评论信息：在姓名旁显示性别、在发布时间旁显示 IP 属地。
+ * 性别与属地共用一次 Shadow DOM 遍历/同一组观察器，不为每条评论发请求或新增 observer。
  * 不设顶层守卫——需在 Float 抽屉 iframe 内也生效。
  */
 function init(cfg: Cfg): void {
@@ -11,8 +12,9 @@ function init(cfg: Cfg): void {
 
   const DEBUG = false // 排查时改 true
   const PIN = cfg.get<string>('pin') || '' // 地名前缀符，默认无（想加自己填）
+  const SHOW_SEX = cfg.get<boolean>('showSex') !== false
 
-  const log = (...a: unknown[]) => { if (DEBUG) console.log('[评论属地]', ...a) }
+  const log = (...a: unknown[]) => { if (DEBUG) console.log('[评论信息]', ...a) }
 
   // 取属地：从 action-buttons 起，沿 shadow host 链向上找 reply_control.location
   function resolveLocation(el: any): string | null {
@@ -31,7 +33,7 @@ function init(cfg: Cfg): void {
 
   const format = (loc: string) => loc.replace(/^\s*IP属地[:：]\s*/, '') // 恒去「IP属地：」前缀，只留地名
 
-  // 穿透嵌套 shadow：给每个 action-buttons 注入属地；给每个尚未观察的嵌套 shadowRoot 挂作用域 observer。
+  // 穿透嵌套 shadow：给 user-info 注入性别、给 action-buttons 注入属地；二者共用作用域 observer。
   // 记住给评论树各层 shadowRoot 挂的观察器，SPA 换视频重绑时全部断开——否则旧观察器的回调引用模块闭包、
   // 一直可达，会把已脱离 DOM 的整棵旧评论树吊住不放（每看一个带评论的视频积一棵）。这是本模块的内存泄漏点。
   let observers: MutationObserver[] = []
@@ -53,16 +55,46 @@ function init(cfg: Cfg): void {
     mo.observe(sr, { childList: true, subtree: true })
     observers.push(mo)
   }
-  // 从某根穿透整树：注入属地 + 给每个嵌套 shadowRoot 挂观察者。root 可为 Element 或 ShadowRoot
+  function process(el: any): void {
+    if (el.localName === 'bili-comment-user-info') injectSex(el)
+    else if (el.localName === 'bili-comment-action-buttons-renderer') injectLocation(el)
+  }
+
+  // 从某根穿透整树：注入评论信息 + 给每个嵌套 shadowRoot 挂观察者。root 可为 Element 或 ShadowRoot
   function walk(root: any): void {
-    if (root.localName === 'bili-comment-action-buttons-renderer') inject(root)
+    process(root)
     let nodes
     try { nodes = root.querySelectorAll('*') } catch (_) { return }
     for (const n of nodes) {
-      if (n.localName === 'bili-comment-action-buttons-renderer') inject(n)
+      process(n)
       const sr = n.shadowRoot
       if (sr) { observeRoot(sr); walk(sr) }
     }
+  }
+
+  // 与 BewlyCat 相同，直接读 bili-comment-user-info.data.member.sex；不查用户资料接口。
+  // 复用 B 站评论头像悬停卡片的静态图片：每个图标只添加一个 img，同一 URL 由浏览器缓存共享。
+  function injectSex(userInfo: any): boolean {
+    if (!SHOW_SEX) return false
+    const sr = userInfo.shadowRoot
+    if (!sr || sr.querySelector('.bilikit-sex')) return false
+    const userName = sr.querySelector('#user-name')
+    const sex = normalizeCommentSex(userInfo.data?.member?.sex)
+    if (!userName || !sex) return false
+    const icon = document.createElement('img')
+    icon.className = 'bilikit-sex'
+    icon.src = commentSexIconUrl(sex)
+    icon.width = 16
+    icon.height = 16
+    icon.alt = ''
+    icon.decoding = 'async'
+    icon.draggable = false
+    icon.title = sex
+    icon.setAttribute('role', 'img')
+    icon.setAttribute('aria-label', sex)
+    icon.style.cssText = 'display:block;flex:0 0 16px;width:16px;height:16px;margin-left:6px;object-fit:contain;vertical-align:middle;'
+    userName.after(icon)
+    return true
   }
 
   // 块间距：量一次「点赞」块左外边距当原生间距、缓存复用。
@@ -77,7 +109,7 @@ function init(cfg: Cfg): void {
   }
 
   // 判重用「shadow 内是否已有 .bilikit-loc」，兼容 lit 重渲染后补回。
-  function inject(ab: any): boolean {
+  function injectLocation(ab: any): boolean {
     const sr = ab.shadowRoot
     if (!sr || sr.querySelector('.bilikit-loc')) return false
     const pubdate = sr.querySelector('#pubdate')
@@ -146,11 +178,12 @@ function init(cfg: Cfg): void {
 
 export const commentLocation: BiliKitModule = {
   id: 'comment-location',
-  name: '评论属地',
-  description: '评论/回复时间旁显示 IP 属地',
+  name: '评论信息',
+  description: '姓名旁显示性别，时间旁显示 IP 属地',
   category: '界面',
   runAt: 'idle',
   settings: [
+    { key: 'showSex', type: 'toggle', label: '姓名旁显示性别', default: true, hint: '直接读取评论已有数据；保密用户不显示，不额外请求接口' },
     { key: 'pin', type: 'text', label: '地名前缀符', default: '', placeholder: '如 📍 ', hint: '显示在属地前，默认无；想加自己填' },
   ],
   init,

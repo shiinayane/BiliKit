@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         BiliKit Core
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.5.25
+// @version      0.5.26
 // @author       shiinayane
-// @description  B 站体验增强核心，一装到位：CDN 优选（救海外卡顿）· 免登录看评论/动态/1080p · 主题跟随系统深浅 · 评论显 IP 属地 · 播放不息屏——统一设置面板集中开关。Safari 友好、无需扩展、零外部依赖。
+// @description  B 站体验增强核心，一装到位：CDN 优选（救海外卡顿）· 免登录看评论/动态/1080p · 主题跟随系统深浅 · 评论显性别/IP 属地 · 播放不息屏——统一设置面板集中开关。Safari 友好、无需扩展、零外部依赖。
 // @license      MIT
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20512%20512%22%3E%3Crect%20width%3D%22512%22%20height%3D%22512%22%20rx%3D%22116%22%20fill%3D%22%23FB7299%22%2F%3E%3Cg%20stroke%3D%22%23fff%22%20stroke-width%3D%2226%22%20stroke-linecap%3D%22round%22%3E%3Cline%20x1%3D%22212%22%20y1%3D%22182%22%20x2%3D%22166%22%20y2%3D%22104%22%2F%3E%3Cline%20x1%3D%22300%22%20y1%3D%22182%22%20x2%3D%22346%22%20y2%3D%22104%22%2F%3E%3C%2Fg%3E%3Crect%20x%3D%22108%22%20y%3D%22176%22%20width%3D%22296%22%20height%3D%22236%22%20rx%3D%2254%22%20fill%3D%22%23fff%22%2F%3E%3Cpath%20d%3D%22M234%20258%20302%20294%20234%20330Z%22%20fill%3D%22%2300AEEC%22%20stroke%3D%22%2300AEEC%22%20stroke-width%3D%2218%22%20stroke-linejoin%3D%22round%22%20stroke-linecap%3D%22round%22%2F%3E%3C%2Fsvg%3E
 // @match        *://*.bilibili.com/*
@@ -2052,7 +2052,7 @@
       }
     })();
   }
-  const VERSION = "0.5.25";
+  const VERSION = "0.5.26";
   const PANEL_ID = "bilikit-panel-root";
   const FEED_ID = "__feed__";
   const OPEN_ID = "__open__";
@@ -2907,10 +2907,18 @@
     ],
     init: init$4
   };
+  const PROFILE_ICON_BASE = "https://i0.hdslb.com/bfs/seed/jinkela/short/webui/user-profile/img/";
+  function normalizeCommentSex(value) {
+    return value === "男" || value === "女" ? value : null;
+  }
+  function commentSexIconUrl(sex) {
+    return `${PROFILE_ICON_BASE}gender_${sex === "男" ? "male" : "female"}.png@.avif`;
+  }
   function init$3(cfg) {
     if (window.__BILIKIT_COMMENT_LOC__) return;
     window.__BILIKIT_COMMENT_LOC__ = true;
     const PIN = cfg.get("pin") || "";
+    const SHOW_SEX = cfg.get("showSex") !== false;
     function resolveLocation(el2) {
       let n = el2, hop = 0;
       while (n && hop++ < 8) {
@@ -2944,8 +2952,12 @@
       mo.observe(sr, { childList: true, subtree: true });
       observers.push(mo);
     }
+    function process(el2) {
+      if (el2.localName === "bili-comment-user-info") injectSex(el2);
+      else if (el2.localName === "bili-comment-action-buttons-renderer") injectLocation(el2);
+    }
     function walk(root2) {
-      if (root2.localName === "bili-comment-action-buttons-renderer") inject(root2);
+      process(root2);
       let nodes;
       try {
         nodes = root2.querySelectorAll("*");
@@ -2953,13 +2965,36 @@
         return;
       }
       for (const n of nodes) {
-        if (n.localName === "bili-comment-action-buttons-renderer") inject(n);
+        process(n);
         const sr = n.shadowRoot;
         if (sr) {
           observeRoot(sr);
           walk(sr);
         }
       }
+    }
+    function injectSex(userInfo) {
+      var _a, _b;
+      if (!SHOW_SEX) return false;
+      const sr = userInfo.shadowRoot;
+      if (!sr || sr.querySelector(".bilikit-sex")) return false;
+      const userName = sr.querySelector("#user-name");
+      const sex = normalizeCommentSex((_b = (_a = userInfo.data) == null ? void 0 : _a.member) == null ? void 0 : _b.sex);
+      if (!userName || !sex) return false;
+      const icon = document.createElement("img");
+      icon.className = "bilikit-sex";
+      icon.src = commentSexIconUrl(sex);
+      icon.width = 16;
+      icon.height = 16;
+      icon.alt = "";
+      icon.decoding = "async";
+      icon.draggable = false;
+      icon.title = sex;
+      icon.setAttribute("role", "img");
+      icon.setAttribute("aria-label", sex);
+      icon.style.cssText = "display:block;flex:0 0 16px;width:16px;height:16px;margin-left:6px;object-fit:contain;vertical-align:middle;";
+      userName.after(icon);
+      return true;
     }
     let nativeGap = "";
     function blockGap(sr) {
@@ -2970,7 +3005,7 @@
       }
       return nativeGap || "16px";
     }
-    function inject(ab) {
+    function injectLocation(ab) {
       const sr = ab.shadowRoot;
       if (!sr || sr.querySelector(".bilikit-loc")) return false;
       const pubdate = sr.querySelector("#pubdate");
@@ -3037,11 +3072,12 @@
   }
   const commentLocation = {
     id: "comment-location",
-    name: "评论属地",
-    description: "评论/回复时间旁显示 IP 属地",
+    name: "评论信息",
+    description: "姓名旁显示性别，时间旁显示 IP 属地",
     category: "界面",
     runAt: "idle",
     settings: [
+      { key: "showSex", type: "toggle", label: "姓名旁显示性别", default: true, hint: "直接读取评论已有数据；保密用户不显示，不额外请求接口" },
       { key: "pin", type: "text", label: "地名前缀符", default: "", placeholder: "如 📍 ", hint: "显示在属地前，默认无；想加自己填" }
     ],
     init: init$3
@@ -3836,7 +3872,7 @@
     id: "no-login",
     name: "免登录",
     description: "未登录也能看评论 / 他人动态 / 1080p（装它即可替代 beefreely，避免脚本冲突）",
-    note: "开启后未登录也能：看视频/动态下方<b>评论</b>、看他人<b>动态</b>、看 <b>1080p</b> 视频。装了它就能卸载 beefreely 等免登录脚本，避免多个脚本抢改请求导致的时好时坏。<br><b>取舍（务必知悉）</b>：① 纯<b>只读</b>——页面「以为」你已登录（显示假账号），但发评论/点赞/投币/收藏/历史同步等需真鉴权的操作都会失败；② <b>看不到评论 IP 属地</b>——评论走匿名请求，B 站服务端只对真登录返回属地字段，免登录下拿不到（与「评论属地」模块不可兼得）；③ 1080p 上限为官方<b>试看</b>，4K/HDR/大会员专享清晰度仍拿不到；④ 仅<b>未登录</b>时生效，检测到已登录会自动让路、不干扰真账号。<br><b>默认开启</b>：只在未登录时激活（已登录零影响），首次激活会在底部弹一次可关闭的提示。这样无痕/未登录浏览打开即 1080p，无需每次手动开。<br><b>想真正登录</b>：直接点顶栏用户菜单里的「退出登录」即可——会跳到登录页，登录后自动回到当前页面；免登录本身<b>不会被关掉</b>，下次未登录时照常自动生效。",
+    note: "开启后未登录也能：看视频/动态下方<b>评论</b>、看他人<b>动态</b>、看 <b>1080p</b> 视频。装了它就能卸载 beefreely 等免登录脚本，避免多个脚本抢改请求导致的时好时坏。<br><b>取舍（务必知悉）</b>：① 纯<b>只读</b>——页面「以为」你已登录（显示假账号），但发评论/点赞/投币/收藏/历史同步等需真鉴权的操作都会失败；② <b>看不到评论 IP 属地</b>——评论走匿名请求，B 站服务端只对真登录返回属地字段，免登录下拿不到（「评论信息」里的性别仍可显示）；③ 1080p 上限为官方<b>试看</b>，4K/HDR/大会员专享清晰度仍拿不到；④ 仅<b>未登录</b>时生效，检测到已登录会自动让路、不干扰真账号。<br><b>默认开启</b>：只在未登录时激活（已登录零影响），首次激活会在底部弹一次可关闭的提示。这样无痕/未登录浏览打开即 1080p，无需每次手动开。<br><b>想真正登录</b>：直接点顶栏用户菜单里的「退出登录」即可——会跳到登录页，登录后自动回到当前页面；免登录本身<b>不会被关掉</b>，下次未登录时照常自动生效。",
     category: "增强",
     // 默认开：仅未登录时激活（已登录在 init 的 ckMd5 处即 return、零影响），首次激活弹一次性可关提示告知。
     // 目的：无痕模式存不住任何页面侧开关（localStorage/cookie 关窗即清、@grant none 无法用 GM 存储跨会话），
@@ -4308,7 +4344,7 @@
       } else if (e.data === "bk-drawer-webfull") {
         gotWebfull = true;
         tryReveal();
-      }
+      } else if (e.data === "bk-drawer-close") closeDrawer();
     });
     panel.appendChild(frame);
     const load2 = document.createElement("div");
@@ -4466,6 +4502,22 @@
     (document.head || document.documentElement).appendChild(s);
   }
   hideDrawerChrome();
+  function setupDrawerEscape() {
+    if (window.top === window.self || !location.hash.includes("bk-drawer")) return;
+    window.addEventListener("keydown", (e) => {
+      if (e.key !== "Escape" && e.code !== "Escape" || e.isComposing) return;
+      if (document.fullscreenElement || document.webkitFullscreenElement) return;
+      const editing = e.composedPath().some((n) => n instanceof HTMLElement && (n.isContentEditable || n.matches("input,textarea,select")));
+      if (editing) return;
+      e.preventDefault();
+      e.stopPropagation();
+      try {
+        window.parent.postMessage("bk-drawer-close", "*");
+      } catch {
+      }
+    }, true);
+  }
+  setupDrawerEscape();
   function setupDrawerReveal() {
     if (window.top === window.self || !location.hash.includes("bk-drawer")) return;
     const wantWeb = location.hash.includes("bk-drawer-web");
