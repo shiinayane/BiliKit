@@ -9,7 +9,7 @@
 - 打开开发者工具,留意 Console 报错(理论上**全程无红色报错**)。
 - 常用校验片段(控制台):
   - 主题:`document.documentElement.classList.contains('bili_dark')`
-  - 抽屉 iframe 数:`document.querySelectorAll('.bfloat-iframe').length`
+  - 抽屉 iframe 数:`document.querySelectorAll('.bk-dframe').length`（首次打开后应始终为 1）
   - 预连接节点:`document.querySelectorAll('link[rel=preconnect]').length`
   - 页面 overflow:`getComputedStyle(document.body).overflow`
 
@@ -41,8 +41,10 @@
 |2.8|抽屉打开时后退，然后前进|后退关闭并恢复原 URL；前进重建抽屉及当前视频|
 |2.9|从 `search.bilibili.com` / `space.bilibili.com` 打开 `www` 视频抽屉|因 History API 同源限制，地址栏保留原页；后退/前进仍能关闭/重开抽屉|
 |2.10|`modal`/`drawer-*` 模式下点窗外暗区|抽屉关闭(全屏模式无暗区,此条跳过)|
-|2.11|关闭后看 `document.querySelectorAll('.bk-dframe').length`|过渡与媒体清理结束(最迟~500ms)后为 **0**(iframe 销毁、停止后台播放)|
-|2.12|连续快速打开/关闭抽屉，并交替用 Esc、关闭键、浏览器后退|每次都回到原页 URL，绝不跳到 `about:blank`；关闭后无声音/后台视频|
+|2.11|首次打开并关闭后看 `document.querySelectorAll('.bk-dframe').length`，随后反复打开不同视频再查|始终为 **1**；关闭后无声音，面板带 `.parked`，iframe 未移除；任意时刻绝不出现第 2 个|
+|2.12|视频 A 播放中关闭，或立即点开视频 B（含慢网）|A 立刻停声；B 的首帧就绪、遮罩撤下后才恢复播放，不出现 spinner 仍在而声音/画面已先跑|
+|2.13|连续打开 5 个不同视频，在 iframe 控制台记录 `performance.timeOrigin`|每换一个不同视频都变化（新 Document），但 `.bk-dframe` 始终还是同一个元素；不会先 SPA 播放、5 秒后再二次重载|
+|2.14|连续快速打开/关闭抽屉，并交替用 Esc、关闭键、浏览器后退|每次都回到原页 URL，绝不跳到 `about:blank`；关闭后无声音/后台视频|
 
 ## 3. Float — 表现优化
 
@@ -82,7 +84,7 @@
 |6.2|开抽屉时 `getComputedStyle(document.body).overflow`|为 `hidden`(锁滚动)|
 |6.3|关抽屉后再查 overflow|**恢复**为原值(非 `hidden`)|
 |6.4|连续开→关→开多次|每次正常;无历史堆积(后退一次即回到开抽屉前)|
-|6.5|在抽屉 iframe 内点一个相关视频|iframe **内部导航**到新视频(B 站原生行为),**不**嵌套开新抽屉(顶层守卫生效)|
+|6.5|在抽屉 iframe 内点一个相关视频|捕获阶段直接在同一个 iframe 中整页 `replace` 到新视频（`performance.timeOrigin` 变化），**不**先走 B 站 SPA、也不嵌套开新抽屉|
 |6.6|整个过程 Console|无红色报错|
 |6.7|管理器里只装一份 BiliKit·Float(删掉旧 `Bilibili-Float`)|点视频只开**一个**抽屉;即便误装两份，单例守卫(`window.__BILIKIT_FLOAT__`)让后注入者退出，仍建议删旧版|
 
@@ -127,8 +129,10 @@
 |10.1|禁用 cookie|theme-sync 当前页仍能直切(bili_dark),仅持久化失效;不报错|
 |10.2|`prefers-color-scheme` 不支持的旧环境|theme-sync 退化为浅色,不报错|
 |10.3|抽屉内导航到跨子域(space./t./m.)|净化/主题镜像等同源操作自动跳过(try/catch),不报错|
-|10.4|快速连点多个视频卡|以最后一次为准,不残留多个抽屉/iframe|
-|10.5|网络极慢、iframe `load` 迟迟不触发|加载遮罩 6 秒兜底自动撤下|
+|10.4|快速连点多个视频卡并交替关闭/重开|以最后一次为准；`.bk-dframe` 数量始终 ≤1，不出现旧 iframe 与新 iframe 并存|
+|10.5|网络极慢、暂停确认或 iframe `load` 迟迟不触发|旧页 350ms 内不确认暂停时：已可控文档恢复旧页，无 bridge/尚未 ready 文档则先移除再重建单一 iframe 直接打最后目标；一旦子页接受 `location.replace` 则保留 nextToken 到新 Document 握手，15 秒仍无握手时同样顺序重建；DOM 中始终 `.bk-dframe` ≤1|
+|10.6|DevTools 开 Slow 3G，A 已播放时快速点 B、C，分别让 C 发生在 B 确认 replace 前/后|导航中只排队最后的 C；B 的新 nonce 第一次握手后立即转 C，不等 B 首帧、不恢复 B 播放；最终地址栏/抽屉都是 C|
+|10.7|在 A 内点相关视频 D 的同时，从背景页面再打开 B|先接管已不可撤销的 D Document nonce，再转最后选择 B；无永久 spinner、无后台声音、关闭仍能暂停|
 
 ---
 
@@ -140,7 +144,19 @@
 |11.2|查看性别为“保密”的评论|姓名右侧不显示性别图标|
 |11.3|展开楼中楼、滚动加载更多评论|新评论同样补上图标，已有评论不重复注入|
 |11.4|开启免登录模式查看评论|性别仍可显示；IP 属地因服务端匿名响应不返回而缺席|
-|11.5|SPA 连续切换多个视频后观察 DOM/内存|旧评论树 observer 会断开，无随视频数单调累积|
+|11.5|抽屉连续整页切换多个视频后观察 DOM/内存|旧 Document 连同评论树 observer 一并销毁，不跨视频累积；同一内容的无关 query SPA 变化仍会按宿主重绑|
+
+---
+
+## 12. Feed 当前页返回状态
+
+| # | 步骤 | 预期结果 |
+|---|------|----------|
+|12.1|打开方式选“当前页”，首页向下滚动并点视频，再用浏览器返回|回到相同推荐源与接近原滚动位置；已加载卡片不从第一页重拉|
+|12.2|Web 推荐源加载多页后执行 12.1，再继续触底|从离开前的 `fresh_idx` 继续加载，不重复第一页|
+|12.3|某卡标记“不感兴趣”，执行 12.1 后滚回该卡|标记浮层仍在，窗口化卸载/重建也不丢|
+|12.4|返回完成后刷新首页|一次性快照不会再次套用；按普通刷新逻辑重新拉取|
+|12.5|禁用 sessionStorage 或模拟配额不足后点视频|导航仍正常，只退化为返回后重新加载首页；Console 有一条保存失败警告|
 
 ---
 

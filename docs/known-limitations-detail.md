@@ -37,7 +37,7 @@ Safari 上 `createMediaElementSource` 接管 B 站 MSE 视频后，`AnalyserNode
 
 **目前处理**：接受为已知平台限制，代码里未保留任何针对性补丁（全部实测无效的尝试均已还原，避免留下死代码/误导性注释）。
 
-## 4. 内存占用高（1–2GB，偶发峰值 2–3GB）——主要是 B 站站点本身重，非本脚本泄漏
+## 4. 内存占用高（1–2GB，偶发峰值 2–3GB）——B 站地板 + 完整视频 iframe 生命周期残留
 
 有反馈「装了脚本后 Safari 内存飙到 2–3GB」。用 `footprint <WebContent pid>` 做了 **A/B 定量对比**（macOS 26，同样刷首页 + 反复开关抽屉看视频）：
 
@@ -50,15 +50,40 @@ Safari 上 `createMediaElementSource` 接管 B 站 MSE 视频后，`AnalyserNode
 | JS 堆（Gigacage） | 46→72 MB | 105→141 MB | +~70 MB |
 | **media（视频解码面）** | **4-37 MB** | **5-50 MB** | **≈0（都极小）** |
 
-**结论：**
+**这轮 A/B 的结论：**
 - **B 站原生自己就 1.0–1.6GB 且随使用持续增长**——重型 SPA（首页 + 播放器 + 弹幕 + 评论）的固有重量，改不动，这是地板；
-- **BiliKit 净增只有 ~+300MB（峰值 +556MB），是少数派**，且分散在 WebCore 堆 / JS 堆 / 合成面，**没有单一可 squash 的泄漏点**；
-- **完全不是视频/MSE**——media 分区两边都只有个位到几十 MB；此前怀疑的「抽屉视频解码缓冲不回收」经 footprint 证伪，DOM 探针也证实抽屉视频每次关都干净拆除；
+- **BiliKit 净增约 +300MB（峰值 +556MB），是少数派**，且分散在 WebCore 堆 / JS 堆 / 合成面；后续深入对照确认，其中很大一部分与「完整视频页 iframe 的首次生命周期」有关，见下节；
+- **不是视频解码/MSE 缓冲占主体**——media 分区两边都只有个位到几十 MB；DOM 探针能证明抽屉 `<video>` 和 iframe 元素已拆除，但「DOM 已移除」不等于浏览器进程已归还 WebCore/allocator 内存；
 - footprint 里有大量 **Reclaimable**（已 free 但分配器暂攥着的页，系统有压力即回收），所以活动监视器看到的数字偏虚高。
 
-**已做的缓解：** 抽屉 iframe 销毁 + `contentWindow.close()` + pagehide 清 video；Feed 真·窗口化（DOM 节点有界）+ 封面屏外卸载 + hover 预览并发上限。（注：封面 `isolation:isolate` 曾于 0.3.17 改为「仅预览时按需加」以省合成面，但按需增删会 churn 合成层致邻卡露缝，0.3.19 已改回常驻——详见 `src/feed/styles.ts` 里 `.bk-feed-cover` 的注释。）这些把「我们的那一份」压到合理范围，但**动不了 B 站自身的地板**。
+### 2026-07-20 深入对照：销毁、复用与顶层导航
 
-**一句话：只要在 B 站，1–2GB 是站点本身的重量，不是脚本泄漏，也无法靠脚本根治。**
+为区分「WebKit 独有泄漏」「反复创建 iframe」和「B 站完整视频页本身很重」，在 Safari 与 Chrome 150 做了三组实机对照：
+
+| 浏览器 / 路径 | 首页基线 | 视频加载期间 | 操作完成并等待后 | 净残留 |
+|---|---:|---:|---:|---:|
+| Safari：打开并销毁 iframe 3 次 | 449 MB | 最高 907 MB | 713 MB（强制 GC） | +264 MB |
+| Safari：同一 iframe 内连续换 3 个视频，只销毁 1 次 | 372 MB | 829 → 792 → 743 MB | 630 MB | +258 MB |
+| Chrome：打开并销毁 iframe 3 次 | 168 MB | 首次 581 MB | 458 MB | +290 MB |
+| Chrome：同一 iframe 内连续换 3 个视频，只销毁 1 次 | 136 MB | 898 → 835 → 863 MB | 377 MB | +241 MB |
+| Chrome：顶层视频页往返 3 次 | 186 MB | 首次 459 MB | 347 MB | +161 MB |
+| Safari：顶层视频页往返 1 次 | 132 MB | 视频页进入独立 WebContent | 132 MB | 0 MB |
+
+不同轮次的推荐视频不完全相同，因此绝对值不能横向当基准；有意义的是各组自己的增量和趋势：
+
+- **不是 WebKit 独有**：Chromium 在移除完整视频 iframe 后同样留下数百 MB；问题是 B 站完整视频页、浏览上下文销毁、浏览器 allocator / 页面缓存共同作用，不能只归因于 Safari；
+- **复用 iframe 元素、但每个不同视频换新 Document，能防止继续线性爬升**：同一个 iframe browsing context 内整页切换第二、第三个视频时，两种浏览器都围绕首次加载后的平台波动，没有按视频数继续增加；这不等于复用 B 站视频 SPA 应用；
+- **销毁 iframe 不能保证回到首页基线**：无论 `remove()`、`contentWindow.close()`、子页停媒体、先跳 `about:blank`、等待还是 GC，首次完整视频页生命周期后仍约残留 240–290MB；连续销毁会增加瞬时高点，Chrome 稳定值也比单次销毁更高；
+- **Safari 顶层导航的释放最干净**：视频页进入独立 WebContent，返回首页后视频进程退出，首页进程保持原值。Chrome 本轮复用了同一个 Renderer，返回后的残留较 iframe 少，但不是零；
+- Safari 对高占用进程跑 `heap` 时还能看到旧 `WebCore::HTMLDocument` 由 `allScriptExecutionContextsMap`、`LocalDOMWindow`、渲染合成相关对象继续持有；`leaks` 只报约 28KB 传统泄漏。这更像 WebCore 生命周期/缓存和 allocator 驻留，而不是一个简单的 JS detached DOM 或视频缓冲泄漏。
+
+**采用的架构：单 iframe 元素 + 每个不同视频一个新 Document。** 整个顶层标签页的 DOM 始终至多一个抽屉 iframe；关闭时通过 `suspend → ack`（消息丢失会重试）暂停子页媒体，再用 3 秒短守卫压住异步 autoplay，结束可见合成并隐藏面板，但不移除 browsing context。打开不同视频时先等旧文档确认暂停（子页脚本缺失时最多等 350ms），随后由子页在同一 iframe 内 `location.replace`，让旧 Vue 应用、播放器、评论树和媒体文档完整走 `pagehide/unload`；抽屉内部点击会在捕获阶段先于 Vue Router 接管，`pushState/replaceState` 包装与 500ms 内容 ID 检查再兜程序化跳转。已覆盖普通视频、番剧/课程、分 P，以及带 `bvid/aid/oid` 的列表/活动播放 URL；无法提取稳定内容 ID 的特殊活动 URL 保守放行，仍是已知边界。每个 Document 使用独立 nonce，拒绝旧文档迟到的 ready/location 消息。新文档先保持暂停，首帧就绪后严格按「撤遮罩 → 恢复播放」排序；浏览器 Forward 重开同一视频时才直接复用原文档。若 replace 已接受但 15 秒仍无新 nonce 握手，或未 ready 文档连 suspend 都无确认，会先移除旧 iframe 再以初始导航顺序重建一个；这是错误页/断网的有界恢复路径，不会让新旧 iframe 并存。这样接受“首页 + 最后一个完整视频页”的数百 MB 驻留，但避免把多个视频世代堆在一个 SPA 文档里。若目标是「关闭抽屉就显著回收」，常驻 iframe 仍做不到，需要使用下述顶层导航或独立标签/窗口。
+
+**顶层导航落地：** Feed 的「当前页」模式现会在离开前把卡片数据、推荐游标与滚动位置存入标签页级 `sessionStorage`，返回首页后一次性恢复；不保活 DOM/媒体上下文。对 B 站当前视频包的逆向确认，相关推荐 SPA 是只在视频页应用壳内创建的私有 Vue Router，首页没有可复用的全局入口；强行复用必须自行搬运整个视频应用，反而会把首页与视频重量留在同一 WebContent。详见 [首页 → 视频的顶层导航与状态恢复](RESEARCH-top-level-navigation.md)。
+
+**已做的缓解：** 抽屉采用唯一 iframe 元素 + 不同视频强制换 Document + 关闭/换片前可靠 suspend；不再尝试跨视频复用 B 站 SPA。Feed 使用真·窗口化（DOM 节点有界）+ 封面屏外卸载 + hover 预览并发上限。（注：封面 `isolation:isolate` 曾于 0.3.17 改为「仅预览时按需加」以省合成面，但按需增删会 churn 合成层致邻卡露缝，0.3.19 已改回常驻——详见 `src/feed/styles.ts` 里 `.bk-feed-cover` 的注释。）这些控制的是脚本自身和跨视频 SPA 的无界增长，但**动不了 B 站自身与最后一个完整视频页的内存地板**。
+
+**一句话：B 站本身提供了很高的内存地板；BiliKit 接受唯一完整视频 iframe 的稳定驻留，以复用防止继续爬升，真正回收则使用「当前页」顶层导航。**
 
 **排查方法留档**（便于以后复现，不必重走弯路）：
 - 内存分区看构成：`footprint <pid>` 或 `vmmap --summary <pid>`（pid 从活动监视器取 `com.apple.WebKit.WebContent`）；重点看 `media`（视频）与 `WebKit malloc / graphics / JS`（站点堆）的占比；

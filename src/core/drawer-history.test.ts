@@ -2,13 +2,16 @@ import { describe, expect, it } from 'vitest'
 import {
   DRAWER_MARK,
   DRAWER_WEB_MARK,
+  canReuseDrawerDocument,
   drawerDisplayUrl,
   drawerFrameName,
   drawerMark,
+  drawerPlayableId,
   readDrawerFrameName,
   readDrawerOrigin,
   readDrawerRoute,
   safeDrawerVideoUrl,
+  shouldReplaceDrawerDocument,
   withDrawerOrigin,
   withDrawerRoute,
   type DrawerHistoryRoute,
@@ -61,6 +64,14 @@ describe('drawer history', () => {
     expect(readDrawerFrameName('other-frame:test-token-123:web')).toBeNull()
   })
 
+  it('仅同 token、同 URL、同模式复用常驻 iframe 文档', () => {
+    const loaded = { token: route.token, url: route.url, webFull: false }
+    expect(canReuseDrawerDocument(loaded, route)).toBe(true)
+    expect(canReuseDrawerDocument(loaded, { ...route, token: 'another-token-456' })).toBe(false)
+    expect(canReuseDrawerDocument(loaded, { ...route, url: route.url + '?p=2' })).toBe(false)
+    expect(canReuseDrawerDocument(loaded, { ...route, webFull: true })).toBe(false)
+  })
+
   it('只把两个精确内部 hash 认作抽屉标记', () => {
     expect(drawerMark(DRAWER_MARK)).toBe(DRAWER_MARK)
     expect(drawerMark(DRAWER_WEB_MARK)).toBe(DRAWER_WEB_MARK)
@@ -84,5 +95,93 @@ describe('drawer history', () => {
       'https://search.bilibili.com/video/BV1xx',
       'https://www.bilibili.com',
     )).toBeNull()
+  })
+
+  it('识别可安全强制换文档的播放内容 ID', () => {
+    expect(drawerPlayableId('https://www.bilibili.com/video/BV1XX?p=2')).toBe('video:bv1xx')
+    expect(drawerPlayableId('https://www.bilibili.com/bangumi/play/ep123')).toBe('bangumi:ep123')
+    expect(drawerPlayableId('https://www.bilibili.com/cheese/play/ss456')).toBe('cheese:ss456')
+    expect(drawerPlayableId('https://www.bilibili.com/list/watchlater?bvid=BV1YY')).toBe('video:bv1yy')
+    expect(drawerPlayableId('https://www.bilibili.com/festival/test?oid=123')).toBe('video:av123')
+    expect(drawerPlayableId('https://www.bilibili.com/list/watchlater')).toBeNull()
+  })
+
+  it('不同播放内容、分 P 与真实 ss→ep 导航都整页换文档，仅无关 query 不换', () => {
+    expect(shouldReplaceDrawerDocument(
+      'https://www.bilibili.com/video/BV1AA',
+      'https://www.bilibili.com/video/BV1BB',
+    )).toBe(true)
+    expect(shouldReplaceDrawerDocument(
+      'https://www.bilibili.com/video/BV1AA?p=1',
+      'https://www.bilibili.com/video/BV1AA?p=2',
+    )).toBe(true)
+    expect(shouldReplaceDrawerDocument(
+      'https://www.bilibili.com/video/BV1AA?spm_id_from=x',
+      'https://www.bilibili.com/video/BV1AA?spm_id_from=y',
+    )).toBe(false)
+    expect(shouldReplaceDrawerDocument(
+      'https://www.bilibili.com/bangumi/play/ss100',
+      'https://www.bilibili.com/bangumi/play/ep101',
+    )).toBe(true)
+    expect(shouldReplaceDrawerDocument(
+      'https://www.bilibili.com/bangumi/play/ep101',
+      'https://www.bilibili.com/bangumi/play/ep102',
+    )).toBe(true)
+    expect(shouldReplaceDrawerDocument(
+      'https://www.bilibili.com/video/BV1AA',
+      'https://evil.example/video/BV1BB',
+    )).toBe(false)
+    expect(shouldReplaceDrawerDocument(
+      'https://www.bilibili.com/list/watchlater?bvid=BV1AA',
+      'https://www.bilibili.com/list/watchlater?bvid=BV1BB',
+    )).toBe(true)
+  })
+
+  it('只对站点 replaceState/URL 观测容忍 ss→ep 落地规范化', () => {
+    expect(shouldReplaceDrawerDocument(
+      'https://www.bilibili.com/bangumi/play/ss100',
+      'https://www.bilibili.com/bangumi/play/ep101',
+      true,
+    )).toBe(false)
+    expect(shouldReplaceDrawerDocument(
+      'https://www.bilibili.com/cheese/play/ss100',
+      'https://www.bilibili.com/cheese/play/ep101',
+      true,
+    )).toBe(false)
+    expect(shouldReplaceDrawerDocument(
+      'https://www.bilibili.com/bangumi/play/ep101',
+      'https://www.bilibili.com/bangumi/play/ep102',
+      true,
+    )).toBe(true)
+  })
+
+  it('列表 shell 在有无内容 ID 之间变化时 fail closed 为整页换文档', () => {
+    expect(shouldReplaceDrawerDocument(
+      'https://www.bilibili.com/list/watchlater',
+      'https://www.bilibili.com/list/watchlater?bvid=BV1AA',
+    )).toBe(true)
+    expect(shouldReplaceDrawerDocument(
+      'https://www.bilibili.com/list/watchlater?bvid=BV1AA',
+      'https://www.bilibili.com/list/watchlater',
+    )).toBe(true)
+    expect(shouldReplaceDrawerDocument(
+      'https://www.bilibili.com/list/watchlater?spm_id_from=x',
+      'https://www.bilibili.com/list/watchlater?spm_id_from=y',
+    )).toBe(false)
+  })
+
+  it('列表/活动的同 BVID 分 P 及播放 shell 跨路由也换文档', () => {
+    expect(shouldReplaceDrawerDocument(
+      'https://www.bilibili.com/list/watchlater?bvid=BV1AA&p=1',
+      'https://www.bilibili.com/list/watchlater?bvid=BV1AA&p=2',
+    )).toBe(true)
+    expect(shouldReplaceDrawerDocument(
+      'https://www.bilibili.com/festival/x?bvid=BV1AA&p=1',
+      'https://www.bilibili.com/festival/x?bvid=BV1AA&p=2',
+    )).toBe(true)
+    expect(shouldReplaceDrawerDocument(
+      'https://www.bilibili.com/list/watchlater?bvid=BV1AA',
+      'https://www.bilibili.com/video/BV1AA',
+    )).toBe(true)
   })
 })

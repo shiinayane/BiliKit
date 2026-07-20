@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BiliKit Feed
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.3.21
+// @version      0.3.22
 // @author       shiinayane
 // @description  B 站首页换成手机 App 的个性化推荐流。零框架纯原生实现（无 React/Vue、gzip 约 29KB）+ 窗口化虚拟化，约束 DOM、封面与预览媒体的常驻资源。点卡片在底部抽屉内播放、封面悬停「真视频」秒开预览（MSE，接近原生 App）。需配合 BiliKit Core（登录 / 设置）。
 // @license      MIT
@@ -1536,7 +1536,7 @@
     const notInterest = rs.find((r) => r.id === 1) || rs.find((r) => /不感兴趣|这个内容/.test(r.name)) || rs.find((r) => r !== upper);
     return { notInterest, upper };
   }
-  function makeCard(c) {
+  function makeCard(c, beforeCurrentNavigation) {
     const el = document.createElement("div");
     el.className = `${NS}-card`;
     if (c.bvid) el.dataset.bvid = c.bvid;
@@ -1639,8 +1639,10 @@
       }
       if (c.bvid) {
         const url = `https://www.bilibili.com/video/${c.bvid}`;
-        if (readSetting("feed.openMode", "drawer") === "current") location.href = url;
-        else window.open(url, "_blank", "noopener");
+        if (readSetting("feed.openMode", "drawer") === "current") {
+          beforeCurrentNavigation == null ? void 0 : beforeCurrentNavigation();
+          location.href = url;
+        } else window.open(url, "_blank", "noopener");
         return;
       }
       if (c.uri && /^https?:\/\//i.test(c.uri)) window.open(c.uri, "_blank", "noopener");
@@ -1711,7 +1713,59 @@
     markerIo = new IntersectionObserver((es) => fab.classList.toggle("scrolled", !es[0].isIntersecting));
     markerIo.observe(marker);
   }
-  const FEED_VERSION = "0.3.21";
+  const FEED_VERSION = "0.3.22";
+  const KEY = "bilikit:feed.return-session";
+  const VERSION = 1;
+  const MAX_AGE_MS = 24 * 60 * 60 * 1e3;
+  function isCard(value) {
+    if (!value || typeof value !== "object") return false;
+    const card = value;
+    return typeof card.bvid === "string" && !!card.bvid && typeof card.title === "string" && typeof card.cover === "string" && (card.source === "app" || card.source === "web");
+  }
+  function parseFeedReturnSession(raw, now = Date.now()) {
+    if (!raw) return null;
+    try {
+      const value = JSON.parse(raw);
+      if (value.version !== VERSION || typeof value.savedAt !== "number" || now - value.savedAt > MAX_AGE_MS || value.savedAt > now + 6e4) return null;
+      if (value.source !== "app" && value.source !== "web") return null;
+      if (!Array.isArray(value.items) || !value.items.length || !value.items.every(isCard)) return null;
+      return {
+        version: VERSION,
+        savedAt: value.savedAt,
+        source: value.source,
+        webFreshIdx: Math.max(1, Math.floor(Number(value.webFreshIdx) || 1)),
+        exhausted: value.exhausted === true,
+        scrollY: Math.max(0, Number(value.scrollY) || 0),
+        items: value.items
+      };
+    } catch {
+      return null;
+    }
+  }
+  function saveFeedReturnSession(session, storage = sessionStorage, now = Date.now()) {
+    try {
+      const value = { version: VERSION, savedAt: now, ...session };
+      storage.setItem(KEY, JSON.stringify(value));
+      return true;
+    } catch (error) {
+      console.warn("[BiliKit Feed] 保存返回状态失败，将按普通当前页导航：", error);
+      return false;
+    }
+  }
+  function takeFeedReturnSession(now = Date.now(), storage = sessionStorage) {
+    let raw;
+    try {
+      raw = storage.getItem(KEY);
+    } catch {
+      return null;
+    }
+    const value = parseFeedReturnSession(raw, now);
+    try {
+      storage.removeItem(KEY);
+    } catch {
+    }
+    return value;
+  }
   const seen = /* @__PURE__ */ new Set();
   let grid = null;
   let sentinel = null;
@@ -1803,6 +1857,16 @@
     }
     nodes.clear();
   }
+  function saveCurrentFeedForReturn() {
+    if (!items.length) return;
+    saveFeedReturnSession({
+      source,
+      webFreshIdx,
+      exhausted,
+      scrollY: window.scrollY,
+      items
+    });
+  }
   function render() {
     if (!grid || !sentinel || !topSpacer || !bottomSpacer) return;
     if (!items.length) {
@@ -1838,7 +1902,7 @@
     bottomSpacer.style.height = Math.max(0, (totalRows - (lastRow + 1)) * rowH) + "px";
     for (let i = startIdx; i < endIdx; i++) {
       if (nodes.has(i)) continue;
-      const el = makeCard(items[i]);
+      const el = makeCard(items[i], saveCurrentFeedForReturn);
       nodes.set(i, el);
       let ref = bottomSpacer;
       for (let j = i + 1; j < endIdx; j++) {
@@ -2020,6 +2084,14 @@
     exhausted = false;
     cooldownUntil = 0;
     invalidateLayout();
+    const returnSession = takeFeedReturnSession();
+    if (returnSession) {
+      source = returnSession.source;
+      webFreshIdx = returnSession.webFreshIdx;
+      exhausted = returnSession.exhausted;
+      items.push(...returnSession.items.slice(0, MAX_ITEMS));
+      for (const card of items) seen.add(card.bvid);
+    }
     injectStyle();
     native.style.setProperty("display", "none", "important");
     cardIo = new IntersectionObserver(
@@ -2078,8 +2150,20 @@
       gridRo.observe(grid);
     }
     mountControls((btn) => refreshFeed(btn), { initial: source, onSwitch: switchSource });
-    renderSkeletons(12);
-    loadMore();
+    if (returnSession) {
+      const scrollY = returnSession.scrollY;
+      render();
+      requestAnimationFrame(() => {
+        invalidateLayout();
+        render();
+        window.scrollTo(0, scrollY);
+        scheduleRender();
+        if (!exhausted && sentinelInView()) void loadMore();
+      });
+    } else {
+      renderSkeletons(12);
+      void loadMore();
+    }
     return true;
   }
   const REPO = "https://github.com/shiinayane/BiliKit";

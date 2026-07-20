@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BiliKit Core
 // @namespace    https://github.com/shiinayane/BiliKit
-// @version      0.5.28
+// @version      0.5.31
 // @author       shiinayane
 // @description  B 站体验增强核心，一装到位：CDN 优选（救海外卡顿）· 免登录看评论/动态/1080p · 主题跟随系统深浅 · 评论显性别/IP 属地 · 播放不息屏——统一设置面板集中开关。Safari 友好、无需扩展、零外部依赖。
 // @license      MIT
@@ -2052,7 +2052,7 @@
       }
     })();
   }
-  const VERSION = "0.5.28";
+  const VERSION = "0.5.31";
   const PANEL_ID = "bilikit-panel-root";
   const FEED_ID = "__feed__";
   const OPEN_ID = "__open__";
@@ -3941,6 +3941,138 @@
     runAt: "start",
     init: init$1
   };
+  const DRAWER_HISTORY_KEY = "__bilikitDrawer";
+  const DRAWER_ORIGIN_KEY = "__bilikitDrawerOrigin";
+  const DRAWER_FRAME_PREFIX = "bilikit-drawer:";
+  const DRAWER_DOCUMENT_NAV_KEY = "bilikit-drawer-document-navigation";
+  const DRAWER_MARK = "#bk-drawer";
+  const DRAWER_WEB_MARK = "#bk-drawer-web";
+  function canReuseDrawerDocument(loaded, route) {
+    return !!loaded.token && loaded.token === route.token && loaded.url === route.url && loaded.webFull === route.webFull;
+  }
+  function drawerFrameName(route) {
+    return `${DRAWER_FRAME_PREFIX}${route.token}:${route.webFull ? "web" : "plain"}`;
+  }
+  function readDrawerFrameName(name) {
+    if (!name.startsWith(DRAWER_FRAME_PREFIX)) return null;
+    const rest = name.slice(DRAWER_FRAME_PREFIX.length);
+    const split = rest.lastIndexOf(":");
+    if (split <= 0) return null;
+    const token = rest.slice(0, split);
+    const mode = rest.slice(split + 1);
+    if (!/^[0-9a-z-]{8,}$/i.test(token) || mode !== "web" && mode !== "plain") return null;
+    return { token, webFull: mode === "web" };
+  }
+  function drawerMark(hash) {
+    if (hash === DRAWER_MARK) return DRAWER_MARK;
+    if (hash === DRAWER_WEB_MARK) return DRAWER_WEB_MARK;
+    return null;
+  }
+  function safeDrawerVideoUrl(target, expectedOrigin) {
+    try {
+      const next = new URL(target);
+      if (next.origin !== expectedOrigin || !/(^|\.)bilibili\.com$/i.test(next.hostname)) return null;
+      if (!/^\/(?:video\/(?:BV[0-9A-Za-z]+|av\d+)|bangumi\/play\/(?:ep|ss)\d+|cheese\/play\/(?:ep|ss)\d+|list\/|festival\/)/i.test(next.pathname)) return null;
+      if (drawerMark(next.hash)) next.hash = "";
+      return next.href;
+    } catch {
+      return null;
+    }
+  }
+  function drawerPlayableId(target, base = target) {
+    var _a, _b, _c;
+    try {
+      const url = new URL(target, base);
+      const path = url.pathname;
+      const video = (_a = path.match(/^\/video\/(BV[0-9A-Za-z]+|av\d+)/i)) == null ? void 0 : _a[1];
+      if (video) return `video:${video.toLowerCase()}`;
+      const bangumi = (_b = path.match(/^\/bangumi\/play\/((?:ep|ss)\d+)/i)) == null ? void 0 : _b[1];
+      if (bangumi) return `bangumi:${bangumi.toLowerCase()}`;
+      const cheese = (_c = path.match(/^\/cheese\/play\/((?:ep|ss)\d+)/i)) == null ? void 0 : _c[1];
+      if (cheese) return `cheese:${cheese.toLowerCase()}`;
+      if (/^\/(?:list|festival)\//i.test(path)) {
+        const bvid = url.searchParams.get("bvid");
+        if (bvid && /^BV[0-9A-Za-z]+$/i.test(bvid)) return `video:${bvid.toLowerCase()}`;
+        const aid = url.searchParams.get("aid") || url.searchParams.get("oid");
+        if (aid && /^\d+$/.test(aid)) return `video:av${aid}`;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+  function shouldReplaceDrawerDocument(current, target, allowSeasonCanonicalization = false) {
+    let currentUrl;
+    let targetUrl;
+    try {
+      currentUrl = new URL(current);
+      targetUrl = new URL(target, currentUrl);
+    } catch {
+      return false;
+    }
+    if (currentUrl.origin !== targetUrl.origin) return false;
+    const from = drawerPlayableId(currentUrl.href);
+    const to = drawerPlayableId(targetUrl.href);
+    if (!from && !to) return false;
+    if (!from || !to) return true;
+    if (from === to) {
+      if (from.startsWith("video:")) {
+        const fromPart = currentUrl.searchParams.get("p") || "1";
+        const toPart = targetUrl.searchParams.get("p") || "1";
+        if (fromPart !== toPart) return true;
+        const routeFamily = (url) => {
+          if (/^\/video\//i.test(url.pathname)) return "video";
+          if (/^\/list\//i.test(url.pathname)) return "list";
+          if (/^\/festival\//i.test(url.pathname)) return "festival";
+          return "other";
+        };
+        if (routeFamily(currentUrl) !== routeFamily(targetUrl)) return true;
+      }
+      return false;
+    }
+    if (allowSeasonCanonicalization) {
+      const canonicalizedBangumi = from.startsWith("bangumi:ss") && to.startsWith("bangumi:ep");
+      const canonicalizedCheese = from.startsWith("cheese:ss") && to.startsWith("cheese:ep");
+      if (canonicalizedBangumi || canonicalizedCheese) return false;
+    }
+    return true;
+  }
+  function drawerDisplayUrl(target, currentHref) {
+    try {
+      const current = new URL(currentHref);
+      const next = new URL(target, current);
+      if (next.origin !== current.origin) return null;
+      if (drawerMark(next.hash)) next.hash = "";
+      return next.href;
+    } catch {
+      return null;
+    }
+  }
+  function withDrawerRoute(state, route) {
+    const base = state && typeof state === "object" && !Array.isArray(state) ? state : {};
+    const out = { ...base, [DRAWER_HISTORY_KEY]: route };
+    delete out[DRAWER_ORIGIN_KEY];
+    return out;
+  }
+  function withDrawerOrigin(state, token) {
+    const base = state && typeof state === "object" && !Array.isArray(state) ? state : {};
+    const out = { ...base, [DRAWER_ORIGIN_KEY]: token };
+    delete out[DRAWER_HISTORY_KEY];
+    return out;
+  }
+  function readDrawerOrigin(state) {
+    if (!state || typeof state !== "object") return null;
+    const token = state[DRAWER_ORIGIN_KEY];
+    return typeof token === "string" ? token : null;
+  }
+  function readDrawerRoute(state) {
+    if (!state || typeof state !== "object") return null;
+    const route = state[DRAWER_HISTORY_KEY];
+    if (!route || typeof route !== "object") return null;
+    const r = route;
+    if (typeof r.token !== "string" || !r.token || typeof r.url !== "string" || typeof r.cover !== "string" || typeof r.webFull !== "boolean" || typeof r.immersive !== "boolean") return null;
+    return r;
+  }
   function isPlayPage(pathname = location.pathname) {
     return /^\/(video\/|bangumi\/play\/|cheese\/play\/|list\/|festival\/)/.test(pathname);
   }
@@ -3984,8 +4116,11 @@
     const JUMP_FLAG = "bilikit-wb-jump";
     if (inDrawer2) {
       try {
+        const continuedUrl = sessionStorage.getItem(DRAWER_DOCUMENT_NAV_KEY) || "";
+        sessionStorage.removeItem(DRAWER_DOCUMENT_NAV_KEY);
+        const continued = !!continuedUrl && videoIdOf(continuedUrl, location.href) === videoIdOf(location.href, location.href);
         if (sessionStorage.getItem(JUMP_FLAG)) sessionStorage.removeItem(JUMP_FLAG);
-        else sessionStorage.removeItem(STACK_KEY);
+        else if (!continued) sessionStorage.removeItem(STACK_KEY);
       } catch {
       }
     }
@@ -4084,7 +4219,8 @@
     };
     let leavingViaJump = false;
     window.addEventListener("pagehide", () => {
-      if (!leavingViaJump) recordEntry(location.href, document.title, departureTime(), false);
+      if (leavingViaJump) return;
+      recordEntry(location.href, document.title, departureTime(), false);
     });
     function jumpTo(i) {
       const stack = readStack();
@@ -4309,76 +4445,6 @@
     ],
     init
   };
-  const DRAWER_HISTORY_KEY = "__bilikitDrawer";
-  const DRAWER_ORIGIN_KEY = "__bilikitDrawerOrigin";
-  const DRAWER_FRAME_PREFIX = "bilikit-drawer:";
-  const DRAWER_MARK = "#bk-drawer";
-  const DRAWER_WEB_MARK = "#bk-drawer-web";
-  function drawerFrameName(route) {
-    return `${DRAWER_FRAME_PREFIX}${route.token}:${route.webFull ? "web" : "plain"}`;
-  }
-  function readDrawerFrameName(name) {
-    if (!name.startsWith(DRAWER_FRAME_PREFIX)) return null;
-    const rest = name.slice(DRAWER_FRAME_PREFIX.length);
-    const split = rest.lastIndexOf(":");
-    if (split <= 0) return null;
-    const token = rest.slice(0, split);
-    const mode = rest.slice(split + 1);
-    if (!/^[0-9a-z-]{8,}$/i.test(token) || mode !== "web" && mode !== "plain") return null;
-    return { token, webFull: mode === "web" };
-  }
-  function drawerMark(hash) {
-    if (hash === DRAWER_MARK) return DRAWER_MARK;
-    if (hash === DRAWER_WEB_MARK) return DRAWER_WEB_MARK;
-    return null;
-  }
-  function safeDrawerVideoUrl(target, expectedOrigin) {
-    try {
-      const next = new URL(target);
-      if (next.origin !== expectedOrigin || !/(^|\.)bilibili\.com$/i.test(next.hostname)) return null;
-      if (!/^\/(?:video\/(?:BV[0-9A-Za-z]+|av\d+)|bangumi\/play\/(?:ep|ss)\d+|cheese\/play\/(?:ep|ss)\d+|list\/|festival\/)/i.test(next.pathname)) return null;
-      if (drawerMark(next.hash)) next.hash = "";
-      return next.href;
-    } catch {
-      return null;
-    }
-  }
-  function drawerDisplayUrl(target, currentHref) {
-    try {
-      const current = new URL(currentHref);
-      const next = new URL(target, current);
-      if (next.origin !== current.origin) return null;
-      if (drawerMark(next.hash)) next.hash = "";
-      return next.href;
-    } catch {
-      return null;
-    }
-  }
-  function withDrawerRoute(state, route) {
-    const base = state && typeof state === "object" && !Array.isArray(state) ? state : {};
-    const out = { ...base, [DRAWER_HISTORY_KEY]: route };
-    delete out[DRAWER_ORIGIN_KEY];
-    return out;
-  }
-  function withDrawerOrigin(state, token) {
-    const base = state && typeof state === "object" && !Array.isArray(state) ? state : {};
-    const out = { ...base, [DRAWER_ORIGIN_KEY]: token };
-    delete out[DRAWER_HISTORY_KEY];
-    return out;
-  }
-  function readDrawerOrigin(state) {
-    if (!state || typeof state !== "object") return null;
-    const token = state[DRAWER_ORIGIN_KEY];
-    return typeof token === "string" ? token : null;
-  }
-  function readDrawerRoute(state) {
-    if (!state || typeof state !== "object") return null;
-    const route = state[DRAWER_HISTORY_KEY];
-    if (!route || typeof route !== "object") return null;
-    const r = route;
-    if (typeof r.token !== "string" || !r.token || typeof r.url !== "string" || typeof r.cover !== "string" || typeof r.webFull !== "boolean" || typeof r.immersive !== "boolean") return null;
-    return r;
-  }
   const NS = "bk";
   const NEWTAB_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>';
   const CLOSE_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
@@ -4395,6 +4461,7 @@
 .${NS}-dmask.on{ opacity:1; pointer-events:auto; }
 .${NS}-drawer{ position:fixed; left:0; right:0; bottom:0; height:calc(100% - 64px); z-index:100001; display:flex; flex-direction:column; background:var(--bg1,#fff); border-radius:14px 14px 0 0; box-shadow:0 -8px 40px rgba(0,0,0,.35); transform:translateY(100%); transition:transform .32s cubic-bezier(.32,.72,0,1); overflow:hidden; }
 .${NS}-drawer.on{ transform:translateY(0); }
+.${NS}-drawer.parked{ visibility:hidden; }
 .${NS}-dframe{ flex:1; width:100%; border:0; display:block; }
 .${NS}-dload{ position:absolute; inset:0; z-index:1; display:flex; align-items:center; justify-content:center; background:#18191c; opacity:0; pointer-events:none; transition:opacity .3s ease; }
 .${NS}-drawer.loading .${NS}-dload{ opacity:1; }
@@ -4412,6 +4479,7 @@
   let loadCover = null;
   let closeTimer = null;
   let loadTimer = null;
+  let drawerOpen = false;
   let curUrl = "";
   let curWebFull = false;
   let curImmersive = false;
@@ -4425,7 +4493,15 @@
   let activeRoute = null;
   let historyCloseFallback = null;
   let pendingOpen = null;
-  let disposingFrame = null;
+  let frameToken = "";
+  let frameRouteToken = "";
+  let framePublicUrl = "";
+  let frameWebFull = false;
+  let frameReady = false;
+  let pendingFrameReplace = null;
+  let queuedFrameReplace = null;
+  let suspendRetryTimer = null;
+  const FRAME_LANDING_TIMEOUT = 15e3;
   const nativePushState = History.prototype.pushState;
   const nativeReplaceState = History.prototype.replaceState;
   function newHistoryToken() {
@@ -4471,11 +4547,12 @@
     }
   }
   function syncDrawerHistory(url) {
-    if (!historyActive || !activeRoute) return;
+    if (!drawerOpen || historyClosing || !historyActive || !activeRoute) return;
     const expectedOrigin = new URL(activeRoute.url, location.href).origin;
     const publicUrl = safeDrawerVideoUrl(url, expectedOrigin);
     if (!publicUrl) return;
     curUrl = publicUrl;
+    framePublicUrl = publicUrl;
     replaceDrawerHistory({ ...activeRoute, url: publicUrl });
   }
   function finishHistoryClose() {
@@ -4511,8 +4588,9 @@
   }
   function tryReveal() {
     var _a;
-    if (!gotReady) return;
-    if (curWebFull && curImmersive && !gotWebfull) return;
+    if (!drawerOpen) return false;
+    if (!gotReady) return false;
+    if (curWebFull && curImmersive && !gotWebfull) return false;
     setLoading(false);
     try {
       frame == null ? void 0 : frame.focus({ preventScroll: true });
@@ -4522,6 +4600,7 @@
       (_a = frameWin()) == null ? void 0 : _a.focus();
     } catch {
     }
+    return true;
   }
   function frameWin() {
     try {
@@ -4530,29 +4609,158 @@
       return null;
     }
   }
-  function finishFrameDispose(source) {
-    const pending = disposingFrame;
-    if (!pending || source && source !== pending.frame.contentWindow) return;
-    clearTimeout(pending.timer);
-    pending.frame.remove();
-    disposingFrame = null;
-  }
-  function beginFrameDispose(f, route) {
+  function postFrameCommand(type) {
     var _a;
-    if (disposingFrame) finishFrameDispose();
-    const token = (route == null ? void 0 : route.token) || "";
-    let origin = "";
+    if (!frame || !frameToken || !framePublicUrl) return;
+    let origin;
     try {
-      if (route) origin = new URL(route.url, location.href).origin;
+      origin = new URL(framePublicUrl, location.href).origin;
+    } catch {
+      return;
+    }
+    try {
+      (_a = frame.contentWindow) == null ? void 0 : _a.postMessage({ type, token: frameToken }, origin);
     } catch {
     }
-    const timer = setTimeout(() => finishFrameDispose(), 160);
-    disposingFrame = { frame: f, token, origin, timer };
-    if (!token || !origin) return;
-    try {
-      (_a = f.contentWindow) == null ? void 0 : _a.postMessage({ type: "bk-drawer-dispose", token }, origin);
-    } catch {
+  }
+  function stopSuspendRetries() {
+    if (suspendRetryTimer) {
+      clearInterval(suspendRetryTimer);
+      suspendRetryTimer = null;
     }
+  }
+  function suspendFrameWithRetry() {
+    stopSuspendRetries();
+    postFrameCommand("bk-drawer-suspend");
+    let left = 12;
+    suspendRetryTimer = setInterval(() => {
+      if (drawerOpen || --left <= 0) {
+        stopSuspendRetries();
+        return;
+      }
+      postFrameCommand("bk-drawer-suspend");
+    }, 150);
+  }
+  function cancelPendingFrameReplace() {
+    if (!pendingFrameReplace) return;
+    if (pendingFrameReplace.timer) clearTimeout(pendingFrameReplace.timer);
+    pendingFrameReplace = null;
+  }
+  function rebuildFrameDocument(route, marked) {
+    cancelPendingFrameReplace();
+    queuedFrameReplace = null;
+    const previous = frame;
+    if (previous == null ? void 0 : previous.isConnected) previous.remove();
+    frame = createFrame();
+    if (loadCover) loadCover.style.backgroundImage = route.cover ? `url("${route.cover}")` : "";
+    setLoading(true);
+    finishFrameReplace(route, marked);
+    panel.insertBefore(frame, panel.firstChild);
+  }
+  function armFrameLandingWatchdog(pending) {
+    if (pending.phase !== "navigate") return;
+    if (pending.timer) clearTimeout(pending.timer);
+    pending.timer = setTimeout(() => {
+      if (pendingFrameReplace !== pending) return;
+      if (!drawerOpen) {
+        pending.timer = null;
+        return;
+      }
+      const fallback = queuedFrameReplace || { route: pending.route, marked: pending.marked };
+      rebuildFrameDocument(fallback.route, fallback.marked);
+    }, FRAME_LANDING_TIMEOUT);
+  }
+  function finishFrameReplace(route, marked, fresh, nextToken = newHistoryToken()) {
+    cancelPendingFrameReplace();
+    frameRouteToken = route.token;
+    frameToken = nextToken;
+    framePublicUrl = route.url;
+    frameWebFull = route.webFull;
+    frameReady = false;
+    gotReady = false;
+    gotWebfull = false;
+    frame.name = drawerFrameName({ token: frameToken, webFull: route.webFull });
+    {
+      frame.src = marked;
+    }
+  }
+  function acceptFrameReplace(pending) {
+    if (pending.phase !== "navigate" || !pending.nextToken || pending.accepted) return;
+    pending.accepted = true;
+    frameRouteToken = pending.route.token;
+    frameToken = pending.nextToken;
+    framePublicUrl = pending.route.url;
+    frameWebFull = pending.route.webFull;
+    frameReady = false;
+    gotReady = false;
+    gotWebfull = false;
+    frame.name = drawerFrameName({ token: frameToken, webFull: frameWebFull });
+  }
+  function recoverFrameReplace(route) {
+    if ((pendingFrameReplace == null ? void 0 : pendingFrameReplace.route) !== route) return;
+    const failedPhase = pendingFrameReplace.phase;
+    cancelPendingFrameReplace();
+    if (failedPhase === "suspend" && !frameReady && drawerOpen) {
+      const fallback = queuedFrameReplace || { route, marked: route.url.split("#")[0] + (route.webFull ? DRAWER_WEB_MARK : DRAWER_MARK) };
+      rebuildFrameDocument(fallback.route, fallback.marked);
+      return;
+    }
+    if ((activeRoute == null ? void 0 : activeRoute.token) === route.token && activeRoute.url === route.url && framePublicUrl) {
+      const restored = { ...activeRoute, url: framePublicUrl, webFull: frameWebFull };
+      activeRoute = restored;
+      curUrl = restored.url;
+      curWebFull = restored.webFull;
+      if (drawerOpen && historyActive && !historyClosing) replaceDrawerHistory(restored);
+    }
+    const queued = queuedFrameReplace;
+    queuedFrameReplace = null;
+    if (drawerOpen && queued) {
+      replaceFrameDocument(queued.route, queued.marked, false);
+      return;
+    }
+    setLoading(false);
+    if (drawerOpen && frameReady && tryReveal()) postFrameCommand("bk-drawer-resume");
+  }
+  function requestFrameReplace(route, marked) {
+    var _a;
+    const previousToken = frameToken;
+    let previousOrigin;
+    try {
+      previousOrigin = new URL(framePublicUrl, location.href).origin;
+    } catch {
+      recoverFrameReplace(route);
+      return;
+    }
+    const nextToken = newHistoryToken();
+    if (pendingFrameReplace == null ? void 0 : pendingFrameReplace.timer) clearTimeout(pendingFrameReplace.timer);
+    pendingFrameReplace = { route, marked, phase: "navigate", nextToken, accepted: false, timer: null };
+    armFrameLandingWatchdog(pendingFrameReplace);
+    try {
+      (_a = frame.contentWindow) == null ? void 0 : _a.postMessage({
+        type: "bk-drawer-replace",
+        token: previousToken,
+        nextToken,
+        url: marked,
+        webFull: route.webFull
+      }, previousOrigin);
+    } catch {
+      recoverFrameReplace(route);
+    }
+  }
+  function replaceFrameDocument(route, marked, fresh) {
+    cancelPendingFrameReplace();
+    if (loadCover) loadCover.style.backgroundImage = route.cover ? `url("${route.cover}")` : "";
+    setLoading(true);
+    if (fresh) {
+      finishFrameReplace(route, marked);
+      return;
+    }
+    const timer = setTimeout(() => {
+      if ((pendingFrameReplace == null ? void 0 : pendingFrameReplace.route) !== route) return;
+      recoverFrameReplace(route);
+    }, 350);
+    pendingFrameReplace = { route, marked, phase: "suspend", timer };
+    postFrameCommand("bk-drawer-suspend");
   }
   function setLoading(on) {
     panel == null ? void 0 : panel.classList.toggle("loading", on);
@@ -4568,6 +4776,9 @@
     f.allow = "autoplay; fullscreen; picture-in-picture; encrypted-media; clipboard-write";
     f.allowFullscreen = true;
     f.setAttribute("sandbox", "allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-presentation allow-modals allow-downloads");
+    f.addEventListener("load", () => {
+      if (!drawerOpen && f === frame) postFrameCommand("bk-drawer-suspend");
+    });
     return f;
   }
   function ensureDom() {
@@ -4583,30 +4794,89 @@
     panel = document.createElement("div");
     panel.className = `${NS}-drawer`;
     window.addEventListener("message", (e) => {
-      var _a;
-      const disposing = disposingFrame;
-      if (disposing && e.source === disposing.frame.contentWindow && ((_a = e.data) == null ? void 0 : _a.type) === "bk-drawer-disposed" && e.data.token === disposing.token && e.origin === disposing.origin) {
-        finishFrameDispose(e.source);
-        return;
-      }
       if (e.source !== frameWin()) return;
       const route = activeRoute;
-      if (!route || !e.data || typeof e.data !== "object" || e.data.token !== route.token) return;
+      if (!route || !e.data || typeof e.data !== "object") return;
+      const pendingAtArrival = pendingFrameReplace;
+      const fromCurrentDocument = e.data.token === frameToken;
+      const fromPendingDocument = (pendingAtArrival == null ? void 0 : pendingAtArrival.phase) === "navigate" && e.data.token === pendingAtArrival.nextToken;
+      if (!fromCurrentDocument && !fromPendingDocument) return;
       let expectedOrigin;
       try {
-        expectedOrigin = new URL(route.url, location.href).origin;
+        expectedOrigin = new URL(fromPendingDocument ? pendingAtArrival.route.url : framePublicUrl, location.href).origin;
       } catch {
         return;
       }
       if (e.origin !== expectedOrigin) return;
+      if (fromPendingDocument && (pendingAtArrival == null ? void 0 : pendingAtArrival.nextToken)) {
+        acceptFrameReplace(pendingAtArrival);
+        cancelPendingFrameReplace();
+        const queued = queuedFrameReplace;
+        queuedFrameReplace = null;
+        if (drawerOpen && queued) {
+          replaceFrameDocument(queued.route, queued.marked, false);
+          return;
+        }
+      }
       if (e.data.type === "bk-drawer-ready") {
+        if (pendingFrameReplace) return;
+        frameReady = true;
         gotReady = true;
-        tryReveal();
+        if (!drawerOpen) postFrameCommand("bk-drawer-suspend");
+        else if (tryReveal()) postFrameCommand("bk-drawer-resume");
+      } else if (e.data.type === "bk-drawer-suspended") {
+        stopSuspendRetries();
+        const pending = pendingFrameReplace;
+        if ((pending == null ? void 0 : pending.phase) === "suspend" && drawerOpen) requestFrameReplace(pending.route, pending.marked);
+      } else if (e.data.type === "bk-drawer-replacing" && (pendingFrameReplace == null ? void 0 : pendingFrameReplace.phase) === "navigate" && e.data.nextToken === pendingFrameReplace.nextToken) {
+        const pending = pendingFrameReplace;
+        acceptFrameReplace(pending);
+      } else if (e.data.type === "bk-drawer-replace-failed" && (pendingFrameReplace == null ? void 0 : pendingFrameReplace.phase) === "navigate" && e.data.nextToken === pendingFrameReplace.nextToken) {
+        recoverFrameReplace(pendingFrameReplace.route);
+      } else if (e.data.type === "bk-drawer-navigating" && typeof e.data.url === "string" && typeof e.data.nextToken === "string" && /^[0-9a-z-]{8,}$/i.test(e.data.nextToken)) {
+        const expectedOrigin2 = new URL(framePublicUrl, location.href).origin;
+        const publicUrl = safeDrawerVideoUrl(e.data.url, expectedOrigin2);
+        if (!publicUrl) return;
+        const superseded = pendingFrameReplace;
+        const latestParentTarget = drawerOpen ? queuedFrameReplace || (superseded ? { route: superseded.route, marked: superseded.marked } : null) : null;
+        cancelPendingFrameReplace();
+        const internalRoute = {
+          ...route,
+          token: frameRouteToken || route.token,
+          url: publicUrl,
+          webFull: frameWebFull
+        };
+        const internalMarked = publicUrl.split("#")[0] + (internalRoute.webFull ? DRAWER_WEB_MARK : DRAWER_MARK);
+        pendingFrameReplace = {
+          route: internalRoute,
+          marked: internalMarked,
+          phase: "navigate",
+          nextToken: e.data.nextToken,
+          accepted: false,
+          timer: null
+        };
+        armFrameLandingWatchdog(pendingFrameReplace);
+        acceptFrameReplace(pendingFrameReplace);
+        const sameAsParent = (latestParentTarget == null ? void 0 : latestParentTarget.route.url) === publicUrl && latestParentTarget.route.webFull === internalRoute.webFull;
+        queuedFrameReplace = sameAsParent ? null : latestParentTarget;
+        if (!queuedFrameReplace) {
+          curUrl = publicUrl;
+          activeRoute = internalRoute;
+          if (drawerOpen && historyActive && !historyClosing) replaceDrawerHistory(internalRoute);
+        }
+        if (drawerOpen) setLoading(true);
       } else if (e.data.type === "bk-drawer-webfull") {
+        if (pendingFrameReplace) return;
         gotWebfull = true;
-        tryReveal();
+        if (tryReveal()) postFrameCommand("bk-drawer-resume");
+      } else if (e.data.type === "bk-drawer-reveal-timeout") {
+        if (pendingFrameReplace) return;
+        gotWebfull = true;
+        if (drawerOpen && gotReady && tryReveal()) postFrameCommand("bk-drawer-resume");
       } else if (e.data.type === "bk-drawer-close") closeDrawer();
-      else if (e.data.type === "bk-drawer-location" && typeof e.data.url === "string") syncDrawerHistory(e.data.url);
+      else if (e.data.type === "bk-drawer-location" && typeof e.data.url === "string") {
+        if (!pendingFrameReplace) syncDrawerHistory(e.data.url);
+      }
     });
     window.addEventListener("popstate", (e) => {
       const stateRoute = readDrawerRoute(e.state);
@@ -4662,7 +4932,7 @@
     }, true);
     setInterval(() => {
       var _a;
-      if (!historyActive || historyClosing || !activeRoute) return;
+      if (!drawerOpen || !historyActive || historyClosing || !activeRoute) return;
       if (((_a = readDrawerRoute(history.state)) == null ? void 0 : _a.token) === activeRoute.token) return;
       replaceDrawerHistory(activeRoute);
     }, 500);
@@ -4694,21 +4964,34 @@
       clearTimeout(closeTimer);
       closeTimer = null;
     }
+    drawerOpen = true;
+    panel.classList.remove("parked");
     curUrl = route.url;
     curWebFull = route.webFull;
     curImmersive = route.immersive;
     const marked = route.url.split("#")[0] + (route.webFull ? DRAWER_WEB_MARK : DRAWER_MARK);
     const fresh = !frame;
     if (!frame) frame = createFrame();
-    frame.name = drawerFrameName(route);
-    if (frame.src !== marked) {
-      gotReady = false;
-      gotWebfull = false;
-      if (loadCover) loadCover.style.backgroundImage = route.cover ? `url("${route.cover}")` : "";
+    const irreversibleReplace = (pendingFrameReplace == null ? void 0 : pendingFrameReplace.phase) === "navigate" ? pendingFrameReplace : null;
+    if (irreversibleReplace) {
+      const sameTarget = irreversibleReplace.route.url === route.url && irreversibleReplace.route.webFull === route.webFull;
+      queuedFrameReplace = sameTarget ? null : { route, marked };
+      if (!irreversibleReplace.timer) armFrameLandingWatchdog(irreversibleReplace);
       setLoading(true);
-      frame.src = marked;
     } else {
-      setLoading(false);
+      cancelPendingFrameReplace();
+      const reuseLoadedDocument = frameReady && canReuseDrawerDocument(
+        { token: frameRouteToken, url: framePublicUrl, webFull: frameWebFull },
+        route
+      );
+      const alreadyNavigating = !frameReady && frameRouteToken === route.token && framePublicUrl === route.url && frameWebFull === route.webFull;
+      if (alreadyNavigating) {
+        setLoading(true);
+      } else if (!reuseLoadedDocument) {
+        replaceFrameDocument(route, marked, fresh);
+      } else {
+        if (tryReveal()) postFrameCommand("bk-drawer-resume");
+      }
     }
     if (fresh) panel.insertBefore(frame, panel.firstChild);
     document.documentElement.style.overflow = "hidden";
@@ -4725,7 +5008,8 @@
     }
     const existing = historyActive ? activeRoute : null;
     const route = {
-      token: (existing == null ? void 0 : existing.token) || newHistoryToken(),
+      // history 会话 token 跨 Document 沿用；window.name 里的 Document nonce 每次换页更新。
+      token: (existing == null ? void 0 : existing.token) || frameRouteToken || newHistoryToken(),
       url,
       cover,
       webFull,
@@ -4741,23 +5025,35 @@
   }
   function hideDrawer() {
     if (!panel || !mask || !ctrls) return;
+    if (closeTimer) {
+      clearTimeout(closeTimer);
+      closeTimer = null;
+    }
+    drawerOpen = false;
+    queuedFrameReplace = null;
+    if ((pendingFrameReplace == null ? void 0 : pendingFrameReplace.phase) === "suspend") cancelPendingFrameReplace();
+    suspendFrameWithRetry();
+    try {
+      frame == null ? void 0 : frame.blur();
+    } catch {
+    }
+    try {
+      window.focus();
+    } catch {
+    }
     mask.classList.remove("on");
     panel.classList.remove("on");
     ctrls.classList.remove("on");
     setLoading(false);
     document.documentElement.style.overflow = "";
     closeTimer = setTimeout(() => {
-      if (!frame || (panel == null ? void 0 : panel.classList.contains("on"))) return;
-      const f = frame;
-      const route = activeRoute;
-      frame = null;
-      beginFrameDispose(f, route);
+      if (drawerOpen) return;
+      panel == null ? void 0 : panel.classList.add("parked");
     }, 340);
   }
   function closeDrawer() {
     hideDrawer();
     if (historyOwned && historyActive) consumeDrawerHistory();
-    else activeRoute = null;
   }
   const PC_HOSTS = ["https://api.bilibili.com", "https://s1.hdslb.com", "https://i0.hdslb.com", "https://i1.hdslb.com", "https://i2.hdslb.com"];
   const PC_WINDOW = 12e3;
@@ -4845,6 +5141,8 @@
     } catch {
     }
   }
+  let suspendDrawerMedia = (_preserveResume = true) => {
+  };
   syncSharedSettings();
   try {
     localStorage.setItem("bilikit:alive.core", String(Date.now()));
@@ -4874,6 +5172,10 @@
   function setupDrawerLocationSync() {
     if (!inDrawer) return;
     let lastUrl = "";
+    let leavingDocument = false;
+    let leavingPublicUrl = "";
+    let leavingToken = "";
+    let observedDocumentUrl = location.href;
     const mark = drawerWebFull ? DRAWER_WEB_MARK : DRAWER_MARK;
     const notify = () => {
       const url = new URL(location.href);
@@ -4894,22 +5196,110 @@
         return raw;
       }
     };
+    const newDocumentToken = () => {
+      try {
+        return crypto.randomUUID();
+      } catch {
+        return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+      }
+    };
+    const replaceDocument = (raw, preserveWayBack, token = newDocumentToken(), webFull = drawerWebFull) => {
+      if (leavingDocument) {
+        if (!preserveWayBack && leavingPublicUrl && leavingToken) {
+          postDrawer("bk-drawer-navigating", { url: leavingPublicUrl, nextToken: leavingToken });
+        }
+        return;
+      }
+      let expectedOrigin = location.origin;
+      if (!preserveWayBack) {
+        try {
+          expectedOrigin = new URL(String(raw), location.href).origin;
+        } catch {
+        }
+      }
+      const publicUrl = safeDrawerVideoUrl(String(raw), expectedOrigin);
+      if (!publicUrl || !/^[0-9a-z-]{8,}$/i.test(token)) {
+        if (!preserveWayBack) postDrawer("bk-drawer-replace-failed", { nextToken: token });
+        return;
+      }
+      const target = new URL(publicUrl);
+      target.hash = webFull ? DRAWER_WEB_MARK : DRAWER_MARK;
+      leavingDocument = true;
+      leavingPublicUrl = publicUrl;
+      leavingToken = token;
+      if (preserveWayBack) {
+        try {
+          sessionStorage.setItem(DRAWER_DOCUMENT_NAV_KEY, publicUrl);
+        } catch {
+        }
+      }
+      suspendDrawerMedia(false);
+      window.name = drawerFrameName({ token, webFull });
+      try {
+        location.replace(target.href);
+        if (preserveWayBack) postDrawer("bk-drawer-navigating", { url: publicUrl, nextToken: token });
+        if (!preserveWayBack) postDrawer("bk-drawer-replacing", { url: publicUrl, nextToken: token });
+      } catch {
+        leavingDocument = false;
+        leavingPublicUrl = "";
+        leavingToken = "";
+        if (drawerToken) window.name = drawerFrameName({ token: drawerToken, webFull: drawerWebFull });
+        if (preserveWayBack) {
+          try {
+            sessionStorage.removeItem(DRAWER_DOCUMENT_NAV_KEY);
+          } catch {
+          }
+        } else postDrawer("bk-drawer-replace-failed", { nextToken: token });
+      }
+    };
+    document.addEventListener("click", (e) => {
+      if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+      const anchor = e.composedPath().find((node) => node instanceof HTMLAnchorElement && !!node.href);
+      if (!anchor || anchor.download || anchor.target && anchor.target !== "_self") return;
+      const target = markedUrl(anchor.href);
+      if (target == null || !shouldReplaceDrawerDocument(location.href, String(target))) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      replaceDocument(String(target), true);
+    }, true);
     history.pushState = ((state, unused, url) => {
-      const result = originalReplace(state, unused, markedUrl(url));
+      const next = markedUrl(url);
+      if (next != null && shouldReplaceDrawerDocument(location.href, String(next))) {
+        replaceDocument(String(next), true);
+        return;
+      }
+      const result = originalReplace(state, unused, next);
       queueMicrotask(notify);
       return result;
     });
     history.replaceState = ((state, unused, url) => {
-      const result = originalReplace(state, unused, markedUrl(url));
+      const next = markedUrl(url);
+      if (next != null && shouldReplaceDrawerDocument(location.href, String(next), true)) {
+        replaceDocument(String(next), true);
+        return;
+      }
+      const result = originalReplace(state, unused, next);
       queueMicrotask(notify);
       return result;
     });
     window.addEventListener("popstate", notify);
     window.addEventListener("hashchange", notify);
-    setInterval(notify, 500);
+    setInterval(() => {
+      if (!leavingDocument && shouldReplaceDrawerDocument(observedDocumentUrl, location.href, true)) {
+        replaceDocument(location.href, true);
+        return;
+      }
+      observedDocumentUrl = location.href;
+      notify();
+    }, 500);
+    window.addEventListener("message", (e) => {
+      var _a, _b;
+      if (e.source !== window.parent || ((_a = e.data) == null ? void 0 : _a.token) !== drawerToken || ((_b = e.data) == null ? void 0 : _b.type) !== "bk-drawer-replace") return;
+      if (typeof e.data.url !== "string" || typeof e.data.nextToken !== "string" || typeof e.data.webFull !== "boolean") return;
+      replaceDocument(e.data.url, false, e.data.nextToken, e.data.webFull);
+    });
     notify();
   }
-  setupDrawerLocationSync();
   function setupDrawerReveal() {
     if (!inDrawer) return;
     const wantWeb = drawerWebFull;
@@ -4918,6 +5308,7 @@
     let bound = false;
     let clicked = false;
     let tries = 0;
+    let lateReadyTimer = null;
     const focusPlayer = () => {
       var _a;
       try {
@@ -4932,6 +5323,10 @@
     const onReady = () => {
       if (readyDone) return;
       readyDone = true;
+      if (lateReadyTimer) {
+        clearInterval(lateReadyTimer);
+        lateReadyTimer = null;
+      }
       postDrawer("bk-drawer-ready");
       focusPlayer();
       setTimeout(focusPlayer, 150);
@@ -4961,36 +5356,129 @@
           }
         }
       }
-      if (readyDone && webDone || ++tries > 60) clearInterval(timer);
+      if (readyDone && webDone) clearInterval(timer);
+      else if (++tries > 60) {
+        clearInterval(timer);
+        postDrawer("bk-drawer-reveal-timeout");
+        if (!readyDone) {
+          let lateTries = 0;
+          lateReadyTimer = setInterval(() => {
+            const video = document.querySelector("video");
+            if ((video == null ? void 0 : video.readyState) && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) onReady();
+            if (++lateTries > 120 && lateReadyTimer) {
+              clearInterval(lateReadyTimer);
+              lateReadyTimer = null;
+            }
+          }, 500);
+        }
+      }
     }, 150);
   }
   setupDrawerReveal();
-  function teardownVideoOnLeave() {
+  function setupDrawerMediaLifecycle() {
     if (!inDrawer) return;
-    let done = false;
-    const cleanup = () => {
-      if (done) return;
-      done = true;
+    let parked = false;
+    let cleaned = false;
+    let pauseWatchdog = null;
+    const resumeSet = /* @__PURE__ */ new Set();
+    const mediaElements = () => {
+      const found = [...document.querySelectorAll("video,audio")];
+      document.querySelectorAll("iframe").forEach((child) => {
+        try {
+          if (child.contentDocument) found.push(...child.contentDocument.querySelectorAll("video,audio"));
+        } catch {
+        }
+      });
+      return found;
+    };
+    const pauseNow = (preserveResume) => {
+      var _a;
+      const media = mediaElements();
+      if (preserveResume) {
+        media.forEach((item) => {
+          if (!item.paused && !item.ended) resumeSet.add(item);
+        });
+      }
       try {
-        document.querySelectorAll("video").forEach((v) => {
-          v.pause();
-          v.removeAttribute("src");
-          v.srcObject = null;
-          v.load();
+        const player = window.player;
+        (_a = player == null ? void 0 : player.pause) == null ? void 0 : _a.call(player);
+      } catch {
+      }
+      media.forEach((item) => {
+        try {
+          item.pause();
+        } catch {
+        }
+      });
+    };
+    const stopPauseWatchdog = () => {
+      if (pauseWatchdog) {
+        clearInterval(pauseWatchdog);
+        pauseWatchdog = null;
+      }
+    };
+    const suspend = (preserveResume = true) => {
+      parked = true;
+      if (!preserveResume) resumeSet.clear();
+      pauseNow(preserveResume);
+      stopPauseWatchdog();
+      let left = 12;
+      pauseWatchdog = setInterval(() => {
+        pauseNow(preserveResume);
+        if (--left <= 0) stopPauseWatchdog();
+      }, 250);
+      postDrawer("bk-drawer-suspended");
+    };
+    const resume = () => {
+      stopPauseWatchdog();
+      parked = false;
+      const pending = [...resumeSet];
+      resumeSet.clear();
+      for (const media of pending) {
+        if (!media.isConnected || media.ended) continue;
+        try {
+          void media.play().catch(() => {
+          });
+        } catch {
+        }
+      }
+    };
+    const cleanup = () => {
+      if (cleaned) return;
+      cleaned = true;
+      stopPauseWatchdog();
+      resumeSet.clear();
+      try {
+        mediaElements().forEach((media) => {
+          media.pause();
+          media.removeAttribute("src");
+          media.srcObject = null;
+          media.load();
         });
       } catch {
       }
     };
+    document.addEventListener("play", (e) => {
+      if (!parked || !(e.target instanceof HTMLMediaElement)) return;
+      resumeSet.add(e.target);
+      try {
+        e.target.pause();
+      } catch {
+      }
+    }, true);
     window.addEventListener("pagehide", cleanup);
     window.addEventListener("unload", cleanup);
     window.addEventListener("message", (e) => {
       var _a;
-      if (e.source !== window.parent || ((_a = e.data) == null ? void 0 : _a.type) !== "bk-drawer-dispose" || e.data.token !== drawerToken) return;
-      cleanup();
-      postDrawer("bk-drawer-disposed");
+      if (e.source !== window.parent || ((_a = e.data) == null ? void 0 : _a.token) !== drawerToken) return;
+      if (e.data.type === "bk-drawer-suspend") suspend();
+      else if (e.data.type === "bk-drawer-resume") resume();
     });
+    suspendDrawerMedia = suspend;
   }
-  teardownVideoOnLeave();
+  setupDrawerMediaLifecycle();
+  setupDrawerLocationSync();
+  suspendDrawerMedia(false);
   register(
     cdnPick,
     themeSync,

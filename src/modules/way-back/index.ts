@@ -1,4 +1,5 @@
 import type { BiliKitModule, Cfg } from '../../core/module'
+import { DRAWER_DOCUMENT_NAV_KEY } from '../../core/drawer-history'
 import { isPlayPage } from '../../core/pages'
 import { videoIdOf as videoIdOfBase, cleanTitle, dedupeArrival, type Entry } from './core'
 
@@ -30,12 +31,15 @@ function init(cfg: Cfg): void {
   const drawerMark = (location.hash.match(/#bk-drawer(?:-web)?/) || [''])[0] || (inDrawer ? '#bk-drawer' : '')
   const JUMP_FLAG = 'bilikit-wb-jump'
   // 抽屉复用同一个 iframe，sessionStorage 跨导航不清 → 上一次会话的栈会漏进新会话。
-  // 「全新打开一个视频」应清栈；但抽屉内「跳回」的整页 replace 不能清（jumpTo 会设 JUMP_FLAG 区分）。
+  // 父页全新打开应清栈；抽屉内部为释放 SPA 而换 Document、以及回程自身 replace 则保留。
   // 顶层窗口不做此重置：每个标签页本就独立、跨页导航理应累积来时路。
   if (inDrawer) {
     try {
+      const continuedUrl = sessionStorage.getItem(DRAWER_DOCUMENT_NAV_KEY) || ''
+      sessionStorage.removeItem(DRAWER_DOCUMENT_NAV_KEY)
+      const continued = !!continuedUrl && videoIdOfBase(continuedUrl, location.href) === videoIdOfBase(location.href, location.href)
       if (sessionStorage.getItem(JUMP_FLAG)) sessionStorage.removeItem(JUMP_FLAG) // 跳回落地 → 保留栈
-      else sessionStorage.removeItem(STACK_KEY) // 全新打开 → 清栈
+      else if (!continued) sessionStorage.removeItem(STACK_KEY) // 父页全新打开 → 清栈
     } catch { /* ignore */ }
   }
 
@@ -129,7 +133,10 @@ function init(cfg: Cfg): void {
 
   // 兜底：pushState 包不住的整页离开（真·整页链接 / JS 赋值 location）。跳回自身的 replace 除外。
   let leavingViaJump = false
-  window.addEventListener('pagehide', () => { if (!leavingViaJump) recordEntry(location.href, document.title, departureTime(), false) })
+  window.addEventListener('pagehide', () => {
+    if (leavingViaJump) return
+    recordEntry(location.href, document.title, departureTime(), false)
+  })
 
   // 跳回第 i 层：丢弃其上的层，replace 不增历史；t>5 才带续播点
   function jumpTo(i: number): void {

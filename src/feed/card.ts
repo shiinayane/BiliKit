@@ -29,7 +29,7 @@ function pickReasons(rs: DislikeReason[]): { notInterest?: DislikeReason; upper?
 }
 
 // 建一张视频卡（不 observe——observe 由 render() 在插入 DOM 后统一做）
-export function makeCard(c: FeedCard): HTMLElement {
+export function makeCard(c: FeedCard, beforeCurrentNavigation?: () => void): HTMLElement {
   const el = document.createElement('div')
   el.className = `${NS}-card`
   if (c.bvid) el.dataset.bvid = c.bvid // 供 Core「全站抽屉」识别 → 按「打开方式」打开（Feed 不再自管视频打开）
@@ -159,7 +159,10 @@ export function makeCard(c: FeedCard): HTMLElement {
     // 本 handler 不会执行到这）。走到这里 = 当前页模式，或 Core 缺失/太旧未接管 → 按 openMode 兜底打开，绝不「点了没反应」。
     if (c.bvid) {
       const url = `https://www.bilibili.com/video/${c.bvid}`
-      if (readSetting<string>('feed.openMode', 'drawer') === 'current') location.href = url
+      if (readSetting<string>('feed.openMode', 'drawer') === 'current') {
+        beforeCurrentNavigation?.()
+        location.href = url
+      }
       else window.open(url, '_blank', 'noopener')
       return
     }

@@ -1,6 +1,7 @@
 import {
   DRAWER_MARK as MARK,
   DRAWER_WEB_MARK as MARK_WEB,
+  canReuseDrawerDocument,
   drawerDisplayUrl,
   drawerFrameName,
   readDrawerOrigin,
@@ -34,6 +35,7 @@ const CSS = `
 .${NS}-dmask.on{ opacity:1; pointer-events:auto; }
 .${NS}-drawer{ position:fixed; left:0; right:0; bottom:0; height:calc(100% - 64px); z-index:100001; display:flex; flex-direction:column; background:var(--bg1,#fff); border-radius:14px 14px 0 0; box-shadow:0 -8px 40px rgba(0,0,0,.35); transform:translateY(100%); transition:transform .32s cubic-bezier(.32,.72,0,1); overflow:hidden; }
 .${NS}-drawer.on{ transform:translateY(0); }
+.${NS}-drawer.parked{ visibility:hidden; }
 .${NS}-dframe{ flex:1; width:100%; border:0; display:block; }
 .${NS}-dload{ position:absolute; inset:0; z-index:1; display:flex; align-items:center; justify-content:center; background:#18191c; opacity:0; pointer-events:none; transition:opacity .3s ease; }
 .${NS}-drawer.loading .${NS}-dload{ opacity:1; }
@@ -52,6 +54,7 @@ let ctrls: HTMLElement | null = null
 let loadCover: HTMLElement | null = null
 let closeTimer: ReturnType<typeof setTimeout> | null = null
 let loadTimer: ReturnType<typeof setTimeout> | null = null
+let drawerOpen = false // 同步真源；不能只看过渡中的 .on class（iframe load 可能撞在首个 rAF 前）
 let curUrl = ''
 let curWebFull = false // 本次打开是否网页全屏模式
 let curImmersive = false // 网页全屏 + 沉浸：遮罩留到「铺满 且 已开播」才撤（藏过渡）
@@ -65,7 +68,22 @@ let historyOriginState: unknown = null
 let activeRoute: DrawerHistoryRoute | null = null
 let historyCloseFallback: ReturnType<typeof setTimeout> | null = null
 let pendingOpen: Omit<DrawerHistoryRoute, 'token'> | null = null
-let disposingFrame: { frame: HTMLIFrameElement; token: string; origin: string; timer: ReturnType<typeof setTimeout> } | null = null
+let frameToken = '' // 当前 iframe Document 的 nonce；每次整页 replace 都更新，拒绝旧 Document 的迟到消息
+let frameRouteToken = '' // 顶层抽屉 history 会话 token；跨 Document 保持，用于 Back/Forward 归属
+let framePublicUrl = '' // iframe 当前公开视频 URL；子页内部导航时随 location 消息更新
+let frameWebFull = false
+let frameReady = false
+let pendingFrameReplace: {
+  route: DrawerHistoryRoute
+  marked: string
+  phase: 'suspend' | 'navigate'
+  nextToken?: string
+  accepted?: boolean
+  timer: ReturnType<typeof setTimeout> | null
+} | null = null
+let queuedFrameReplace: { route: DrawerHistoryRoute; marked: string } | null = null
+let suspendRetryTimer: ReturnType<typeof setInterval> | null = null
+const FRAME_LANDING_TIMEOUT = 15_000
 
 // 用 userscript document-start 时捕获的原生方法改地址栏，不触发 B 站后续包装的 SPA pushState 监听。
 const nativePushState = History.prototype.pushState
@@ -116,11 +134,12 @@ function pushDrawerHistory(route: DrawerHistoryRoute): boolean {
 
 function syncDrawerHistory(url: string): void {
   // 不依赖 history.state：B 站顶层 SPA 会在抽屉打开后 replaceState，覆盖我们的自定义字段。
-  if (!historyActive || !activeRoute) return
+  if (!drawerOpen || historyClosing || !historyActive || !activeRoute) return
   const expectedOrigin = new URL(activeRoute.url, location.href).origin
   const publicUrl = safeDrawerVideoUrl(url, expectedOrigin)
   if (!publicUrl) return
   curUrl = publicUrl
+  framePublicUrl = publicUrl
   replaceDrawerHistory({ ...activeRoute, url: publicUrl })
 }
 
@@ -151,9 +170,10 @@ function consumeDrawerHistory(): void {
 
 // 揭幕（撤加载遮罩）时机：普通抽屉/非沉浸 → 首帧一就绪就揭（早于出声，揭幕即见首帧、声音不先出）；
 // 网页全屏 + 沉浸 → 还要等「已铺满」，避免看到「普通页→切满」过渡。信号均由 iframe 内 Core postMessage。
-function tryReveal(): void {
-  if (!gotReady) return
-  if (curWebFull && curImmersive && !gotWebfull) return
+function tryReveal(): boolean {
+  if (!drawerOpen) return false
+  if (!gotReady) return false
+  if (curWebFull && curImmersive && !gotWebfull) return false
   setLoading(false)
   // 把键盘焦点路由进 iframe——抽屉由父页点击打开，焦点本留在父页，keydown 到不了 iframe，空格等播放器
   // 快捷键失效（还会滚动 iframe 内视频页）。从 search/space 等子域打开时父页与 iframe(www) **跨源**，
@@ -162,33 +182,162 @@ function tryReveal(): void {
   // iframe 内 Core 再把焦点具体落到播放器（见 entry-core），双管齐下。
   try { frame?.focus({ preventScroll: true }) } catch { /* 忽略 */ }
   try { frameWin()?.focus() } catch { /* 忽略 */ }
+  return true
 }
 
 function frameWin(): Window | null {
   try { return frame?.contentWindow || null } catch { return null }
 }
 
-function finishFrameDispose(source?: MessageEventSource | null): void {
-  const pending = disposingFrame
-  if (!pending || (source && source !== pending.frame.contentWindow)) return
-  clearTimeout(pending.timer)
-  pending.frame.remove()
-  disposingFrame = null
+function postFrameCommand(
+  type: 'bk-drawer-suspend' | 'bk-drawer-resume',
+): void {
+  if (!frame || !frameToken || !framePublicUrl) return
+  let origin: string
+  try { origin = new URL(framePublicUrl, location.href).origin } catch { return }
+  try {
+    frame.contentWindow?.postMessage({ type, token: frameToken }, origin)
+  } catch { /* 子页正在导航时消息可丢；load/ready 处理会再补一次 suspend */ }
 }
 
-function beginFrameDispose(f: HTMLIFrameElement, route: DrawerHistoryRoute | null): void {
-  // 绝不再导航去 about:blank：iframe 导航也属于联合会话历史，会与同时的顶层
-  // history.back() 竞争，Safari 偶发把关闭落点留在 about:blank。改为子页显式释放媒体后直接移除。
-  if (disposingFrame) finishFrameDispose()
-  const token = route?.token || ''
-  let origin = ''
-  try { if (route) origin = new URL(route.url, location.href).origin } catch { /* ignore */ }
-  const timer = setTimeout(() => finishFrameDispose(), 160)
-  disposingFrame = { frame: f, token, origin, timer }
-  if (!token || !origin) return // 无可验证身份时靠短超时 + pagehide/unload 清理兜底
+function stopSuspendRetries(): void {
+  if (suspendRetryTimer) { clearInterval(suspendRetryTimer); suspendRetryTimer = null }
+}
+
+function suspendFrameWithRetry(): void {
+  stopSuspendRetries()
+  postFrameCommand('bk-drawer-suspend')
+  let left = 12
+  suspendRetryTimer = setInterval(() => {
+    if (drawerOpen || --left <= 0) { stopSuspendRetries(); return }
+    postFrameCommand('bk-drawer-suspend')
+  }, 150)
+}
+
+function cancelPendingFrameReplace(): void {
+  if (!pendingFrameReplace) return
+  if (pendingFrameReplace.timer) clearTimeout(pendingFrameReplace.timer)
+  pendingFrameReplace = null
+}
+
+function rebuildFrameDocument(route: DrawerHistoryRoute, marked: string): void {
+  cancelPendingFrameReplace()
+  queuedFrameReplace = null
+  const previous = frame
+  if (previous?.isConnected) previous.remove()
+  // 异常恢复也是先移除再创建，DOM 中始终至多一个 iframe。新框架的首次 src
+  // 属于初始导航，用来逃离无 Core 握手/错误页，不向原 browsing context 追加 joint history。
+  frame = createFrame()
+  if (loadCover) loadCover.style.backgroundImage = route.cover ? `url("${route.cover}")` : ''
+  setLoading(true)
+  finishFrameReplace(route, marked, true)
+  panel!.insertBefore(frame, panel!.firstChild)
+}
+
+function armFrameLandingWatchdog(pending: NonNullable<typeof pendingFrameReplace>): void {
+  if (pending.phase !== 'navigate') return
+  if (pending.timer) clearTimeout(pending.timer)
+  pending.timer = setTimeout(() => {
+    if (pendingFrameReplace !== pending) return
+    if (!drawerOpen) {
+      // 隐藏期不为恢复而主动加载页面；下次展开时会重新启动 watchdog。
+      pending.timer = null
+      return
+    }
+    const fallback = queuedFrameReplace || { route: pending.route, marked: pending.marked }
+    rebuildFrameDocument(fallback.route, fallback.marked)
+  }, FRAME_LANDING_TIMEOUT)
+}
+
+function finishFrameReplace(route: DrawerHistoryRoute, marked: string, fresh: boolean, nextToken = newHistoryToken()): void {
+  cancelPendingFrameReplace()
+  frameRouteToken = route.token
+  frameToken = nextToken
+  framePublicUrl = route.url
+  frameWebFull = route.webFull
+  frameReady = false
+  gotReady = false
+  gotWebfull = false
+  frame!.name = drawerFrameName({ token: frameToken, webFull: route.webFull })
+  if (fresh) {
+    frame!.src = marked
+  }
+}
+
+/** location.replace 已被旧文档接受，但新 Document 还未必落地。切换鉴权 nonce，保留 pending 等首条新文档消息。 */
+function acceptFrameReplace(pending: NonNullable<typeof pendingFrameReplace>): void {
+  if (pending.phase !== 'navigate' || !pending.nextToken || pending.accepted) return
+  pending.accepted = true
+  frameRouteToken = pending.route.token
+  frameToken = pending.nextToken
+  framePublicUrl = pending.route.url
+  frameWebFull = pending.route.webFull
+  frameReady = false
+  gotReady = false
+  gotWebfull = false
+  frame!.name = drawerFrameName({ token: frameToken, webFull: frameWebFull })
+}
+
+function recoverFrameReplace(route: DrawerHistoryRoute): void {
+  if (pendingFrameReplace?.route !== route) return
+  const failedPhase = pendingFrameReplace.phase
+  cancelPendingFrameReplace()
+  // 导航中文档连 suspend ack 都不能回，说明 bridge 尚未可用或已落到错误页。
+  // 顺序重建单一 iframe，让用户最后选的目标仍能继续，而不是永久卡在 pending。
+  if (failedPhase === 'suspend' && !frameReady && drawerOpen) {
+    const fallback = queuedFrameReplace || { route, marked: route.url.split('#')[0] + (route.webFull ? MARK_WEB : MARK) }
+    rebuildFrameDocument(fallback.route, fallback.marked)
+    return
+  }
+  // 暂停或导航请求未被子页接受，地址栏不能停在未实际加载的目标上。
+  if (activeRoute?.token === route.token && activeRoute.url === route.url && framePublicUrl) {
+    const restored = { ...activeRoute, url: framePublicUrl, webFull: frameWebFull }
+    activeRoute = restored
+    curUrl = restored.url
+    curWebFull = restored.webFull
+    if (drawerOpen && historyActive && !historyClosing) replaceDrawerHistory(restored)
+  }
+  const queued = queuedFrameReplace
+  queuedFrameReplace = null
+  if (drawerOpen && queued) {
+    replaceFrameDocument(queued.route, queued.marked, false)
+    return
+  }
+  setLoading(false)
+  if (drawerOpen && frameReady && tryReveal()) postFrameCommand('bk-drawer-resume')
+}
+
+function requestFrameReplace(route: DrawerHistoryRoute, marked: string): void {
+  const previousToken = frameToken
+  let previousOrigin: string
+  try { previousOrigin = new URL(framePublicUrl, location.href).origin } catch { recoverFrameReplace(route); return }
+  const nextToken = newHistoryToken()
+  if (pendingFrameReplace?.timer) clearTimeout(pendingFrameReplace.timer)
+  // replace 命令一旦发出就不可撤销：慢导航时不能用超时将 token 退回旧文档，
+  // 否则新 Document 落地后所有消息都会被当作伪造。子页只在 location.replace 同步抛错时回报 failed。
+  pendingFrameReplace = { route, marked, phase: 'navigate', nextToken, accepted: false, timer: null }
+  armFrameLandingWatchdog(pendingFrameReplace)
   try {
-    f.contentWindow?.postMessage({ type: 'bk-drawer-dispose', token }, origin)
-  } catch { /* 超时直接移除 */ }
+    frame!.contentWindow?.postMessage({
+      type: 'bk-drawer-replace', token: previousToken, nextToken,
+      url: marked, webFull: route.webFull,
+    }, previousOrigin)
+  } catch { recoverFrameReplace(route) }
+}
+
+function replaceFrameDocument(route: DrawerHistoryRoute, marked: string, fresh: boolean): void {
+  cancelPendingFrameReplace()
+  if (loadCover) loadCover.style.backgroundImage = route.cover ? `url("${route.cover}")` : ''
+  setLoading(true)
+  if (fresh) { finishFrameReplace(route, marked, true); return }
+
+  // 先让旧文档确认已暂停，再整页 replace；无 ack 时宁可保留并恢复旧页，也不走会污染联合历史的 iframe.src。
+  const timer = setTimeout(() => {
+    if (pendingFrameReplace?.route !== route) return
+    recoverFrameReplace(route)
+  }, 350)
+  pendingFrameReplace = { route, marked, phase: 'suspend', timer }
+  postFrameCommand('bk-drawer-suspend')
 }
 
 function setLoading(on: boolean): void {
@@ -197,7 +346,7 @@ function setLoading(on: boolean): void {
   if (on) loadTimer = setTimeout(() => setLoading(false), 6000) // 兜底：信号迟迟不来也撤遮罩
 }
 
-// 造一个新 iframe（属性与 sandbox 固定）。销毁旧的、开新的都走这一份，别写两遍。
+// 首次使用时造唯一 iframe；后续只导航/停放这个元素，绝不再创建第二个。
 function createFrame(): HTMLIFrameElement {
   const f = document.createElement('iframe')
   f.className = `${NS}-dframe`
@@ -205,6 +354,8 @@ function createFrame(): HTMLIFrameElement {
   f.allowFullscreen = true
   // sandbox：不含 allow-top-navigation → 禁止被嵌视频页把顶层窗口导航走（frame-busting）。须在设 src 前就位。
   f.setAttribute('sandbox', 'allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-presentation allow-modals allow-downloads')
+  // 若用户在慢加载期间已经关闭，导航完成后再补一次暂停，避免新文档在隐藏抽屉里自动播放。
+  f.addEventListener('load', () => { if (!drawerOpen && f === frame) postFrameCommand('bk-drawer-suspend') })
   return f
 }
 
@@ -216,27 +367,115 @@ function ensureDom(): void {
   panel = document.createElement('div')
   panel.className = `${NS}-drawer`
   // Core 在抽屉 iframe 内的两个揭幕信号：视频首帧就绪 / 网页全屏已铺满。（揭幕由此触发，setLoading 自带超时兜底）
-  // 挂在 window 上、判 e.source===frameWin()，故换新 iframe 后天然认新的、不用重新绑定。
+  // 挂在 window 上、判 e.source===唯一 frameWin()；子文档换页再用 token 隔离新旧消息。
   window.addEventListener('message', (e) => {
-    const disposing = disposingFrame
-    if (
-      disposing && e.source === disposing.frame.contentWindow && e.data?.type === 'bk-drawer-disposed'
-      && e.data.token === disposing.token && e.origin === disposing.origin
-    ) {
-      finishFrameDispose(e.source)
-      return
-    }
     if (e.source !== frameWin()) return
     const route = activeRoute
-    if (!route || !e.data || typeof e.data !== 'object' || e.data.token !== route.token) return
-    // source 防旁框架伪造，origin 防当前 iframe 被导向外站后继续冒充；token 再隔离快速重建的旧文档消息。
+    if (!route || !e.data || typeof e.data !== 'object') return
+    const pendingAtArrival = pendingFrameReplace
+    const fromCurrentDocument = e.data.token === frameToken
+    const fromPendingDocument = pendingAtArrival?.phase === 'navigate'
+      && e.data.token === pendingAtArrival.nextToken
+    if (!fromCurrentDocument && !fromPendingDocument) return
+    // source 防旁框架伪造，origin 防外站冒充；每个 Document 的独立 nonce 拒绝同一 WindowProxy 上旧文档的迟到消息。
     let expectedOrigin: string
-    try { expectedOrigin = new URL(route.url, location.href).origin } catch { return }
+    try {
+      expectedOrigin = new URL(fromPendingDocument ? pendingAtArrival.route.url : framePublicUrl, location.href).origin
+    } catch { return }
     if (e.origin !== expectedOrigin) return
-    if (e.data.type === 'bk-drawer-ready') { gotReady = true; tryReveal() }
-    else if (e.data.type === 'bk-drawer-webfull') { gotWebfull = true; tryReveal() }
+    // 新 nonce 的首条消息才证明 Document 已落地。此前即使旧页已确认 replace，
+    // 也保留 navigate pending，使 A→B→C 在 B 导航窗口中仍能只排队最后的 C。
+    if (fromPendingDocument && pendingAtArrival?.nextToken) {
+      acceptFrameReplace(pendingAtArrival)
+      cancelPendingFrameReplace()
+      const queued = queuedFrameReplace
+      queuedFrameReplace = null
+      if (drawerOpen && queued) {
+        replaceFrameDocument(queued.route, queued.marked, false)
+        return
+      }
+    }
+    if (e.data.type === 'bk-drawer-ready') {
+      if (pendingFrameReplace) return
+      frameReady = true
+      gotReady = true
+      if (!drawerOpen) postFrameCommand('bk-drawer-suspend')
+      else if (tryReveal()) postFrameCommand('bk-drawer-resume')
+    }
+    else if (e.data.type === 'bk-drawer-suspended') {
+      stopSuspendRetries()
+      const pending = pendingFrameReplace
+      if (pending?.phase === 'suspend' && drawerOpen) requestFrameReplace(pending.route, pending.marked)
+    }
+    else if (
+      e.data.type === 'bk-drawer-replacing' && pendingFrameReplace?.phase === 'navigate'
+      && e.data.nextToken === pendingFrameReplace.nextToken
+    ) {
+      const pending = pendingFrameReplace
+      acceptFrameReplace(pending)
+    }
+    else if (
+      e.data.type === 'bk-drawer-replace-failed' && pendingFrameReplace?.phase === 'navigate'
+      && e.data.nextToken === pendingFrameReplace.nextToken
+    ) {
+      recoverFrameReplace(pendingFrameReplace.route)
+    }
+    else if (
+      e.data.type === 'bk-drawer-navigating' && typeof e.data.url === 'string'
+      && typeof e.data.nextToken === 'string' && /^[0-9a-z-]{8,}$/i.test(e.data.nextToken)
+    ) {
+      const expectedOrigin = new URL(framePublicUrl, location.href).origin
+      const publicUrl = safeDrawerVideoUrl(e.data.url, expectedOrigin)
+      if (!publicUrl) return
+      const superseded = pendingFrameReplace
+      const latestParentTarget = drawerOpen
+        ? (queuedFrameReplace || (superseded ? { route: superseded.route, marked: superseded.marked } : null))
+        : null
+      cancelPendingFrameReplace()
+      const internalRoute = {
+        ...route,
+        token: frameRouteToken || route.token,
+        url: publicUrl,
+        webFull: frameWebFull,
+      }
+      const internalMarked = publicUrl.split('#')[0] + (internalRoute.webFull ? MARK_WEB : MARK)
+      // 子页在发 navigating 前已决定 location.replace，这个导航不可撤销。
+      // 即使父页同时要去 B，也要先接管实际在途的 D nonce，再把最新父页目标排在 D 落地之后。
+      pendingFrameReplace = {
+        route: internalRoute,
+        marked: internalMarked,
+        phase: 'navigate',
+        nextToken: e.data.nextToken,
+        accepted: false,
+        timer: null,
+      }
+      armFrameLandingWatchdog(pendingFrameReplace)
+      acceptFrameReplace(pendingFrameReplace)
+      const sameAsParent = latestParentTarget?.route.url === publicUrl
+        && latestParentTarget.route.webFull === internalRoute.webFull
+      queuedFrameReplace = sameAsParent ? null : latestParentTarget
+      if (!queuedFrameReplace) {
+        curUrl = publicUrl
+        activeRoute = internalRoute
+        if (drawerOpen && historyActive && !historyClosing) replaceDrawerHistory(internalRoute)
+      }
+      if (drawerOpen) setLoading(true)
+    }
+    else if (e.data.type === 'bk-drawer-webfull') {
+      if (pendingFrameReplace) return
+      gotWebfull = true
+      if (tryReveal()) postFrameCommand('bk-drawer-resume')
+    }
+    else if (e.data.type === 'bk-drawer-reveal-timeout') {
+      if (pendingFrameReplace) return
+      // selector/网页全屏按钮变更时降级为普通揭幕；不能只撤遮罩却让初始媒体闸门永久保持暂停。
+      gotWebfull = true
+      if (drawerOpen && gotReady && tryReveal()) postFrameCommand('bk-drawer-resume')
+    }
     else if (e.data.type === 'bk-drawer-close') closeDrawer() // iframe 内获得焦点时，Esc 由子页桥接回来
-    else if (e.data.type === 'bk-drawer-location' && typeof e.data.url === 'string') syncDrawerHistory(e.data.url)
+    else if (e.data.type === 'bk-drawer-location' && typeof e.data.url === 'string') {
+      if (!pendingFrameReplace) syncDrawerHistory(e.data.url)
+    }
   })
   window.addEventListener('popstate', (e) => {
     const stateRoute = readDrawerRoute(e.state)
@@ -288,7 +527,7 @@ function ensureDom(): void {
   // B 站偶尔会 replaceState 覆盖自定义字段。低频只读检查，缺失时才用捕获的原生方法补回；
   // 因而正常播放零写入，也不依赖站点后来是否重包 history 方法。
   setInterval(() => {
-    if (!historyActive || historyClosing || !activeRoute) return
+    if (!drawerOpen || !historyActive || historyClosing || !activeRoute) return
     if (readDrawerRoute(history.state)?.token === activeRoute.token) return
     replaceDrawerHistory(activeRoute)
   }, 500)
@@ -318,25 +557,41 @@ function ensureDom(): void {
 function showDrawer(route: DrawerHistoryRoute): void {
   ensureDom()
   if (closeTimer) { clearTimeout(closeTimer); closeTimer = null }
+  drawerOpen = true
+  panel!.classList.remove('parked')
   curUrl = route.url
   curWebFull = route.webFull
   curImmersive = route.immersive
   const marked = route.url.split('#')[0] + (route.webFull ? MARK_WEB : MARK) // 去掉原 URL 的 hash，换上抽屉标记（否则 Core 认不到、不隐顶栏/不发揭幕信号）
   const fresh = !frame
   if (!frame) frame = createFrame()
-  frame.name = drawerFrameName(route)
-  if (frame.src !== marked) {
-    // 换视频（或已被 about:blank 清过）：重新加载 → 显遮罩、等 iframe 内 Core 发「首帧就绪」再揭幕
-    gotReady = false
-    gotWebfull = false
-    if (loadCover) loadCover.style.backgroundImage = route.cover ? `url("${route.cover}")` : ''
+  const irreversibleReplace = pendingFrameReplace?.phase === 'navigate' ? pendingFrameReplace : null
+  if (irreversibleReplace) {
+    // 旧页已执行 location.replace，无法再取消。先等它落地，然后只执行最后一个点选目标。
+    const sameTarget = irreversibleReplace.route.url === route.url
+      && irreversibleReplace.route.webFull === route.webFull
+    queuedFrameReplace = sameTarget ? null : { route, marked }
+    if (!irreversibleReplace.timer) armFrameLandingWatchdog(irreversibleReplace)
     setLoading(true)
-    frame.src = marked
   } else {
-    // 同一视频、iframe 未卸载（快速重开，仍在播）：已加载好，直接揭幕、不显遮罩——否则不重载就等不到新信号，会卡满 6s
-    setLoading(false)
+    // 暂停阶段仍可撤销；迟到 ack 不得提交旧目标。
+    cancelPendingFrameReplace()
+    const reuseLoadedDocument = frameReady && canReuseDrawerDocument(
+      { token: frameRouteToken, url: framePublicUrl, webFull: frameWebFull },
+      route,
+    )
+    const alreadyNavigating = !frameReady && frameRouteToken === route.token
+      && framePublicUrl === route.url && frameWebFull === route.webFull
+    if (alreadyNavigating) {
+      setLoading(true)
+    } else if (!reuseLoadedDocument) {
+      replaceFrameDocument(route, marked, fresh)
+    } else {
+      // 浏览器 Forward / 快速复开同一会话：文档仍在，直接恢复播放与焦点，不再重载。
+      if (tryReveal()) postFrameCommand('bk-drawer-resume')
+    }
   }
-  // src/name 在插入前设好，使初始 about:blank→视频成为初始导航，不额外污染联合会话历史。
+  // 首次 src/name 在插入前设好，使初始 about:blank→视频成为初始导航；后续由上面的 location.replace 换页。
   if (fresh) panel!.insertBefore(frame, panel!.firstChild)
   document.documentElement.style.overflow = 'hidden' // 锁底层滚动
   requestAnimationFrame(() => { mask!.classList.add('on'); panel!.classList.add('on'); ctrls!.classList.add('on') })
@@ -347,7 +602,8 @@ export function openDrawer(url: string, cover = '', webFull = false, immersive =
   if (historyClosing) { pendingOpen = { url, cover, webFull, immersive }; return }
   const existing = historyActive ? activeRoute : null
   const route: DrawerHistoryRoute = {
-    token: existing?.token || newHistoryToken(),
+    // history 会话 token 跨 Document 沿用；window.name 里的 Document nonce 每次换页更新。
+    token: existing?.token || frameRouteToken || newHistoryToken(),
     url,
     cover,
     webFull,
@@ -364,31 +620,33 @@ export function openDrawer(url: string, cover = '', webFull = false, immersive =
 
 function hideDrawer(): void {
   if (!panel || !mask || !ctrls) return
+  if (closeTimer) { clearTimeout(closeTimer); closeTimer = null }
+  drawerOpen = false
+  queuedFrameReplace = null
+  // suspend 尚未换页，可安全撤销；navigate 已不可逆，必须保留 nextToken 以接管新文档。
+  if (pendingFrameReplace?.phase === 'suspend') cancelPendingFrameReplace()
+  // 关闭即停声/停解码推进，但不清 src、不拆 MSE、不移除 iframe；完整页面常驻在唯一 browsing context 中。
+  suspendFrameWithRetry()
+  // iframe 不再被移除，必须主动把键盘焦点还给顶层；否则空格等快捷键可能继续落进隐藏播放器。
+  try { frame?.blur() } catch { /* ignore */ }
+  try { window.focus() } catch { /* ignore */ }
   mask.classList.remove('on')
   panel.classList.remove('on')
   ctrls.classList.remove('on')
   setLoading(false)
   document.documentElement.style.overflow = ''
-  // 关闭后**销毁** iframe 元素，下次打开重建全新浏览上下文。
-  // 内存不回收的根源大概率就是「iframe 从没被真正销毁过」——同类案例（如 amazon-chime-sdk#771）最终
-  // 都定性为应用层没做清理、补上即好，而非 WebKit 天生无解。移除 iframe 会销毁其浏览上下文
-  // （连 contentWindow / window.frames 引用一并释放），且各浏览器实测移除 iframe 都会在其文档上触发
-  // unload/pagehide（见 whatwg/html#4611）——iframe 内的 teardownVideoOnLeave 借此暂停并清空 video。
-  // 过渡结束后先让子页主动停 video/断 MSE，收到确认或 160ms 超时就直接移除。
-  // 完全不进行 iframe 导航，避免污染联合会话历史。
+  // 过渡结束仅把面板设为不可见；iframe 元素及 browsing context 常驻，保证整个顶层页始终至多一个。
+  // 不设 display:none，避免播放器在恢复尺寸时重建；visibility:hidden 足以停止合成展示，媒体由上面的 suspend 暂停。
   closeTimer = setTimeout(() => {
-    if (!frame || panel?.classList.contains('on')) return // 已在这段时间内被重新打开，不销毁
-    const f = frame
-    const route = activeRoute
-    frame = null // 从此不再复用正在清理的旧 frame；快速重开会立即新建一个
-    beginFrameDispose(f, route)
+    if (drawerOpen) return
+    panel?.classList.add('parked')
   }, 340)
 }
 
 export function closeDrawer(): void {
   hideDrawer()
   if (historyOwned && historyActive) consumeDrawerHistory()
-  else activeRoute = null
+  // push 失败时也保留最后 route 作为隐藏 iframe 的消息鉴权上下文；下次 open 仍会创建新的 history 会话。
 }
 
 /**

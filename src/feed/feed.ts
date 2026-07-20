@@ -4,6 +4,7 @@ import { injectStyle, hideNativeChrome } from './styles'
 import { makeCard, makeSkeleton } from './card'
 import { mountControls } from './controls'
 import { FEED_VERSION } from './version'
+import { saveFeedReturnSession, takeFeedReturnSession } from './return-session'
 
 /**
  * App 推荐 feed 就地接管首页（编排层）：
@@ -117,6 +118,19 @@ function teardownRenderedCards(): void {
   nodes.clear()
 }
 
+// 「当前页」打开视频前同步落一份纯数据快照。不要存 DOM、媒体、observer：返回体验连续，但视频页仍能
+// 作为顶层文档独立回收（这正是 Safari 实测比 iframe 干净的路径）。sessionStorage 天然按标签页隔离。
+function saveCurrentFeedForReturn(): void {
+  if (!items.length) return
+  saveFeedReturnSession({
+    source,
+    webFreshIdx,
+    exhausted,
+    scrollY: window.scrollY,
+    items,
+  })
+}
+
 // 窗口化渲染：只保留「可视 ±1.5 屏」范围内的卡片节点，范围外移除；上下占位撑起未渲染区高度。
 // 按 item 下标 key、只在窗口边缘增删（绝不中途拿一个节点换内容）→ 无封面重载/闪烁。
 function render(): void {
@@ -156,7 +170,7 @@ function render(): void {
   // 3) 补齐窗口内缺失节点：升序建卡，插到「下一个更高的已存在节点」前，否则底部占位前 → 保持顺序
   for (let i = startIdx; i < endIdx; i++) {
     if (nodes.has(i)) continue
-    const el = makeCard(items[i])
+    const el = makeCard(items[i], saveCurrentFeedForReturn)
     nodes.set(i, el)
     let ref: HTMLElement = bottomSpacer
     for (let j = i + 1; j < endIdx; j++) { const n = nodes.get(j); if (n) { ref = n; break } }
@@ -344,6 +358,16 @@ function takeover(): boolean {
   cooldownUntil = 0
   invalidateLayout() // 新 grid：列数/行高/顶偏移都需重量
 
+  // 只有找到了原生首页容器、确定本次能够接管，才消费返回快照。过期/损坏会返回 null。
+  const returnSession = takeFeedReturnSession()
+  if (returnSession) {
+    source = returnSession.source
+    webFreshIdx = returnSession.webFreshIdx
+    exhausted = returnSession.exhausted
+    items.push(...returnSession.items.slice(0, MAX_ITEMS))
+    for (const card of items) seen.add(card.bvid)
+  }
+
   injectStyle()
   native.style.setProperty('display', 'none', 'important')
 
@@ -402,8 +426,21 @@ function takeover(): boolean {
 
   // 右下角 FAB：源切换（手机 App/电脑 Web，hover 展胶囊）+ 刷新 + 返回顶部
   mountControls((btn) => refreshFeed(btn), { initial: source, onSwitch: switchSource })
-  renderSkeletons(12) // 数据到达前先铺骨架占位，避免空白
-  loadMore() // 循环内会一直拉到填满首屏（哨兵离开加载区）
+  if (returnSession) {
+    const scrollY = returnSession.scrollY
+    // 首帧先建卡得到真实行高，再滚回保存位置；随后 scroll/IO 会重算深处窗口并按需续页。
+    render()
+    requestAnimationFrame(() => {
+      invalidateLayout()
+      render()
+      window.scrollTo(0, scrollY)
+      scheduleRender()
+      if (!exhausted && sentinelInView()) void loadMore()
+    })
+  } else {
+    renderSkeletons(12) // 数据到达前先铺骨架占位，避免空白
+    void loadMore() // 循环内会一直拉到填满首屏（哨兵离开加载区）
+  }
   return true
 }
 
